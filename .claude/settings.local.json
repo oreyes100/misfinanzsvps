@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install *)",
+      "Bash(npm run *)",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(curl -s \"https://mis-finazas-gold.vercel.app/api/sync?id=499e55e4-6ab8-46b5-aeb1-79dacc41c40f\")",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); s=d['state']; print\\('found:', d['found']\\); print\\('cuentas:', [a['name'] for a in s['accounts']]\\); print\\('movimientos:', len\\(s['transactions']\\)\\); print\\('categorías:', len\\(s['categories']\\)\\)\")",
+      "Bash(vercel --prod --yes)",
+      "Bash(curl -sI https://mis-finazas-gold.vercel.app)",
+      "Bash(node --input-type=module -e ' *)",
+      "mcp__mcp-registry__search_mcp_registry",
+      "Bash(npm list *)",
+      "Bash(npx -y @smithery/cli search obsidian)",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(json.dumps\\(d.get\\('mcpServers',{}\\), indent=2\\)\\)\")",
+      "Bash(npm search *)",
+      "Bash(npx @fazer-ai/mcp-obsidian --help)",
+      "Bash(claude mcp *)",
+      "Bash(mkdir -p \"/Users/jorge/No sync/Mis finazas/.claude/rules\")",
+      "Bash(git init *)",
+      "Bash(git config *)",
+      "Bash(git add *)"
+    ]
+  }
+}

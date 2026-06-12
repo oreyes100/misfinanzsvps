@@ -1,0 +1,1 @@
+{"ts":"2026-06-12T00:00:00.000Z","rule_candidate":"Inicialización PMF structure","trigger":"Primera sesión Fase 1","verify":"ls -la .claude/{rules,memory,agents} Wiki MOCs Sources/Inboxes Logs"}

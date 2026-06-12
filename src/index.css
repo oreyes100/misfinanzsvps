@@ -1,0 +1,139 @@
+@import "tailwindcss";
+
+@theme {
+  --color-base-950: #070d1f;
+  --color-base-900: #0a1124;
+  --color-base-800: #101a36;
+  --color-base-700: #1a2747;
+  --color-ink: #eaf0ff;
+  --color-ink-dim: #aab8d8;
+  --color-accent: #5b8cff;
+  --color-accent-soft: #8fb0ff;
+  --color-gain: #2ee6a8;
+  --color-loss: #ff5c7a;
+  --color-gold: #f5c451;
+  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  background:
+    radial-gradient(1200px 800px at 80% -10%, rgba(91, 140, 255, 0.18), transparent 60%),
+    radial-gradient(900px 700px at -10% 110%, rgba(46, 230, 168, 0.10), transparent 55%),
+    radial-gradient(700px 500px at 50% 50%, rgba(143, 99, 255, 0.07), transparent 60%),
+    var(--color-base-950);
+  color: var(--color-ink);
+  min-height: 100dvh;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---- Glassmorphism 2.0 / Liquid Glass ---- */
+.glass {
+  position: relative;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.085) 0%,
+    rgba(255, 255, 255, 0.035) 45%,
+    rgba(255, 255, 255, 0.06) 100%
+  );
+  backdrop-filter: blur(18px) saturate(1.4);
+  -webkit-backdrop-filter: blur(18px) saturate(1.4);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 1.25rem;
+  box-shadow:
+    0 8px 32px rgba(3, 8, 24, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+
+/* refracción de luz: borde superior brillante que se desplaza */
+.glass::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(
+    115deg,
+    transparent 20%,
+    rgba(255, 255, 255, 0.09) 40%,
+    rgba(143, 176, 255, 0.12) 50%,
+    transparent 65%
+  );
+  background-size: 250% 250%;
+  animation: refract 9s ease-in-out infinite alternate;
+}
+
+@keyframes refract {
+  from { background-position: 0% 0%; }
+  to   { background-position: 100% 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .glass::before { animation: none; }
+  * { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
+}
+
+/* ---- Móviles/tablets: los GPU móviles (Adreno/Mali) corrompen los tiles del
+   compositor cuando hay backdrop-filter + capas de refracción + repintados
+   frecuentes (gráficos en vivo cada 4 s). Solución: fondo sólido sin blur,
+   sin pseudo-capa ::before, y cada tarjeta promovida a su propia capa GPU
+   (translateZ + contain) para que sus repintados no contaminen tiles vecinos. ---- */
+@media (hover: none) and (pointer: coarse) {
+  .glass {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    background: linear-gradient(
+      135deg,
+      rgba(26, 39, 71, 0.96) 0%,
+      rgba(16, 26, 54, 0.98) 55%,
+      rgba(22, 33, 62, 0.96) 100%
+    );
+    transform: translateZ(0);
+    contain: paint;
+    isolation: isolate;
+  }
+  .glass::before {
+    display: none;
+  }
+  /* Los SVG en vivo repintan solos en su propia capa, sin arrastrar la tarjeta. */
+  .glass svg {
+    transform: translateZ(0);
+  }
+}
+
+/* ---- Accesibilidad: foco visible (WCAG 2.2 — 2.4.7 / 2.4.11) ---- */
+:focus-visible {
+  outline: 3px solid var(--color-accent-soft);
+  outline-offset: 2px;
+  border-radius: 0.5rem;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---- Micro-interacción: botón que se deprime (<300ms) ---- */
+.pressable {
+  transition: transform 140ms ease, filter 140ms ease;
+}
+.pressable:active {
+  transform: scale(0.96) translateY(1px);
+  filter: brightness(1.15);
+}
+
+/* scrollbars discretos */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: rgba(170, 184, 216, 0.25); border-radius: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
