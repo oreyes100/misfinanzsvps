@@ -3,3 +3,14 @@
 node_modules/
 dist/
 sessions.jsonl
+.server.log
+.server.pid
+
+# Subproyecto Cuentas — datos privados y artefactos
+Cuentas/uploads/
+Cuentas/*.log
+Cuentas/*.zip
+Cuentas/server.js.broken.bak
+Cuentas/*.conversation.json
+.DS_Store
+Cuentas.zip

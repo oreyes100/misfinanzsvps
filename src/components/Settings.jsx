@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { useStore } from "../store.jsx";
 import { CURRENCIES, downloadBackup, downloadCSV, fmtMoney, parseBackup } from "../utils.js";
 import { Btn, Field, Glass, inputCls } from "./UI.jsx";
+import Users from "./Users.jsx";
 
 const SYNC_LABEL = {
   off: ["Desactivada", "text-ink-dim"],
@@ -75,12 +76,13 @@ function CloudSync() {
   );
 }
 
-export default function Settings() {
+export default function Settings({ session }) {
   const { state, dispatch } = useStore();
   const fiat = CURRENCIES.filter((c) => !["BTC", "ETH"].includes(c));
 
   return (
     <div className="space-y-3">
+      {session?.role === "admin" && <Users session={session} />}
       <Glass aria-label="Preferencias generales">
         <h2 className="mb-3 text-base font-semibold">Preferencias</h2>
         <div className="grid gap-3 sm:grid-cols-2">

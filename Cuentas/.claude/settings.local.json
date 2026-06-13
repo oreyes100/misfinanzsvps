@@ -1,0 +1,33 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install *)",
+      "Bash(npm run *)",
+      "Bash(node --check \"/Users/jorge/No sync/Cuentas/server.js\")",
+      "Bash(node --check \"/Users/jorge/No sync/Cuentas/public/app.js\")",
+      "Bash(kill 55244)",
+      "Bash(nohup node server.js)",
+      "Bash(curl -s http://localhost:3002/api/codes)",
+      "Bash(curl -s -X POST http://localhost:3002/api/codes -H 'Content-Type: application/json' -d '{\"code\":\"zz\",\"description\":\"Código de prueba\",\"category\":\"expense\"}')",
+      "Bash(curl -s -X POST http://localhost:3002/api/codes -H 'Content-Type: application/json' -d '{\"code\":\"ZZ\",\"description\":\"Dup\",\"category\":\"expense\"}')",
+      "Bash(curl -s -X PUT http://localhost:3002/api/codes/ZZ -H 'Content-Type: application/json' -d '{\"code\":\"ZX\",\"description\":\"Prueba editada\",\"category\":\"income\"}')",
+      "Bash(curl -s -X DELETE http://localhost:3002/api/codes/G)",
+      "Bash(curl -s -X DELETE http://localhost:3002/api/codes/ZX)",
+      "Bash(curl -s \"http://localhost:3002/api/transactions?code=G\")",
+      "Bash(python3 -c \"import json,sys; print\\([c['code'] for c in json.load\\(sys.stdin\\)]\\)\")",
+      "Bash(curl -s -X POST http://localhost:3002/api/codes -H 'Content-Type: application/json' -d '{\"code\":\"G\",\"description\":\"Gastos de la congregación\",\"category\":\"expense\"}')",
+      "Bash(curl -s -X POST http://localhost:3002/api/codes -H 'Content-Type: application/json' -d '{\"code\":\"XX\",\"description\":\"tmp\",\"category\":\"expense\"}')",
+      "Bash(sqlite3 \"/Users/jorge/No sync/Cuentas/contabilidad.db\" \"SELECT code FROM transactions LIMIT 1\")",
+      "Bash(curl -s -X DELETE http://localhost:3002/api/codes/DO)",
+      "Bash(curl -s -X DELETE http://localhost:3002/api/codes/XX)",
+      "Bash(pkill -f \"node server.js\")",
+      "Bash(curl -s \"http://localhost:3002/api/s26-data?year=2026&month=05\")",
+      "Bash(curl -s \"http://localhost:3002/api/s26-data?year=2026&month=06\")",
+      "Bash(curl -s -X POST http://localhost:3002/api/ai-chat -H 'Content-Type: application/json' -d '{}')",
+      "Bash(curl -s http://localhost:3002/api/config)",
+      "Bash(python3 -c \"import json,sys; k=json.load\\(sys.stdin\\).get\\('ai_api_key',''\\); print\\('sí' if k else 'no \\(devolverá no_key\\)'\\)\")",
+      "Bash(curl -s -X POST http://localhost:3002/api/ai-chat -H 'Content-Type: application/json' -d '{\"question\":\"¿Cuál es el saldo total actual? Responde en una sola frase.\"}')",
+      "Bash(python3 -m json.tool)"
+    ]
+  }
+}

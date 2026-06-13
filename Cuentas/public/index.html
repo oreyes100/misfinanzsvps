@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Contabilidad Congregación — S-26 / S-30 / S-25c</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header>
+  <div class="header-left">
+    <a href="https://www.jw.org" target="_blank" title="JW.ORG">
+      <svg class="jw-logo" viewBox="0 0 40 40" width="36" height="36"><circle cx="20" cy="20" r="18" fill="#fff" stroke="#1a5276" stroke-width="2"/><text x="20" y="26" text-anchor="middle" font-size="16" font-weight="700" fill="#1a5276" font-family="Arial">JW</text></svg>
+    </a>
+    <div class="header-info">
+      <span class="header-title">PROGRAMA DE CONTABILIDAD PARA LA CONGREGACIÓN</span>
+      <span class="header-subtitle">Testigos de Jehová</span>
+    </div>
+    <a href="https://donate.jw.org" target="_blank" title="DONATE.JW.ORG" class="donate-link">DONAR</a>
+  </div>
+  <div class="header-right">
+    <div class="cong-info" id="congInfo">
+      <input id="cfgCong" placeholder="Congregación">
+      <input id="cfgCity" placeholder="Ciudad">
+      <input id="cfgProv" placeholder="Estado/Provincia">
+      <input id="cfgAiKey" type="password" placeholder="Clave API de IA — gratis (recibos)" title="Clave API GRATUITA de Google AI Studio (aistudio.google.com/apikey). Con ella, los recibos se interpretan con Gemini (IA de visión), que lee cantidades manuscritas. Sin clave se usa el OCR local.">
+      <button class="btn btn-xs" id="cfgSave">Guardar</button>
+    </div>
+  </div>
+</header>
+
+<!-- LANDING / MENU — muestra la Hoja de Cuentas S-26 del mes activo -->
+<section id="menu" class="section active">
+
+  <!-- Encabezado documental estilo S-26 -->
+  <div class="s26-doc-header">
+    <div class="s26-doc-title">HOJA DE CUENTAS</div>
+    <div class="s26-doc-meta">
+      <span><strong id="landingCong">—</strong><small>Congregación</small></span>
+      <span><strong id="landingCity">—</strong><small>Ciudad</small></span>
+      <span><strong id="landingProv">—</strong><small>Estado</small></span>
+      <span><strong id="landingMonthYear">—</strong><small>Mes / Año</small></span>
+    </div>
+  </div>
+
+  <!-- 3 botones grandes de acción rápida -->
+  <div class="landing-actions">
+    <button class="land-btn land-btn-ocr" onclick="openOcrModal()">
+      <span class="land-icon">📄</span>
+      <span class="land-label">Subir Recibo (OCR)</span>
+      <span class="land-sub">Captura Automática</span>
+    </button>
+    <button class="land-btn land-btn-analisis" onclick="showSection('analisis')">
+      <span class="land-icon">🔍</span>
+      <span class="land-label">ANÁLISIS CONTABLES</span>
+    </button>
+    <button class="land-btn land-btn-form" onclick="showSection('formularios')">
+      <span class="land-icon">🖨️</span>
+      <span class="land-label">FORMULARIOS OFICIALES</span>
+      <span class="land-sub">S-26 / S-30 / S-25c</span>
+    </button>
+  </div>
+
+  <!-- Selector de año de servicio + cuadrícula de meses -->
+  <div class="s26-nav-bar">
+    <div class="service-year-select">
+      <label>Año de Servicio:</label>
+      <select id="sySelect"></select>
+    </div>
+    <div class="month-grid" id="monthGrid"></div>
+  </div>
+
+  <!-- Tabla S-26 del mes seleccionado -->
+  <div class="s26-landing-wrap">
+    <table class="s26-landing-table">
+      <thead>
+        <tr class="s26-th-top">
+          <th rowspan="2">Fecha</th>
+          <th rowspan="2" class="s26-col-desc">DESCRIPCIÓN DE TRANSACCIÓN</th>
+          <th rowspan="2" class="s26-col-ct">CT</th>
+          <th colspan="2" class="s26-col-group">RECIBIDO</th>
+          <th colspan="2" class="s26-col-group">CUENTA PRINCIPAL</th>
+          <th colspan="2" class="s26-col-group">CUENTA SECUNDARIA</th>
+          <th rowspan="2" class="s26-col-saldo">SALDO</th>
+          <th rowspan="2" class="s26-col-acts"></th>
+        </tr>
+        <tr class="s26-th-sub">
+          <th>Entrada</th><th>Salida</th>
+          <th>Entrada</th><th>Salida</th>
+          <th>Entrada</th><th>Salida</th>
+        </tr>
+      </thead>
+      <tbody id="s26Body">
+        <tr><td colspan="11" class="s26-loading">Seleccione un mes para ver la hoja de cuentas</td></tr>
+      </tbody>
+      <tfoot id="s26Foot"></tfoot>
+    </table>
+  </div>
+
+  <!-- Saldos actuales -->
+  <div class="dashboard">
+    <div class="card" id="card-caja"><div class="card-title">RECIBIDO (DONACIONES)</div><div class="card-balance" id="balance-caja">$0.00</div></div>
+    <div class="card" id="card-corriente"><div class="card-title" style="font-size:.65rem">CUENTA PRINCIPAL (CAJA DE DINERO)</div><div class="card-balance" id="balance-corriente">$0.00</div></div>
+    <div class="card" id="card-sucursal"><div class="card-title">CUENTA SECUNDARIA</div><div class="card-balance" id="balance-sucursal">$0.00</div></div>
+    <div class="card card-total"><div class="card-title">TOTAL GENERAL</div><div class="card-balance" id="balance-total">$0.00</div></div>
+  </div>
+
+  <!-- Navegación secundaria (todos los módulos) -->
+  <div class="bottom-nav">
+    <div class="menu-card" onclick="showSection('cuentas')">📋 HOJA DE CUENTAS<br><small>S-26-S</small></div>
+    <div class="menu-card" onclick="showSection('informe')">📊 INFORME MENSUAL<br><small>S-30-S</small></div>
+    <div class="menu-card" onclick="showSection('formularios')">🖨️ FORMULARIOS<br><small>S-26 / S-30 / S-25c</small></div>
+    <div class="menu-card" onclick="showSection('relacion')">📈 RELACIÓN I/E</div>
+    <div class="menu-card" onclick="showSection('analisis')">🔍 ANÁLISIS CONTABLES</div>
+    <div class="menu-card" onclick="showSection('codigos')">📖 CÓDIGOS CT</div>
+  </div>
+
+</section>
+
+<!-- S-26-S: HOJA DE CUENTAS + REGISTRO -->
+<section id="cuentas" class="section">
+  <div class="section-header">
+    <h2>HOJA DE CUENTAS — S-26-S</h2>
+    <div class="section-nav">
+      <button class="btn btn-secondary" onclick="showSection('menu')">← Menú</button>
+      <button class="btn btn-secondary" onclick="window.print()">🖨 Imprimir</button>
+    </div>
+  </div>
+
+  <div class="form-section">
+    <form id="txnForm">
+      <div class="form-row">
+        <div class="form-group"><label>Fecha</label><input type="date" id="txnDate" required></div>
+        <div class="form-group"><label>Tipo</label>
+          <select id="txnType" required>
+            <option value="income">Entrada (Ingreso)</option>
+            <option value="expense">Salida (Gasto)</option>
+            <option value="transfer">Transferencia</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>Cuenta</label>
+          <select id="txnAccount" required>
+            <option value="caja">Recibido (Donaciones)</option>
+            <option value="corriente">Cuenta Principal (Caja de dinero)</option>
+            <option value="sucursal">Cuenta Secundaria</option>
+          </select>
+        </div>
+        <div class="form-group" id="toAccountGroup" style="display:none">
+          <label>Cuenta Destino</label>
+          <select id="txnToAccount">
+            <option value="corriente">Cuenta Principal (Caja de dinero)</option>
+            <option value="caja">Recibido (Donaciones)</option>
+            <option value="sucursal">Cuenta Secundaria</option>
+          </select>
+        </div>
+        <div class="form-group"><label>Código CT</label>
+          <select id="txnCode" required></select>
+        </div>
+      </div>
+      <div class="form-group"><label>Descripción de la Transacción</label>
+        <input type="text" id="txnDescription" placeholder="Describa la transacción..." required>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>Monto ($)</label>
+          <input type="number" id="txnAmount" step="0.01" min="0.01" placeholder="0.00" required>
+        </div>
+        <div class="form-group"><label>&nbsp;</label>
+          <button type="submit" class="btn btn-primary">Registrar Asiento</button>
+        </div>
+      </div>
+    </form>
+
+    <!-- Botón para abrir el modal OCR desde la sección de registro -->
+    <button type="button" class="btn btn-secondary" style="margin-top:.5rem" onclick="openOcrModal()">
+      📄 Subir Recibo (OCR) — Captura Automática
+    </button>
+  </div>
+
+  <div class="table-section">
+    <h3>REGISTRO DE TRANSACCIONES</h3>
+    <div class="filters">
+      <select id="filterAccount"><option value="">Todas las cuentas</option><option value="caja">Recibido</option><option value="corriente">Cta. Principal (Caja)</option><option value="sucursal">Cta. Secundaria</option></select>
+      <select id="filterType"><option value="">Todos</option><option value="income">Entradas</option><option value="expense">Salidas</option><option value="transfer">Transferencias</option></select>
+      <input type="text" id="filterCode" placeholder="Código" maxlength="2">
+      <button class="btn btn-secondary" id="filterBtn">Filtrar</button>
+      <button class="btn btn-secondary" id="clearFilterBtn">Limpiar</button>
+    </div>
+    <div class="table-wrapper">
+      <table>
+        <thead><tr><th>Fecha</th><th>Cuenta</th><th>CT</th><th>Descripción de Transacción</th><th>Tipo</th><th>Entrada $</th><th>Salida $</th><th style="width:84px">Acciones</th></tr></thead>
+        <tbody id="txnTableBody"></tbody>
+      </table>
+    </div>
+    <div id="pagination"></div>
+  </div>
+</section>
+
+<!-- S-30-S: INFORME MENSUAL -->
+<section id="informe" class="section">
+  <div class="section-header">
+    <h2>INFORME MENSUAL DE CUENTAS — S-30-S</h2>
+    <div class="section-nav">
+      <button class="btn btn-secondary" onclick="showSection('menu')">← Menú</button>
+      <button class="btn btn-secondary" onclick="window.print()">🖨 Imprimir</button>
+    </div>
+  </div>
+
+  <div class="filters">
+    <select id="reportYear"></select>
+    <select id="reportMonth">
+      <option value="01">Enero</option><option value="02">Febrero</option><option value="03">Marzo</option>
+      <option value="04">Abril</option><option value="05">Mayo</option><option value="06">Junio</option>
+      <option value="07">Julio</option><option value="08">Agosto</option><option value="09">Septiembre</option>
+      <option value="10">Octubre</option><option value="11">Noviembre</option><option value="12">Diciembre</option>
+    </select>
+    <button class="btn btn-primary" id="reportBtn">Generar Informe</button>
+  </div>
+
+  <div id="reportResults"></div>
+</section>
+
+<!-- FORMULARIOS: S-26, S-30, S-25c exactos para imprimir -->
+<section id="formularios" class="section">
+  <div class="section-header">
+    <h2>FORMULARIOS OFICIALES</h2>
+    <div class="section-nav">
+      <button class="btn btn-secondary" onclick="showSection('menu')">← Menú</button>
+      <button class="btn btn-primary" onclick="document.querySelector('.form-print-area').classList.add('printing');setTimeout(()=>window.print(),200)">🖨️ Imprimir</button>
+    </div>
+  </div>
+
+  <div class="form-tabs">
+    <button class="form-tab active" data-form="s26" onclick="showForm('s26')">📋 S-26-S<br><small>Hoja de Cuentas</small></button>
+    <button class="form-tab" data-form="s30" onclick="showForm('s30')">📊 S-30-S<br><small>Informe Mensual</small></button>
+    <button class="form-tab" data-form="s25c" onclick="showForm('s25c')">🔍 S-25c<br><small>Auditoría</small></button>
+  </div>
+
+  <div class="form-controls" style="margin:.75rem 0;display:flex;gap:.5rem;flex-wrap:wrap;align-items:center">
+    <select id="formYear"></select>
+    <select id="formMonth">
+      <option value="01">Enero</option><option value="02">Febrero</option><option value="03">Marzo</option>
+      <option value="04">Abril</option><option value="05">Mayo</option><option value="06">Junio</option>
+      <option value="07">Julio</option><option value="08">Agosto</option><option value="09">Septiembre</option>
+      <option value="10">Octubre</option><option value="11">Noviembre</option><option value="12">Diciembre</option>
+    </select>
+    <select id="formQuarter" style="display:none">
+      <option value="1">1.er Trimestre (Sep-Oct-Nov)</option>
+      <option value="2">2.º Trimestre (Dic-Ene-Feb)</option>
+      <option value="3">3.er Trimestre (Mar-Abr-May)</option>
+      <option value="4">4.º Trimestre (Jun-Jul-Ago)</option>
+    </select>
+    <button class="btn btn-primary" id="formGenerateBtn">Generar Formulario</button>
+  </div>
+
+  <div class="form-print-area" id="formPrintArea">
+    <p style="color:var(--text-light);text-align:center;padding:2rem">Seleccione un mes y genere el formulario.</p>
+  </div>
+</section>
+
+<!-- RELACIÓN I/E -->
+<section id="relacion" class="section">
+  <div class="section-header">
+    <h2>RELACIÓN DE INGRESOS Y EGRESOS</h2>
+    <div class="section-nav">
+      <button class="btn btn-secondary" onclick="showSection('menu')">← Menú</button>
+    </div>
+  </div>
+
+  <div class="filters">
+    <select id="chartSySelect"></select>
+    <button class="btn btn-primary" id="chartBtn">Generar Gráfico</button>
+  </div>
+
+  <div id="chartContainer">
+    <canvas id="ieChart" width="800" height="350"></canvas>
+  </div>
+  <div id="chartTable"></div>
+</section>
+
+<!-- ANÁLISIS CONTABLES -->
+<section id="analisis" class="section">
+  <div class="section-header">
+    <h2>ANÁLISIS CONTABLES</h2>
+    <div class="section-nav">
+      <button class="btn btn-secondary" onclick="showSection('menu')">← Menú</button>
+    </div>
+  </div>
+
+  <div class="filters">
+    <select id="analYear"></select>
+    <select id="analMonth">
+      <option value="01">Enero</option><option value="02">Febrero</option><option value="03">Marzo</option>
+      <option value="04">Abril</option><option value="05">Mayo</option><option value="06">Junio</option>
+      <option value="07">Julio</option><option value="08">Agosto</option><option value="09">Septiembre</option>
+      <option value="10">Octubre</option><option value="11">Noviembre</option><option value="12">Diciembre</option>
+    </select>
+    <button class="btn btn-primary" id="analBtn">Verificar</button>
+  </div>
+
+  <div id="analResult">
+    <div class="anal-msg" id="analMsg">Seleccione un mes para verificar la contabilidad.</div>
+    <div id="analDetails"></div>
+  </div>
+</section>
+
+<!-- CÓDIGOS -->
+<section id="codigos" class="section">
+  <div class="section-header">
+    <h2>CÓDIGOS DE TRANSACCIONES (CT)</h2>
+    <div class="section-nav">
+      <button class="btn btn-secondary" onclick="showSection('menu')">← Menú</button>
+    </div>
+  </div>
+  <div id="codesTable"></div>
+</section>
+
+<!-- MODAL OCR — Captura Automática de Recibos -->
+<dialog id="ocrModal" class="ocr-modal">
+  <div class="ocr-modal-header">
+    <h2>📄 Subir Recibo — Captura Automática</h2>
+    <button class="ocr-modal-close" onclick="closeOcrModal()" aria-label="Cerrar">✕</button>
+  </div>
+  <div class="ocr-modal-body">
+    <p style="font-size:.8rem;color:var(--text-light);margin-bottom:.75rem">Sube la foto de un recibo. El sistema extrae los datos con OCR y permite registrar la transacción con un clic. Una vez aprobadas, las transacciones se añaden a la hoja de cuentas.</p>
+    <div class="upload-area" id="uploadArea">
+      <p>Arrastre una imagen de recibo aquí o haga clic para seleccionar</p>
+      <input type="file" id="receiptInput" accept="image/*" hidden>
+      <button type="button" class="btn btn-secondary" id="uploadBtn">Seleccionar Imagen</button>
+    </div>
+    <div id="ocrAiHint" style="display:none;background:#fef9e7;border:1px solid #f5cba7;border-radius:6px;padding:.5rem .65rem;margin:.5rem 0;font-size:.75rem">
+      <strong>💡 Active la IA gratuita para leer cantidades manuscritas.</strong>
+      El OCR local no puede leer números escritos a mano. Cree una clave <u>gratuita</u> en
+      <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com/apikey</a>
+      (cuenta de Google, sin tarjeta), péguela aquí y vuelva a subir el recibo:
+      <div style="display:flex;gap:.4rem;margin-top:.4rem">
+        <input id="ocrAiKeyInput" type="password" placeholder="Clave API de Google AI Studio" style="flex:1;font-size:.75rem;padding:.3rem;border:1px solid #d5d8dc;border-radius:4px">
+        <button type="button" class="btn btn-primary btn-xs" id="ocrAiKeySave">Guardar clave</button>
+      </div>
+    </div>
+    <div id="ocrLoading" style="display:none"><div class="spinner"></div><p>Procesando imagen con OCR…</p></div>
+    <div id="ocrResult" style="display:none">
+      <div style="display:grid;grid-template-columns:1fr 1.7fr;gap:.75rem">
+        <div>
+          <h4 style="font-size:.8rem">📝 Texto Reconocido</h4>
+          <pre id="ocrText"></pre>
+        </div>
+        <div>
+          <h4 style="font-size:.8rem">✅ Captura Automática <span id="ocrVerifyBadge"></span></h4>
+          <p style="font-size:.68rem;color:var(--text-light);margin:.2rem 0 .35rem">Revise y corrija cada línea antes de registrar. Las líneas en <span style="color:#f39c12;font-weight:700">naranja</span> necesitan validación; las marcadas en <span style="color:#27ae60;font-weight:700">verde</span> cuadran con el TOTAL del recibo.</p>
+          <div style="background:#fff;border-radius:6px;padding:.5rem;font-size:.8rem">
+            <table class="ocr-lines-table">
+              <thead><tr><th style="width:108px">Fecha</th><th>Descripción</th><th style="width:64px">CT</th><th style="width:86px">Tipo</th><th style="width:120px">Cuenta</th><th style="width:86px">Monto $</th><th style="width:24px"></th></tr></thead>
+              <tbody id="ocrLinesBody"></tbody>
+            </table>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:.4rem;flex-wrap:wrap;gap:.4rem">
+              <button type="button" class="btn btn-secondary btn-xs" id="ocrAddLineBtn">＋ Agregar línea</button>
+              <div id="ocrSumCheck" style="font-size:.75rem;font-weight:600"></div>
+            </div>
+            <button type="button" class="btn btn-primary" id="autoRegisterBtn" style="width:100%;margin-top:.5rem;justify-content:center">
+              ⚡ Registrar transacciones
+            </button>
+          </div>
+        </div>
+      </div>
+      <div style="margin-top:.5rem">
+        <h4 style="font-size:.75rem;color:var(--primary)">Vista Previa en S-26-S</h4>
+        <div id="ocrFormPreview" class="form-preview">
+          <p style="color:var(--text-light);font-size:.7rem">Suba un recibo para ver cómo se llena</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</dialog>
+
+<!-- ASISTENTE IA -->
+<button id="aiFab" onclick="toggleAiChat()" title="Asistente Contable IA" aria-label="Abrir asistente de IA">✨</button>
+<div id="aiChat" class="ai-chat" role="dialog" aria-label="Asistente contable de IA">
+  <div class="ai-chat-header">
+    <span class="ai-chat-title"><span class="ai-orb"></span> Asistente Contable IA</span>
+    <button class="ai-chat-close" onclick="toggleAiChat()" aria-label="Cerrar">✕</button>
+  </div>
+  <div class="ai-chat-msgs" id="aiChatMsgs">
+    <div class="ai-msg ai">
+      ¡Hola! 👋 Soy tu asistente contable. Pregúntame sobre saldos, movimientos, códigos CT o informes.
+      <div class="ai-chips">
+        <button type="button" onclick="aiAsk('¿Cuál es el saldo actual de todas las cuentas?')">💰 Saldos</button>
+        <button type="button" onclick="aiAsk('Dame un resumen de los movimientos de este mes')">📊 Resumen del mes</button>
+        <button type="button" onclick="aiAsk('¿Cuánto se ha donado a la obra mundial este mes?')">🌍 Obra mundial</button>
+        <button type="button" onclick="aiAsk('¿Hay algo inusual o pendiente en la contabilidad?')">🔍 Revisión</button>
+      </div>
+    </div>
+  </div>
+  <form id="aiChatForm" class="ai-chat-input">
+    <input id="aiChatInput" placeholder="Pregunte sobre las cuentas…" autocomplete="off">
+    <button type="submit" aria-label="Enviar pregunta">➤</button>
+  </form>
+</div>
+
+<div id="toast"></div>
+<script src="app.js?v=9"></script>
+</body>
+</html>

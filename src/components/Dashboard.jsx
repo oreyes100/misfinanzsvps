@@ -14,36 +14,52 @@ function Delta({ value }) {
   );
 }
 
-/** Barras de ingresos mensuales; la porción de intereses se resalta en azul. */
-function IncomeBars({ months, base, fx }) {
+/** Ingresos del mes corriente: tarjeta grande y colorida, con porción de intereses y comparación vs mes anterior. */
+function CurrentMonthIncome({ months, base, fx }) {
   const inBase = (eur) => convert(eur, "EUR", base, fx);
-  const max = Math.max(1, ...months.map((m) => m.total));
+  const current = months[months.length - 1];
+  const previous = months[months.length - 2];
+  if (!current) return null;
+  const interestPct = current.total > 0 ? (current.interest / current.total) * 100 : 0;
+  const delta = previous?.total > 0 ? (current.total - previous.total) / previous.total : null;
+  const monthName = new Date().toLocaleDateString("es-ES", { month: "long", year: "numeric" });
+
   return (
     <div
-      className="flex h-36 items-end gap-2"
+      className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-emerald-500/20 via-teal-500/10 to-sky-500/20 p-5 ring-1 ring-emerald-400/20"
       role="img"
-      aria-label={`Ingresos últimos meses: ${months.map((m) => `${m.label} ${fmtMoney(inBase(m.total), base, { compact: true })}`).join(", ")}`}
+      aria-label={`Ingresos de ${monthName}: ${fmtMoney(inBase(current.total), base)}, de los cuales ${fmtMoney(inBase(current.interest), base)} son intereses`}
     >
-      {months.map((m) => {
-        const h = (m.total / max) * 100;
-        const interestPct = m.total > 0 ? (m.interest / m.total) * 100 : 0;
-        return (
-          <div key={m.key} className="flex flex-1 flex-col items-center gap-1">
-            <span className="text-[10px] tabular-nums text-ink-dim">{m.total > 0 ? fmtMoney(inBase(m.total), base, { compact: true }) : ""}</span>
-            {base !== "EUR" && (
-              <span className="text-[9px] tabular-nums text-ink-dim/60">{m.total > 0 ? `≈ ${fmtMoney(m.total, "EUR", { compact: true })}` : ""}</span>
-            )}
-            <div className="flex w-full max-w-10 flex-1 items-end">
-              <div className="relative w-full overflow-hidden rounded-t-md bg-gain/80" style={{ height: `${Math.max(h, 1)}%` }} title={`${m.label}: ${fmtMoney(inBase(m.total), base)} (intereses ${fmtMoney(inBase(m.interest), base)})`}>
-                {interestPct > 0 && (
-                  <div className="absolute inset-x-0 bottom-0 bg-accent" style={{ height: `${interestPct}%` }} aria-hidden="true" />
-                )}
-              </div>
-            </div>
-            <span className="text-[11px] capitalize text-ink-dim">{m.label}</span>
-          </div>
-        );
-      })}
+      <p className="text-xs font-medium uppercase tracking-widest text-emerald-300/80">{monthName}</p>
+      <p className="mt-1 text-4xl font-bold tabular-nums text-white">
+        {fmtMoney(inBase(current.total), base)}
+      </p>
+      {base !== "EUR" && (
+        <p className="text-xs tabular-nums text-ink-dim">≈ {fmtMoney(current.total, "EUR")}</p>
+      )}
+      {delta !== null && (
+        <p className={`mt-1 text-sm font-semibold ${delta >= 0 ? "text-gain" : "text-loss"}`}>
+          {delta >= 0 ? "▲" : "▼"} {fmtPct(Math.abs(delta))} vs mes anterior
+        </p>
+      )}
+
+      {/* Barra grande: ingresos con porción de intereses */}
+      <div className="mt-4 h-6 overflow-hidden rounded-full bg-white/10">
+        <div className="relative h-full rounded-full bg-gradient-to-r from-emerald-500 via-teal-400 to-sky-400" style={{ width: "100%" }}>
+          {interestPct > 0 && (
+            <div
+              className="absolute inset-y-0 right-0 rounded-r-full bg-gradient-to-r from-indigo-400 to-violet-400"
+              style={{ width: `${interestPct}%` }}
+              title={`Intereses: ${fmtMoney(inBase(current.interest), base)}`}
+              aria-hidden="true"
+            />
+          )}
+        </div>
+      </div>
+      <div className="mt-2 flex justify-between text-xs text-ink-dim">
+        <span className="flex items-center gap-1"><span className="size-2 rounded-sm bg-emerald-400" aria-hidden="true" /> Nómina y otros: {fmtMoney(inBase(current.total - current.interest), base, { compact: true })}</span>
+        <span className="flex items-center gap-1"><span className="size-2 rounded-sm bg-violet-400" aria-hidden="true" /> Intereses: {fmtMoney(inBase(current.interest), base, { compact: true })}</span>
+      </div>
     </div>
   );
 }
@@ -313,19 +329,9 @@ export default function Dashboard() {
 
         <hr className="my-3 border-white/8" />
 
-        <div className="mb-2 flex flex-wrap items-baseline justify-between gap-1">
-          <h2 className="text-sm font-semibold">Ingresos por mes</h2>
-          <span className="flex items-center gap-3 text-xs text-ink-dim">
-            <span className="flex items-center gap-1"><span className="size-2 rounded-sm bg-gain" aria-hidden="true" /> Ingresos</span>
-            <span className="flex items-center gap-1"><span className="size-2 rounded-sm bg-accent" aria-hidden="true" /> Intereses</span>
-          </span>
-        </div>
-        <IncomeBars months={incomeMonths} base={base} fx={state.fx} />
-        <p className="mt-2 text-xs text-ink-dim tabular-nums">
-          Total 6 meses: {fmtMoney(inBase(incomeMonths.reduce((s, m) => s + m.total, 0)), base, { compact: true })}
-          {base !== "EUR" && <> ≈ {fmtMoney(incomeMonths.reduce((s, m) => s + m.total, 0), "EUR", { compact: true })}</>}
-          {" · "}Intereses: {fmtMoney(inBase(incomeMonths.reduce((s, m) => s + m.interest, 0)), base, { compact: true })}
-        </p>
+        <h2 className="mb-2 text-sm font-semibold">Ingresos del mes</h2>
+        <CurrentMonthIncome months={incomeMonths} base={base} fx={state.fx} />
+        <p className="mt-2 text-xs text-ink-dim">Histórico de 3, 6 y 12 meses en la sección <strong>Reportes</strong>.</p>
       </Glass>
 
       <AnimatePresence>

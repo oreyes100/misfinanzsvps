@@ -19,7 +19,10 @@
       "Bash(mkdir -p \"/Users/jorge/No sync/Mis finazas/.claude/rules\")",
       "Bash(git init *)",
       "Bash(git config *)",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(vercel --prod)",
+      "Bash(git rm *)"
     ]
   }
 }
