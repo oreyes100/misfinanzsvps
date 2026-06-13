@@ -198,6 +198,16 @@ export default function Dashboard() {
           ))}
         </dl>
 
+        {/* Préstamo de auto: deuda fuera del patrimonio neto, destacada en su propia fila. */}
+        {nw.autoLoan < 0 && (
+          <div className="mt-3 flex items-baseline justify-between border-t-2 border-loss/30 pt-3">
+            <dt className="text-base font-bold text-loss">Préstamo de auto</dt>
+            <dd className="text-2xl font-bold tabular-nums text-loss">
+              −{fmtMoney(inBase(Math.abs(nw.autoLoan)), base, { compact: true })}
+            </dd>
+          </div>
+        )}
+
         <div className="mt-4 flex gap-2">
           <Btn onClick={() => setModal("transfer")}>⇄ Transferir</Btn>
           <Btn variant="ghost" onClick={() => setModal("tx")}>+ Movimiento</Btn>

@@ -3,8 +3,8 @@ import { motion } from "framer-motion";
 import { login } from "../auth.js";
 import { Btn, inputCls } from "./UI.jsx";
 
-// Video de stock libre (Pexels — gráficas financieras). Si no carga, queda el gradiente de respaldo.
-const BG_VIDEO = "https://videos.pexels.com/video-files/7579577/7579577-uhd_2560_1440_25fps.mp4";
+// Video servido localmente desde /public (evita 403 por hotlinking). Gradiente de respaldo si no carga.
+const BG_VIDEO = "/finance-bg.mp4";
 
 export default function Login({ onLogin }) {
   const [username, setUsername] = useState("");

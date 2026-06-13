@@ -2,59 +2,101 @@ const express = require('express');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-const { initDB, query, get, run, transaction, saveDB } = require('./database');
+const { initDB, query, get, run, transaction, saveDB, flushToBlob, IS_VERCEL } = require('./database');
 const { parseDate, detectCategory, suggestFromOCR, extractAmountCandidates } = require('./receipt-parser');
 
 const app = express();
 const PORT = process.env.PORT || 3002;
 
-let dbReady;
-initDB().then(() => {
-  recalcBalances();
-  // Códigos del modelo contable de la congregación (según hoja de cuentas).
-  // Siembra de una sola vez: si se ejecutara en cada arranque, resucitaría
-  // códigos eliminados por el usuario y pisaría sus ediciones.
-  const seeded = get("SELECT value FROM config WHERE key='codes_seed_v2'");
-  if (!seeded) {
-    run("INSERT OR IGNORE INTO codes (code, description, category) VALUES (?, ?, ?)", ['OM', 'Donación para la obra mundial', 'income']);
-    run("INSERT OR IGNORE INTO codes (code, description, category) VALUES (?, ?, ?)", ['C', 'Donaciones para la congregación', 'income']);
-    run("INSERT OR IGNORE INTO codes (code, description, category) VALUES (?, ?, ?)", ['D', 'Depósito en la caja de efectivo', 'transfer']);
-    run("INSERT OR IGNORE INTO codes (code, description, category) VALUES (?, ?, ?)", ['OV', 'Orador visitante / discursante', 'expense']);
-    run("INSERT OR IGNORE INTO codes (code, description, category) VALUES (?, ?, ?)", ['G', 'Gastos de la congregación', 'expense']);
-    run("INSERT OR IGNORE INTO codes (code, description, category) VALUES (?, ?, ?)", ['SOM', 'Obra mundial (de la caja)', 'expense']);
-    run("INSERT OR IGNORE INTO codes (code, description, category) VALUES (?, ?, ?)", ['ROM', 'Obra mundial (resolución)', 'expense']);
-    run("UPDATE codes SET category='income', description='Donaciones para la congregación' WHERE code='C'");
-    run("DELETE FROM codes WHERE code='OR' AND NOT EXISTS (SELECT 1 FROM transactions WHERE code='OR')");
-    run("INSERT INTO config (key, value) VALUES ('codes_seed_v2', '1')");
-  }
-  // Cuentas según las columnas de la hoja S-26:
-  //   caja → RECIBIDO (donaciones) · corriente → CUENTA PRINCIPAL (caja de dinero) · sucursal → CUENTA SECUNDARIA
-  run("UPDATE accounts SET name='Recibido (Donaciones)' WHERE id='caja'");
-  run("UPDATE accounts SET name='Cuenta Principal (Caja de dinero)' WHERE id='corriente'");
-  run("UPDATE accounts SET name='Cuenta Secundaria' WHERE id='sucursal'");
-  run("INSERT OR IGNORE INTO config (key, value) VALUES ('ai_api_key', '')");
-  saveDB();
-  dbReady = true;
-  const server = app.listen(PORT, () => console.log(`Servidor corriendo en http://localhost:${PORT}`));
-  server.on('error', (err) => {
-    if (err.code === 'EADDRINUSE') {
-      console.error(`⚠ El puerto ${PORT} ya está ocupado: el servidor ya estaba corriendo.`);
-      console.error(`  Abra http://localhost:${PORT} o cierre la otra instancia con: lsof -ti:${PORT} | xargs kill`);
-      process.exit(1);
+let dbReady = false;
+let bootPromise = null;
+
+/** Inicializa BD + siembra. Idempotente y cacheado (clave en serverless). */
+function boot() {
+  if (bootPromise) return bootPromise;
+  bootPromise = initDB().then(async () => {
+    recalcBalances();
+    // Códigos del modelo contable de la congregación (según hoja de cuentas).
+    // Siembra de una sola vez: si se ejecutara en cada arranque, resucitaría
+    // códigos eliminados por el usuario y pisaría sus ediciones.
+    const seeded = get("SELECT value FROM config WHERE key='codes_seed_v2'");
+    if (!seeded) {
+      run("INSERT OR IGNORE INTO codes (code, description, category) VALUES (?, ?, ?)", ['OM', 'Donación para la obra mundial', 'income']);
+      run("INSERT OR IGNORE INTO codes (code, description, category) VALUES (?, ?, ?)", ['C', 'Donaciones para la congregación', 'income']);
+      run("INSERT OR IGNORE INTO codes (code, description, category) VALUES (?, ?, ?)", ['D', 'Depósito en la caja de efectivo', 'transfer']);
+      run("INSERT OR IGNORE INTO codes (code, description, category) VALUES (?, ?, ?)", ['OV', 'Orador visitante / discursante', 'expense']);
+      run("INSERT OR IGNORE INTO codes (code, description, category) VALUES (?, ?, ?)", ['G', 'Gastos de la congregación', 'expense']);
+      run("INSERT OR IGNORE INTO codes (code, description, category) VALUES (?, ?, ?)", ['SOM', 'Obra mundial (de la caja)', 'expense']);
+      run("INSERT OR IGNORE INTO codes (code, description, category) VALUES (?, ?, ?)", ['ROM', 'Obra mundial (resolución)', 'expense']);
+      run("UPDATE codes SET category='income', description='Donaciones para la congregación' WHERE code='C'");
+      run("DELETE FROM codes WHERE code='OR' AND NOT EXISTS (SELECT 1 FROM transactions WHERE code='OR')");
+      run("INSERT INTO config (key, value) VALUES ('codes_seed_v2', '1')");
     }
-    throw err;
+    // Cuentas según las columnas de la hoja S-26:
+    //   caja → RECIBIDO (donaciones) · corriente → CUENTA PRINCIPAL (caja de dinero) · sucursal → CUENTA SECUNDARIA
+    run("UPDATE accounts SET name='Recibido (Donaciones)' WHERE id='caja'");
+    run("UPDATE accounts SET name='Cuenta Principal (Caja de dinero)' WHERE id='corriente'");
+    run("UPDATE accounts SET name='Cuenta Secundaria' WHERE id='sucursal'");
+    run("INSERT OR IGNORE INTO config (key, value) VALUES ('ai_api_key', '')");
+    saveDB();
+    await flushToBlob(); // persiste la siembra en la nube en el primer arranque
+    dbReady = true;
   });
+  return bootPromise;
+}
+
+// En local arrancamos el servidor HTTP. En Vercel se exporta el app (ver api/index.js).
+if (!IS_VERCEL) {
+  boot().then(() => {
+    const server = app.listen(PORT, () => console.log(`Servidor corriendo en http://localhost:${PORT}`));
+    server.on('error', (err) => {
+      if (err.code === 'EADDRINUSE') {
+        console.error(`⚠ El puerto ${PORT} ya está ocupado: el servidor ya estaba corriendo.`);
+        console.error(`  Abra http://localhost:${PORT} o cierre la otra instancia con: lsof -ti:${PORT} | xargs kill`);
+        process.exit(1);
+      }
+      throw err;
+    });
+  });
+}
+
+// Middleware serverless (primero): garantiza BD lista antes de cada request y,
+// al terminar la respuesta, persiste la BD a Blob si hubo cambios.
+app.use(async (req, res, next) => {
+  try {
+    await boot();
+  } catch (e) {
+    return res.status(500).json({ error: 'Init BD: ' + e.message });
+  }
+  if (IS_VERCEL) {
+    // Persistir a Blob DESPUÉS de enviar la respuesta, pero manteniendo viva la
+    // lambda con waitUntil hasta que el PUT termine (si no, la función se congela
+    // antes de completar la escritura y se pierde el cambio).
+    let flushed = false;
+    const done = new Promise((resolve) => {
+      const doFlush = async () => { if (flushed) return; flushed = true; try { await flushToBlob(); } finally { resolve(); } };
+      res.on('finish', doFlush);
+      res.on('close', doFlush);
+    });
+    try { require('@vercel/functions').waitUntil(done); } catch { /* fallback: best-effort */ }
+  }
+  next();
 });
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+// En local los recibos se sirven del disco; en Vercel viven en Vercel Blob (URL propia).
+if (!IS_VERCEL) app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, path.join(__dirname, 'uploads')),
-  // path.basename evita traversal; se normalizan caracteres problemáticos del nombre original
-  filename: (req, file, cb) => cb(null, Date.now() + '-' + path.basename(file.originalname).replace(/[^\w.\- ]/g, '_'))
-});
+// En Vercel el filesystem es de solo lectura → guardar el archivo en memoria y subirlo a Blob.
+// En local se mantiene el disco para no romper el flujo de OCR existente.
+const storage = IS_VERCEL
+  ? multer.memoryStorage()
+  : multer.diskStorage({
+      destination: (req, file, cb) => cb(null, path.join(__dirname, 'uploads')),
+      // path.basename evita traversal; se normalizan caracteres problemáticos del nombre original
+      filename: (req, file, cb) => cb(null, Date.now() + '-' + path.basename(file.originalname).replace(/[^\w.\- ]/g, '_')),
+    });
 const upload = multer({
   storage,
   limits: { fileSize: 10 * 1024 * 1024 },
@@ -488,6 +530,26 @@ function mindeeToJwFormat(pred) {
 app.post('/api/upload-receipt', upload.single('receipt'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No se subió ningún archivo' });
 
+  // En Vercel el archivo llega en memoria: escribirlo a /tmp para que el OCR
+  // (sharp/tesseract, que leen rutas) funcione, y guardarlo en Blob para servirlo.
+  let blobUrl = null;
+  if (IS_VERCEL) {
+    const safeName = Date.now() + '-' + path.basename(req.file.originalname || 'recibo').replace(/[^\w.\- ]/g, '_');
+    const tmpPath = '/tmp/' + safeName;
+    fs.writeFileSync(tmpPath, req.file.buffer);
+    req.file.path = tmpPath;
+    req.file.filename = safeName;
+    try {
+      const { put } = require('@vercel/blob');
+      const blob = await put('cuentas/uploads/' + safeName, req.file.buffer, {
+        access: 'private', addRandomSuffix: false, allowOverwrite: true, contentType: req.file.mimetype,
+      });
+      blobUrl = blob.url;
+    } catch (e) {
+      console.warn('Subida de recibo a Blob falló:', e.message);
+    }
+  }
+
   let ocrResult = null;
   let ocrError = null;
   let useMindee = false;
@@ -550,7 +612,7 @@ app.post('/api/upload-receipt', upload.single('receipt'), async (req, res) => {
 
   res.json({
     filename: req.file.filename,
-    filepath: '/uploads/' + req.file.filename,
+    filepath: blobUrl || ('/uploads/' + req.file.filename),
     text: ocrResult?.text || '',
     suggested: ocrResult?.suggested || { amount: null, description: '', type: 'expense', multi: false },
     engine: engine || (useMindee ? 'mindee' : 'tesseract'),
@@ -1110,4 +1172,8 @@ app.get('/api/forms/s25c', (req, res) => {
   res.json({ year, quarter, months: ranges, config: cfg, accounts, monthData, totalIncome, totalExpense, fundsAtStart, fundsAtEnd });
 });
 
-app.get('/api/health', (req, res) => { res.json({ status: 'ok', dbReady: !!dbReady }); });
+app.get('/api/health', (req, res) => { res.json({ status: 'ok', dbReady: !!dbReady, runtime: IS_VERCEL ? 'vercel' : 'local' }); });
+
+// Vercel (preset Express) usa este export como handler: debe ser una función/servidor.
+// El middleware de boot al inicio del app hace que sea autónomo en serverless.
+module.exports = app;

@@ -1,18 +1,76 @@
 const initSqlJs = require('sql.js');
 const fs = require('fs');
 const path = require('path');
-const dbPath = path.join(__dirname, 'contabilidad.db');
+
+// En Vercel (serverless) el filesystem del proyecto es de solo lectura; solo
+// /tmp es escribible y efímero. La copia durable vive en Vercel Blob.
+const IS_VERCEL = !!process.env.VERCEL;
+const dbPath = IS_VERCEL ? '/tmp/contabilidad.db' : path.join(__dirname, 'contabilidad.db');
+const BLOB_KEY = 'cuentas/contabilidad.db';
 
 let db;
+let _dirty = false;
+
+function blobStoreUrl() {
+  const storeId = (process.env.BLOB_READ_WRITE_TOKEN || '').split('_')[3] || '';
+  return `https://${storeId.toLowerCase()}.private.blob.vercel-storage.com/${BLOB_KEY}`;
+}
+
+/** Descarga la BD desde Vercel Blob a /tmp. Devuelve true si existía copia en la nube. */
+async function loadFromBlob() {
+  if (!IS_VERCEL || !process.env.BLOB_READ_WRITE_TOKEN) return false;
+  try {
+    const { get } = require('@vercel/blob');
+    const result = await get(`${blobStoreUrl()}?nc=${Date.now()}`, { access: 'private' });
+    if (!result) return false;
+    const buffer = Buffer.from(await new Response(result.stream).arrayBuffer());
+    fs.writeFileSync(dbPath, buffer);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Sube la BD actual (/tmp) a Vercel Blob si hay cambios pendientes. */
+async function flushToBlob() {
+  if (!IS_VERCEL || !_dirty || !process.env.BLOB_READ_WRITE_TOKEN) return;
+  try {
+    const { put } = require('@vercel/blob');
+    const buffer = fs.readFileSync(dbPath);
+    await put(BLOB_KEY, buffer, {
+      access: 'private',
+      addRandomSuffix: false,
+      allowOverwrite: true,
+      contentType: 'application/octet-stream',
+    });
+    _dirty = false;
+  } catch (e) {
+    console.error('flushToBlob falló:', e.message);
+  }
+}
 
 function saveDB() {
   const data = db.export();
   const buffer = Buffer.from(data);
   fs.writeFileSync(dbPath, buffer);
+  _dirty = true; // marcar para que el wrapper serverless lo suba a Blob
 }
 
 async function initDB() {
-  const SQL = await initSqlJs();
+  // locateFile resuelve el .wasm de sql.js de forma robusta tanto en local como
+  // en el bundle serverless de Vercel (require.resolve lo marca para node-file-trace).
+  const SQL = await initSqlJs({
+    locateFile: (file) => {
+      // Local: resolver desde node_modules. Vercel: copia incluida en public/ (includeFiles).
+      try { return require.resolve('sql.js/dist/' + file); } catch {}
+      const inPublic = path.join(__dirname, 'public', file);
+      if (fs.existsSync(inPublic)) return inPublic;
+      return file;
+    },
+  });
+
+  // En la nube: intentar traer la copia durable antes de leer el archivo local.
+  if (IS_VERCEL) await loadFromBlob();
 
   if (fs.existsSync(dbPath)) {
     const buffer = fs.readFileSync(dbPath);
@@ -152,4 +210,4 @@ function transaction(fn) {
   }
 }
 
-module.exports = { initDB, getDB, query, get, run, transaction, saveDB };
+module.exports = { initDB, getDB, query, get, run, transaction, saveDB, flushToBlob, IS_VERCEL };

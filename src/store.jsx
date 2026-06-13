@@ -507,12 +507,18 @@ export function useStore() {
 
 export function netWorthEUR(state) {
   const { accounts, assets, fx, goldPriceEUR } = state;
-  const cash = accounts.reduce((s, a) => s + a.balance * (fx[a.currency] ?? 1), 0);
+  // Préstamo de auto: deuda que NO resta del patrimonio neto total; se reporta aparte.
+  const autoLoan = accounts
+    .filter((a) => a.type === "auto_loan")
+    .reduce((s, a) => s + a.balance * (fx[a.currency] ?? 1), 0); // negativo (deuda)
+  const cash = accounts
+    .filter((a) => a.type !== "auto_loan")
+    .reduce((s, a) => s + a.balance * (fx[a.currency] ?? 1), 0);
   const crypto = assets.crypto.reduce((s, c) => s + c.qty * (fx[c.symbol] ?? 0), 0);
   const gold = assets.gold.grams * goldPriceEUR;
   const re = assets.realEstate.reduce((s, r) => s + r.valueEUR, 0);
   const depreciating = (assets.depreciating || []).reduce((s, d) => s + d.valueEUR, 0);
-  return { cash, crypto, gold, realEstate: re, depreciating, total: cash + crypto + gold + re + depreciating };
+  return { cash, crypto, gold, realEstate: re, depreciating, autoLoan, total: cash + crypto + gold + re + depreciating };
 }
 
 export function monthSpend(state) {

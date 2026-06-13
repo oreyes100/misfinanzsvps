@@ -1,0 +1,14 @@
+node_modules
+dashboard
+uploads
+*.db
+*.zip
+*.pdf
+*.jpeg
+*.jpg
+*.png
+*.log
+*.bak
+*.conversation.json
+spa.traineddata
+test_ocr.js
