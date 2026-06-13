@@ -1,0 +1,10 @@
+# Subproyecto local — no se despliega a Vercel
+Cuentas
+Cuentas.zip
+*.log
+node_modules
+Wiki
+MOCs
+Sources
+scripts
+.claude
