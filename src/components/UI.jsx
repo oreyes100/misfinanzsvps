@@ -68,8 +68,9 @@ export function SecurityBadge({ biometric }) {
   );
 }
 
-/** Modal accesible con fondo de desenfoque. */
-export function Modal({ title, onClose, children, labelId }) {
+/** Modal accesible con fondo de desenfoque. `size`: "md" (def.) | "lg" (captura ancha). */
+export function Modal({ title, onClose, children, labelId, size = "md" }) {
+  const width = size === "lg" ? "max-w-2xl" : "max-w-md";
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -87,7 +88,7 @@ export function Modal({ title, onClose, children, labelId }) {
         role="dialog"
         aria-modal="true"
         aria-labelledby={labelId}
-        className="glass w-full max-w-md p-5"
+        className={`glass max-h-[92vh] w-full ${width} overflow-y-auto p-5`}
       >
         <div className="mb-4 flex items-center justify-between">
           <h2 id={labelId} className="text-lg font-semibold">{title}</h2>

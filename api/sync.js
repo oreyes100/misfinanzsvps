@@ -14,12 +14,11 @@ export default async function handler(req, res) {
 
   if (req.method === "GET") {
     try {
-      // URL con cache-buster: el CDN de Blob cachea respuestas (incluidos 404
-      // previos a la creación), y una lectura obsoleta podría hacer que un
-      // dispositivo recién vinculado pisara los datos buenos de la nube.
-      const storeId = (process.env.BLOB_READ_WRITE_TOKEN || "").split("_")[3] || "";
-      const url = `https://${storeId.toLowerCase()}.private.blob.vercel-storage.com/${key}?nc=${Date.now()}`;
-      const result = await get(url, { access: "private" });
+      // useCache:false evita lecturas obsoletas del CDN (incluidos 404 previos
+      // a la creación), que harían que un dispositivo pisara los datos buenos.
+      // get acepta el pathname directamente: no hace falta construir la URL del
+      // store (parsear el token era frágil y podía romper la lectura).
+      const result = await get(key, { access: "private", useCache: false });
       if (!result) return res.status(200).json({ found: false });
       const data = JSON.parse(await new Response(result.stream).text());
       return res.status(200).json({ found: true, state: data.state, updatedAt: data.updatedAt });

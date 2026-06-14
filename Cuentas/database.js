@@ -10,23 +10,29 @@ const BLOB_KEY = 'cuentas/contabilidad.db';
 
 let db;
 let _dirty = false;
+// Resultado de la última carga desde Blob: 'loaded' (había copia), 'absent'
+// (no hay copia aún → primer arranque legítimo) o 'error' (fallo transitorio).
+let _loadState = 'none';
 
-function blobStoreUrl() {
-  const storeId = (process.env.BLOB_READ_WRITE_TOKEN || '').split('_')[3] || '';
-  return `https://${storeId.toLowerCase()}.private.blob.vercel-storage.com/${BLOB_KEY}`;
-}
+function getLoadState() { return _loadState; }
 
-/** Descarga la BD desde Vercel Blob a /tmp. Devuelve true si existía copia en la nube. */
+/** Descarga la BD desde Vercel Blob a /tmp usando el pathname del blob. */
 async function loadFromBlob() {
-  if (!IS_VERCEL || !process.env.BLOB_READ_WRITE_TOKEN) return false;
+  if (!IS_VERCEL || !process.env.BLOB_READ_WRITE_TOKEN) { _loadState = 'absent'; return false; }
   try {
     const { get } = require('@vercel/blob');
-    const result = await get(`${blobStoreUrl()}?nc=${Date.now()}`, { access: 'private' });
-    if (!result) return false;
+    // get acepta el pathname directamente (no hace falta construir la URL del store).
+    const result = await get(BLOB_KEY, { access: 'private', useCache: false });
+    if (!result) { _loadState = 'absent'; return false; }
     const buffer = Buffer.from(await new Response(result.stream).arrayBuffer());
     fs.writeFileSync(dbPath, buffer);
+    _loadState = 'loaded';
     return true;
-  } catch {
+  } catch (e) {
+    // No tragarse el error: marcar 'error' para que initDB NO siembre vacío
+    // encima de los datos durables (eso provocaba pérdida total al hacer flush).
+    _loadState = 'error';
+    console.error('loadFromBlob falló:', e.message);
     return false;
   }
 }
@@ -70,7 +76,16 @@ async function initDB() {
   });
 
   // En la nube: intentar traer la copia durable antes de leer el archivo local.
-  if (IS_VERCEL) await loadFromBlob();
+  if (IS_VERCEL) {
+    await loadFromBlob();
+    // CRÍTICO: si la carga falló por un error (no por ausencia), abortar el
+    // arranque. Continuar arrancaría con una BD vacía sembrada y el flush
+    // posterior la subiría a Blob, DESTRUYENDO los datos reales. Mejor 500
+    // transitorio (el request se reintenta) que pérdida permanente de datos.
+    if (_loadState === 'error') {
+      throw new Error('BD no disponible temporalmente (fallo al leer Blob). Reintenta en unos segundos.');
+    }
+  }
 
   if (fs.existsSync(dbPath)) {
     const buffer = fs.readFileSync(dbPath);
@@ -210,4 +225,4 @@ function transaction(fn) {
   }
 }
 
-module.exports = { initDB, getDB, query, get, run, transaction, saveDB, flushToBlob, IS_VERCEL };
+module.exports = { initDB, getDB, query, get, run, transaction, saveDB, flushToBlob, getLoadState, IS_VERCEL };

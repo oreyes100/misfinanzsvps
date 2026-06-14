@@ -42,7 +42,9 @@ export function fmtMoney(amount, currency = "EUR", opts = {}) {
     style: "currency",
     currency,
     maximumFractionDigits: opts.compact ? 0 : digits,
-    notation: opts.compact && Math.abs(amount) >= 100000 ? "compact" : "standard",
+    // Siempre notación estándar: mostrar la cifra completa con separadores de
+    // miles (ej. MX$1,234,567), nunca abreviada con "M"/"K".
+    notation: "standard",
   }).format(amount);
 }
 

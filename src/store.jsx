@@ -50,6 +50,7 @@ const SEED = {
   scheduled: [],
   categories: DEFAULT_CATEGORIES,
   transferAliases: {}, // texto OCR normalizado → accountId (aprendizaje)
+  categoryAliases: {}, // texto de ítem normalizado → category (aprendizaje OCR recibos)
   fx: { ...BASE_FX },
   priceHistory: {
     BTC: seedHistory(BASE_FX.BTC, 48, 0.012),
@@ -340,6 +341,15 @@ function reducer(state, action) {
       return { ...state, transferAliases };
     }
 
+    case "learn_category_aliases": {
+      const categoryAliases = { ...state.categoryAliases };
+      for (const [alias, category] of Object.entries(action.aliases || {})) {
+        const key = (alias || "").toLowerCase().trim();
+        if (key && category) categoryAliases[key] = category;
+      }
+      return { ...state, categoryAliases };
+    }
+
     case "restore": {
       const s = action.state || {};
       return accrueInterest({
@@ -351,6 +361,7 @@ function reducer(state, action) {
         scheduled: Array.isArray(s.scheduled) ? s.scheduled : state.scheduled,
         categories: Array.isArray(s.categories) && s.categories.length ? s.categories : state.categories,
         transferAliases: s.transferAliases || state.transferAliases,
+        categoryAliases: s.categoryAliases || state.categoryAliases,
       });
     }
 
@@ -382,8 +393,8 @@ const SYNC_KEY = "mis-finazas-sync-id";
 
 /** Partes del estado que viajan a la nube (precios/FX en vivo se quedan fuera). */
 function syncableSlice(state) {
-  const { settings, accounts, assets, transactions, scheduled, categories, transferAliases } = state;
-  return { settings, accounts, assets, transactions, scheduled, categories, transferAliases };
+  const { settings, accounts, assets, transactions, scheduled, categories, transferAliases, categoryAliases } = state;
+  return { settings, accounts, assets, transactions, scheduled, categories, transferAliases, categoryAliases };
 }
 
 export function StoreProvider({ children }) {
@@ -395,21 +406,53 @@ export function StoreProvider({ children }) {
   const pullingRef = useRef(false);
   const skipPushRef = useRef(false);
   const syncable = useMemo(() => JSON.stringify(syncableSlice(state)), [
-    state.settings, state.accounts, state.assets, state.transactions, state.scheduled, state.categories, state.transferAliases,
+    state.settings, state.accounts, state.assets, state.transactions, state.scheduled, state.categories, state.transferAliases, state.categoryAliases,
   ]);
   const syncableRef = useRef(syncable);
   syncableRef.current = syncable;
 
+  const lastPushedRef = useRef(null);
+
   const pushNow = useCallback(async (id) => {
     setSyncStatus("pushing");
+    const snapshot = syncableRef.current;
     const r = await fetch(`/api/sync?id=${encodeURIComponent(id)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: `{"state":${syncableRef.current}}`,
+      body: `{"state":${snapshot}}`,
     });
     if (!r.ok) throw new Error(`sync push ${r.status}`);
+    lastPushedRef.current = snapshot;
     setSyncStatus("synced");
   }, []);
+
+  // Flush al salir/ocultar la pestaña: si hay cambios sin subir (p. ej. una
+  // cuenta recién creada y el debounce de 1.5s aún no disparó), enviarlos ya
+  // con keepalive para que la petición sobreviva a la recarga/cierre. Sin esto,
+  // recargar justo después de crear una cuenta perdía el cambio en la nube.
+  useEffect(() => {
+    if (!syncId) return;
+    const flush = () => {
+      if (pullingRef.current) return;
+      if (syncableRef.current === lastPushedRef.current) return;
+      try {
+        fetch(`/api/sync?id=${encodeURIComponent(syncId)}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: `{"state":${syncableRef.current}}`,
+          keepalive: true,
+        });
+        lastPushedRef.current = syncableRef.current;
+      } catch { /* best-effort */ }
+    };
+    const onHide = () => { if (document.visibilityState === "hidden") flush(); };
+    window.addEventListener("pagehide", flush);
+    document.addEventListener("visibilitychange", onHide);
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      document.removeEventListener("visibilitychange", onHide);
+    };
+  }, [syncId]);
 
   // Al activar/conectar un código: bajar el estado de la nube (o subir el local si no existe).
   useEffect(() => {

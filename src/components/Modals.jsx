@@ -230,18 +230,21 @@ export function TransactionModal({ onClose, preset, tx }) {
           });
           setOcr(null);
         } else if (r.type === "receipt" && r.items?.length > 1) {
-          // Agrupar ítems por categoría/subcategoría
-          const map = new Map();
-          for (const it of r.items) {
-            const key = `${it.category || "Otros"}|${it.subcategory || ""}`;
-            const g = map.get(key) || { category: it.category || "Otros", subcategory: it.subcategory || null, total: 0, count: 0 };
-            g.total = Math.round((g.total + Math.abs(it.amount || 0)) * 100) / 100;
-            g.count += 1;
-            map.set(key, g);
-          }
-          const groups = [...map.values()].sort((a, b) => b.total - a.total);
+          // Cada ítem reconocido es una fila editable (corregir nombre/importe/categoría).
+          const items = r.items.map((it) => {
+            const cat = state.categoryAliases[aliasNorm(it.name)] || it.category || "Otros";
+            return {
+              id: uid(),
+              name: it.name || "Artículo",
+              amount: Math.abs(it.amount || 0) || "",
+              category: cat,
+              subcategory: it.subcategory || null,
+              origCategory: cat,
+              include: true,
+            };
+          });
           if (when) setDate(when);
-          setReceipt({ merchant: r.merchant || "Recibo", total: r.total || groups.reduce((s, g) => s + g.total, 0), date: when, groups });
+          setReceipt({ merchant: r.merchant || "Recibo", total: r.total || null, date: when, items });
           setOcr(null);
         } else {
           applySingle(r.merchant, r.total || r.transfer?.amount, when);
@@ -249,11 +252,20 @@ export function TransactionModal({ onClose, preset, tx }) {
       } else {
         // OCR local (Tesseract). Para mejor precisión, configura Gemini en Ajustes.
         const text = await ocrImage(file, (p) => setOcr((o) => ({ ...o, progress: p })));
-        const parsed = parseReceipt(text, state.categories);
+        const parsed = parseReceipt(text, state.categories, state.categoryAliases);
         const when = parsed.date && parsed.date <= todayISO() ? parsed.date : null;
-        if (parsed.groups.length > 1) {
+        if (parsed.items.length > 1) {
+          const items = parsed.items.map((it) => ({
+            id: uid(),
+            name: it.name,
+            amount: it.amount,
+            category: it.category,
+            subcategory: it.subcategory,
+            origCategory: it.category,
+            include: true,
+          }));
           if (when) setDate(when);
-          setReceipt(parsed);
+          setReceipt({ merchant: parsed.merchant, total: parsed.total, date: when, items });
           setOcr(null);
         } else {
           applySingle(parsed.merchant, parsed.total, when);
@@ -297,11 +309,23 @@ export function TransactionModal({ onClose, preset, tx }) {
   const updateRow = (id, patch) =>
     setStatement((s) => ({ ...s, rows: s.rows.map((r) => (r.id === id ? { ...r, ...patch } : r)) }));
 
-  // Registrar el recibo agrupado: una transacción por subcategoría.
+  const updateItem = (id, patch) =>
+    setReceipt((rc) => ({ ...rc, items: rc.items.map((it) => (it.id === id ? { ...it, ...patch } : it)) }));
+
+  // Registrar el recibo: agrupa los ítems incluidos por categoría/subcategoría
+  // (una transacción por grupo) y aprende de cada corrección de categoría.
   const registerReceipt = () => {
     const acc = state.accounts.find((a) => a.id === accountId);
     const date0 = date;
-    for (const g of receipt.groups) {
+    const rows = receipt.items.filter((it) => it.include && parseFloat(it.amount) > 0);
+    const map = new Map();
+    for (const it of rows) {
+      const key = `${it.category}|${it.subcategory || ""}`;
+      const g = map.get(key) || { category: it.category, subcategory: it.subcategory || null, total: 0 };
+      g.total = Math.round((g.total + Math.abs(parseFloat(it.amount))) * 100) / 100;
+      map.set(key, g);
+    }
+    for (const g of map.values()) {
       dispatch({
         type: "add_transaction",
         tx: {
@@ -315,6 +339,12 @@ export function TransactionModal({ onClose, preset, tx }) {
         },
       });
     }
+    // Aprender: cada ítem cuya categoría el usuario cambió → texto → categoría.
+    const aliases = {};
+    for (const it of rows) {
+      if (it.category && it.category !== it.origCategory) aliases[aliasNorm(it.name)] = it.category;
+    }
+    if (Object.keys(aliases).length) dispatch({ type: "learn_category_aliases", aliases });
     onClose();
   };
 
@@ -348,7 +378,7 @@ export function TransactionModal({ onClose, preset, tx }) {
     const incomeCats = state.categories.filter((c) => c.type === "income");
     const valid = statement.rows.filter((r) => r.include && parseFloat(r.amount) > 0);
     return (
-      <Modal title={`Movimientos · ${statement.merchant}`} onClose={onClose} labelId="tx-title">
+      <Modal title={`Movimientos · ${statement.merchant}`} onClose={onClose} labelId="tx-title" size="lg">
         <div className="space-y-3">
           <Field label="Cuenta de estos movimientos" hint="Tarjeta o cuenta de la captura.">
             <select className={inputCls} value={accountId} onChange={(e) => setAccountId(e.target.value)}>
@@ -459,39 +489,81 @@ export function TransactionModal({ onClose, preset, tx }) {
   }
 
   if (receipt) {
+    const expenseCats = state.categories.filter((c) => c.type === "expense");
+    const included = receipt.items.filter((it) => it.include && parseFloat(it.amount) > 0);
+    const sumIncluded = included.reduce((s, it) => s + Math.abs(parseFloat(it.amount) || 0), 0);
+    const groupCount = new Set(included.map((it) => `${it.category}|${it.subcategory || ""}`)).size;
     return (
-      <Modal title="Recibo escaneado" onClose={onClose} labelId="tx-title">
+      <Modal title="Recibo escaneado" onClose={onClose} labelId="tx-title" size="lg">
         <div className="space-y-3">
           <p className="text-sm">
-            <strong>{receipt.merchant}</strong> · total detectado {fmtMoney(receipt.total, acctCurrency)}.
+            <strong>{receipt.merchant}</strong> · {included.length} artículo{included.length === 1 ? "" : "s"} · suma {fmtMoney(sumIncluded, acctCurrency)}
+            {receipt.total ? <span className="text-ink-dim"> (total detectado {fmtMoney(receipt.total, acctCurrency)})</span> : null}.
           </p>
-          <Field label="Fecha del recibo">
-            <input className={inputCls} type="date" max={todayISO()} value={date} onChange={(e) => setDate(e.target.value)} />
-          </Field>
-          <p className="text-xs text-ink-dim">Gastos agrupados por subcategoría. Se registrará un movimiento por grupo:</p>
-          <ul className="max-h-64 space-y-1.5 overflow-y-auto">
-            {receipt.groups.map((g, i) => (
-              <li key={i} className="flex items-center justify-between rounded-xl bg-white/5 px-3 py-2 text-sm">
-                <span className="flex items-center gap-2">
-                  <span className="size-2.5 rounded-full" style={{ background: catColor(g.category, state.categories) }} aria-hidden="true" />
-                  <span>{g.category}{g.subcategory && <span className="text-ink-dim"> · {g.subcategory}</span>} <span className="text-ink-dim/70">({g.count})</span></span>
-                </span>
-                <span className="font-semibold tabular-nums">{fmtMoney(g.total, acctCurrency)}</span>
+
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Fecha del recibo">
+              <input className={inputCls} type="date" max={todayISO()} value={date} onChange={(e) => setDate(e.target.value)} />
+            </Field>
+            <Field label="Cuenta de cargo">
+              <select className={inputCls} value={accountId} onChange={(e) => setAccountId(e.target.value)}>
+                {groupedAccounts(state.accounts).map(({ type, label, accounts }) => (
+                  <optgroup key={type} label={label}>
+                    {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                  </optgroup>
+                ))}
+              </select>
+            </Field>
+          </div>
+
+          <p className="text-xs text-ink-dim">
+            Corrige nombre, importe o categoría de cada artículo (la IA puede equivocarse). Aprenderé tus correcciones de
+            categoría para la próxima. Al registrar se agrupa por categoría en {groupCount} movimiento{groupCount === 1 ? "" : "s"}.
+          </p>
+
+          <ul className="max-h-[48vh] space-y-2 overflow-y-auto pr-1">
+            {receipt.items.map((it) => (
+              <li key={it.id} className={`flex flex-wrap items-center gap-2 rounded-xl p-2.5 ${it.include ? "bg-white/5" : "bg-white/5 opacity-40"}`}>
+                <input
+                  type="checkbox"
+                  checked={it.include}
+                  onChange={(e) => updateItem(it.id, { include: e.target.checked })}
+                  aria-label={`Incluir ${it.name}`}
+                  className="size-4 accent-[var(--color-accent)]"
+                />
+                <span className="size-2.5 rounded-full" style={{ background: catColor(it.category, state.categories) }} aria-hidden="true" />
+                <input
+                  className={`${inputCls} min-w-32 flex-1 !py-1 text-sm`}
+                  value={it.name}
+                  onChange={(e) => updateItem(it.id, { name: e.target.value })}
+                  aria-label="Artículo"
+                />
+                <input
+                  className={`${inputCls} !w-24 !py-1 text-right text-sm`}
+                  type="number" min="0" step="0.01" inputMode="decimal"
+                  value={it.amount}
+                  onChange={(e) => updateItem(it.id, { amount: e.target.value })}
+                  aria-label="Importe"
+                />
+                <select
+                  className={`${inputCls} !w-40 !py-1 text-xs ${it.category !== it.origCategory ? "!border-accent/60" : ""}`}
+                  value={it.category}
+                  onChange={(e) => updateItem(it.id, { category: e.target.value, subcategory: null })}
+                  aria-label="Categoría"
+                  title={it.category !== it.origCategory ? "Corregido — se aprenderá" : undefined}
+                >
+                  {expenseCats.map((c) => <option key={c.id} value={c.name}>{c.name}</option>)}
+                  {!expenseCats.some((c) => c.name === it.category) && <option value={it.category}>{it.category}</option>}
+                </select>
               </li>
             ))}
           </ul>
-          <Field label="Cuenta de cargo">
-            <select className={inputCls} value={accountId} onChange={(e) => setAccountId(e.target.value)}>
-              {groupedAccounts(state.accounts).map(({ type, label, accounts }) => (
-                <optgroup key={type} label={label}>
-                  {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-                </optgroup>
-              ))}
-            </select>
-          </Field>
+
           <div className="flex justify-end gap-2 pt-1">
             <Btn variant="ghost" onClick={() => setReceipt(null)}>Volver</Btn>
-            <Btn onClick={registerReceipt}>Registrar {receipt.groups.length} movimientos</Btn>
+            <Btn onClick={registerReceipt} disabled={!included.length}>
+              Registrar {groupCount} movimiento{groupCount === 1 ? "" : "s"}
+            </Btn>
           </div>
         </div>
       </Modal>

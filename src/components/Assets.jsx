@@ -210,6 +210,8 @@ export default function Assets() {
 
   const goldValue = state.assets.gold.grams * state.goldPriceEUR;
   const goldGain = goldValue - state.assets.gold.costBasisEUR;
+  const reTotal = state.assets.realEstate.reduce((s, r) => s + r.valueEUR, 0);
+  const depTotal = (state.assets.depreciating || []).reduce((s, d) => s + d.valueEUR, 0);
 
   const removeRE = (r) => {
     if (confirm(`¿Eliminar «${r.name}»?`)) dispatch({ type: "delete_realestate", id: r.id });
@@ -236,7 +238,12 @@ export default function Assets() {
             <h2 className="text-base font-semibold">Inmuebles</h2>
             <p className="text-xs text-ink-dim">Marca con ★ el inmueble que se muestra en Inicio.</p>
           </div>
-          <Btn onClick={() => setReModal("new")} className="!py-1.5 text-xs">+ Nuevo</Btn>
+          <div className="flex items-center gap-3">
+            {state.assets.realEstate.length > 0 && (
+              <span className="text-sm font-bold tabular-nums">{fmtMoney(inBase(reTotal), base, { compact: true })}</span>
+            )}
+            <Btn onClick={() => setReModal("new")} className="!py-1.5 text-xs">+ Nuevo</Btn>
+          </div>
         </div>
         <ul className="space-y-2">
           {state.assets.realEstate.map((r) => {
@@ -279,7 +286,12 @@ export default function Assets() {
             <h2 className="text-base font-semibold">Bienes (autos, motos…)</h2>
             <p className="text-xs text-ink-dim">Activos que pierden valor con el tiempo.</p>
           </div>
-          <Btn onClick={() => setDepModal("new")} className="!py-1.5 text-xs">+ Nuevo</Btn>
+          <div className="flex items-center gap-3">
+            {(state.assets.depreciating || []).length > 0 && (
+              <span className="text-sm font-bold tabular-nums">{fmtMoney(inBase(depTotal), base, { compact: true })}</span>
+            )}
+            <Btn onClick={() => setDepModal("new")} className="!py-1.5 text-xs">+ Nuevo</Btn>
+          </div>
         </div>
         <ul className="space-y-2">
           {(state.assets.depreciating || []).map((d) => {

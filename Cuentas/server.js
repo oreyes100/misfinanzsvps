@@ -277,6 +277,13 @@ function getAiKey() {
   return process.env.GEMINI_API_KEY || (getConfigValue('ai_api_key') || '').trim() || null;
 }
 
+// En Vercel el filesystem del proyecto es de solo lectura, así que tesseract.js
+// no puede descargar/cachear el modelo de idioma donde quiere por defecto.
+// Usamos el spa.traineddata incluido en el bundle (vercel.json includeFiles)
+// y cacheamos en /tmp (único directorio escribible).
+// El modelo spa.traineddata se incluye en public/ (lo bundlea vercel.json).
+const TESS_OPTS = IS_VERCEL ? { langPath: path.join(__dirname, 'public'), cachePath: '/tmp', gzip: false } : {};
+
 const AI_PROMPT = `Analiza esta imagen de un recibo de contabilidad de una congregación.
 Normalmente es un formulario "REGISTRO DE TRANSACCIÓN" (S-24-S) con:
 - una fecha (a menudo manuscrita),
@@ -427,6 +434,7 @@ async function recognizeWithTesseract(filePath) {
   const Tesseract = require('tesseract.js');
   const processedPath = await preprocessImage(filePath);
   const { data } = await Tesseract.recognize(processedPath, 'spa', {
+    ...TESS_OPTS,
     tessedit_pageseg_mode: '3',
     tessedit_ocr_engine_mode: '1',
     preserve_interword_spaces: '1'
@@ -457,6 +465,7 @@ async function recognizeAmountsColumn(filePath) {
     .resize({ width: 1200, withoutEnlargement: false })
     .toFile(cropPath);
   const { data } = await Tesseract.recognize(cropPath, 'spa', {
+    ...TESS_OPTS,
     tessedit_pageseg_mode: '6',
     tessedit_char_whitelist: '0123456789.,$S '
   });
@@ -1074,7 +1083,10 @@ app.get('/api/forms/s30/pdf', async (req, res) => {
     const j = jDK + jDA;
     const k = i - j;
 
-    const bytes = fs.readFileSync(path.join(__dirname, 'S-30_S.pdf'));
+    // En Vercel el template vive en public/ (bundleado); en local, en la raíz.
+    const tplPath = [path.join(__dirname, 'public', 'S-30_S.pdf'), path.join(__dirname, 'S-30_S.pdf')].find((p) => fs.existsSync(p));
+    if (!tplPath) return res.status(500).json({ error: 'No se encontró la plantilla S-30_S.pdf' });
+    const bytes = fs.readFileSync(tplPath);
     const doc = await PDFDocument.load(bytes);
     const form = doc.getForm();
     const set = (name, val) => { try { form.getTextField(name).setText(val == null ? '' : String(val)); } catch (_) {} };

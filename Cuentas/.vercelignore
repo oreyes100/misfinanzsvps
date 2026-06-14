@@ -12,3 +12,8 @@ uploads
 *.conversation.json
 spa.traineddata
 test_ocr.js
+
+# Assets necesarios en el bundle serverless (se sirven/leen desde public/).
+# Las negaciones deben ir DESPUÉS de los patrones de exclusión de arriba.
+!public/S-30_S.pdf
+!public/spa.traineddata

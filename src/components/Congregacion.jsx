@@ -13,15 +13,25 @@ export default function Congregacion() {
 
   useEffect(() => {
     let alive = true;
-    // Preferir instancia local si está corriendo; si no, usar producción.
-    fetch(`${LOCAL_URL}/api/health`, { mode: "no-cors" })
-      .then(() => { if (alive) { setUrl(LOCAL_URL); setStatus("online"); } })
-      .catch(() => {
-        if (!alive) return;
-        fetch(`${PROD_URL}/api/health`)
-          .then((r) => { if (alive) { setUrl(PROD_URL); setStatus(r.ok ? "online" : "offline"); } })
-          .catch(() => alive && setStatus("offline"));
-      });
+    // Health checks usan mode:"no-cors" porque /api/health no envía cabeceras
+    // CORS. Respuesta opaca: resolver = servidor alcanzable (online); el iframe
+    // no requiere CORS para embeber.
+    const checkProd = () =>
+      fetch(`${PROD_URL}/api/health`, { mode: "no-cors" })
+        .then(() => { if (alive) { setUrl(PROD_URL); setStatus("online"); } })
+        .catch(() => alive && setStatus("offline"));
+
+    // Solo sondear el servidor local cuando la app corre en localhost (dev).
+    // En producción (https) un fetch a http://localhost es mixed-content y se
+    // bloquea: vamos directo a Vercel.
+    const onLocalhost = /^(localhost|127\.0\.0\.1)$/.test(window.location.hostname);
+    if (onLocalhost) {
+      fetch(`${LOCAL_URL}/api/health`, { mode: "no-cors" })
+        .then(() => { if (alive) { setUrl(LOCAL_URL); setStatus("online"); } })
+        .catch(checkProd);
+    } else {
+      checkProd();
+    }
     return () => { alive = false; };
   }, []);
 

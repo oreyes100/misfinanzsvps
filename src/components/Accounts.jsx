@@ -141,6 +141,13 @@ export default function Accounts() {
   const { state, dispatch } = useStore();
   const [modal, setModal] = useState(null); // "new" | account
   const base = state.settings.baseCurrency;
+  const inBase = (eur) => convert(eur, "EUR", base, state.fx);
+
+  // Subtotal por tipo de cuenta en divisa base (encabezado de cada grupo).
+  const typeTotals = state.accounts.reduce((m, a) => {
+    m[a.type] = (m[a.type] || 0) + a.balance * (state.fx[a.currency] ?? 1);
+    return m;
+  }, {});
 
   const remove = (a) => {
     if (confirm(`¿Eliminar la cuenta «${a.name}»? Sus movimientos se conservan en el historial.`)) {
@@ -161,7 +168,12 @@ export default function Accounts() {
       <ul className="space-y-1">
         {groupedAccounts(state.accounts).map(({ type, label, accounts }) => (
           <li key={type}>
-            <p className="mb-1 mt-3 px-1 text-[10px] font-semibold uppercase tracking-widest text-ink-dim first:mt-0">{label}</p>
+            <div className="mb-1 mt-3 flex items-baseline justify-between px-1 first:mt-0">
+              <p className="text-[10px] font-semibold uppercase tracking-widest text-ink-dim">{label}</p>
+              <p className={`text-xs font-semibold tabular-nums ${LIABILITY_ACCOUNT_TYPES.includes(type) ? "text-loss" : "text-ink"}`}>
+                {fmtMoney(inBase(typeTotals[type] ?? 0), base, { compact: true })}
+              </p>
+            </div>
             <ul className="space-y-1.5">
               {accounts.map((a) => {
                 const earning = a.rate > 0 && a.accrual !== "none";

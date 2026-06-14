@@ -127,13 +127,47 @@ export default function Dashboard() {
   // depósito, inversión, sofipo). Total deudas = pasivos (tarjeta, préstamo).
   const assetAccounts = state.accounts.filter((a) => !LIABILITY_ACCOUNT_TYPES.includes(a.type));
   const investTotal = assetAccounts.reduce((s, a) => s + a.balance * (state.fx[a.currency] ?? 1), 0);
-  // Subtotal por divisa nativa (USD, MXN, …) ordenado de mayor a menor.
-  const investByCurrency = Object.entries(
-    assetAccounts.reduce((m, a) => ({ ...m, [a.currency]: (m[a.currency] || 0) + a.balance }), {})
-  ).sort((x, y) => y[1] * (state.fx[y[0]] ?? 1) - x[1] * (state.fx[x[0]] ?? 1));
-  const debtTotal = state.accounts
-    .filter((a) => LIABILITY_ACCOUNT_TYPES.includes(a.type))
-    .reduce((s, a) => s + Math.abs(a.balance) * (state.fx[a.currency] ?? 1), 0);
+  // Desglose por tipo de cuenta, separado por moneda.
+  const investByType = groupedAccounts(assetAccounts).map(({ type, label, accounts }) => ({
+    type,
+    label,
+    totalEUR: accounts.reduce((s, a) => s + a.balance * (state.fx[a.currency] ?? 1), 0),
+  }));
+  // Grupos por moneda: MXN y USD (u otras) con desglose por tipo.
+  const INVEST_CURRENCIES = ["MXN", "USD"];
+  const investByCurrency = INVEST_CURRENCIES.map((cur) => {
+    const accs = assetAccounts.filter((a) => a.currency === cur);
+    if (!accs.length) return null;
+    const byType = groupedAccounts(accs).map(({ type, label, accounts }) => ({
+      type, label,
+      native: accounts.reduce((s, a) => s + a.balance, 0),
+    })).filter((g) => g.native !== 0);
+    const total = accs.reduce((s, a) => s + a.balance, 0);
+    return { cur, byType, total };
+  }).filter(Boolean);
+  // Monedas no listadas: agregar como bloque extra.
+  const listedCurs = new Set(INVEST_CURRENCIES);
+  const otherCurAccs = assetAccounts.filter((a) => !listedCurs.has(a.currency));
+  if (otherCurAccs.length) {
+    const extra = [...new Set(otherCurAccs.map((a) => a.currency))];
+    extra.forEach((cur) => {
+      const accs = otherCurAccs.filter((a) => a.currency === cur);
+      const byType = groupedAccounts(accs).map(({ type, label, accounts }) => ({
+        type, label, native: accounts.reduce((s, a) => s + a.balance, 0),
+      })).filter((g) => g.native !== 0);
+      investByCurrency.push({ cur, byType, total: accs.reduce((s, a) => s + a.balance, 0) });
+    });
+  }
+  // Deuda total = solo tarjetas de crédito. El préstamo de auto se reporta
+  // aparte (no entra en el total, igual que no resta del patrimonio neto).
+  const creditAccounts = state.accounts.filter((a) => a.type === "credit");
+  const debtTotal = creditAccounts.reduce((s, a) => s + Math.abs(a.balance) * (state.fx[a.currency] ?? 1), 0);
+
+  // Subtotal por tipo de cuenta (en divisa base) para los encabezados de grupo.
+  const accountTypeTotals = state.accounts.reduce((m, a) => {
+    m[a.type] = (m[a.type] || 0) + a.balance * (state.fx[a.currency] ?? 1);
+    return m;
+  }, {});
 
   const cardAlerts = pendingCardPayments(state);
 
@@ -260,24 +294,29 @@ export default function Dashboard() {
         )}
       </Glass>
 
-      {/* ---- Total de inversiones (cuentas de activo: corriente, ahorro, depósito, inversión, sofipo) ---- */}
+      {/* ---- Total de inversiones por moneda ---- */}
       <Glass className="lg:col-span-1" aria-label="Total de inversiones y efectivo">
         <h2 className="mb-1 text-sm font-semibold">Total de inversiones</h2>
-        <p className="text-xl font-bold tabular-nums text-gain">{fmtMoney(inBase(investTotal), base, { compact: true })}</p>
+        <p className="text-xl font-bold tabular-nums text-gain">{fmtMoney(inBase(investTotal), base)}</p>
         <p className="mt-1 text-xs text-ink-dim">Efectivo, ahorro, depósitos, inversión y sofipos</p>
-        <ul className="mt-2 space-y-1 text-xs">
-          {investByCurrency.map(([cur, amount]) => (
-            <li key={cur} className="flex items-center justify-between">
-              <span className="text-ink-dim">{cur}</span>
-              <span className="flex items-center gap-2">
-                <span className="font-medium tabular-nums">{fmtMoney(amount, cur, { compact: true })}</span>
-                {cur !== base && (
-                  <span className="tabular-nums text-ink-dim/70">≈ {fmtMoney(convert(amount, cur, base, state.fx), base, { compact: true })}</span>
-                )}
-              </span>
-            </li>
+        <div className="mt-3 space-y-3">
+          {investByCurrency.map(({ cur, byType, total }) => (
+            <div key={cur}>
+              <ul className="space-y-1 text-xs">
+                {byType.map(({ type, label, native }) => (
+                  <li key={type} className="flex items-center justify-between">
+                    <span className="font-semibold uppercase tracking-wide text-ink-dim">{label}</span>
+                    <span className="font-medium tabular-nums">{fmtMoney(native, cur)}</span>
+                  </li>
+                ))}
+              </ul>
+              <div className="mt-1 flex items-center justify-between border-t border-white/10 pt-1 text-xs">
+                <span className="font-semibold text-ink-dim">Total en {cur === "MXN" ? "pesos" : cur === "USD" ? "dólares" : cur}</span>
+                <span className="font-bold tabular-nums text-gain">{fmtMoney(total, cur)}</span>
+              </div>
+            </div>
           ))}
-        </ul>
+        </div>
       </Glass>
 
       {/* ---- Total de deudas (pasivos: tarjeta, préstamo) ---- */}
@@ -288,17 +327,25 @@ export default function Dashboard() {
         </p>
         {debtTotal > 0 ? (
           <ul className="mt-2 space-y-1 text-xs">
-            {state.accounts
-              .filter((a) => LIABILITY_ACCOUNT_TYPES.includes(a.type))
-              .map((a) => (
-                <li key={a.id} className="flex justify-between">
-                  <span className="truncate text-ink-dim">{ACCOUNT_TYPES[a.type]} · {a.name}</span>
-                  <span className="tabular-nums text-loss">{fmtMoney(convert(Math.abs(a.balance), a.currency, base, state.fx), base, { compact: true })}</span>
-                </li>
-              ))}
+            {creditAccounts.map((a) => (
+              <li key={a.id} className="flex justify-between">
+                <span className="truncate text-ink-dim">{ACCOUNT_TYPES[a.type]} · {a.name}</span>
+                <span className="tabular-nums text-loss">{fmtMoney(convert(Math.abs(a.balance), a.currency, base, state.fx), base, { compact: true })}</span>
+              </li>
+            ))}
           </ul>
         ) : (
-          <p className="mt-2 text-xs text-ink-dim">Sin deudas registradas. 🎉</p>
+          <p className="mt-2 text-xs text-ink-dim">Sin tarjetas con deuda. 🎉</p>
+        )}
+
+        {/* Préstamo de auto: deuda aparte, fuera del total, en letras grandes. */}
+        {nw.autoLoan < 0 && (
+          <div className="mt-3 border-t-2 border-loss/30 pt-3">
+            <p className="text-[10px] font-semibold uppercase tracking-widest text-ink-dim">Préstamo de auto</p>
+            <p className="mt-0.5 text-2xl font-bold tabular-nums text-loss">
+              −{fmtMoney(inBase(Math.abs(nw.autoLoan)), base, { compact: true })}
+            </p>
+          </div>
         )}
       </Glass>
 
@@ -308,7 +355,12 @@ export default function Dashboard() {
         <ul className="space-y-1">
           {groupedAccounts(state.accounts).map(({ type, label, accounts }) => (
             <li key={type}>
-              <p className="mb-1 mt-2 px-1 text-[10px] font-semibold uppercase tracking-widest text-ink-dim first:mt-0">{label}</p>
+              <div className="mb-1 mt-2 flex items-baseline justify-between px-1 first:mt-0">
+                <p className="text-[10px] font-semibold uppercase tracking-widest text-ink-dim">{label}</p>
+                <p className={`text-xs font-semibold tabular-nums ${LIABILITY_ACCOUNT_TYPES.includes(type) ? "text-loss" : "text-ink"}`}>
+                  {fmtMoney(inBase(accountTypeTotals[type] ?? 0), base, { compact: true })}
+                </p>
+              </div>
               <ul className="space-y-1">
                 {accounts.map((a) => (
                   <li key={a.id} className="flex items-center justify-between rounded-xl bg-white/5 px-3 py-2">

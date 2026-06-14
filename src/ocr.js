@@ -41,9 +41,14 @@ export const SUBCATEGORIES = {
   ],
 };
 
-/** Clasifica una línea de recibo en {category, subcategory}. */
-export function classifyItem(text, categories) {
+const aliasNorm = (s) => (s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
+
+/** Clasifica una línea de recibo en {category, subcategory}. Alias aprendidos tienen prioridad. */
+export function classifyItem(text, categories, categoryAliases = {}) {
   const d = (text || "").toLowerCase();
+  // Correcciones aprendidas: texto del ítem → categoría elegida por el usuario.
+  const learned = categoryAliases[aliasNorm(text)];
+  if (learned) return { category: learned, subcategory: null };
   // Buscar subcategoría dentro de cada categoría
   for (const [parent, subs] of Object.entries(SUBCATEGORIES)) {
     for (const sub of subs) {
@@ -86,7 +91,7 @@ export function extractDate(text) {
  * Parsea el texto de un recibo en ítems clasificados y agrupados por subcategoría.
  * Devuelve { merchant, total, date, items, groups }.
  */
-export function parseReceipt(text, categories) {
+export function parseReceipt(text, categories, categoryAliases = {}) {
   const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
   const merchant = lines[0]?.replace(/[^\wáéíóúñ &.-]/gi, "").trim().slice(0, 40) || "Recibo";
   const date = extractDate(text);
@@ -103,7 +108,7 @@ export function parseReceipt(text, categories) {
     if (SKIP_LINE.test(line)) continue;
     const name = line.replace(/(\d+[.,]\d{2}).*$/, "").replace(/\s+/g, " ").trim();
     if (name.length < 2) continue;
-    const { category, subcategory } = classifyItem(name, categories);
+    const { category, subcategory } = classifyItem(name, categories, categoryAliases);
     items.push({ name: name.slice(0, 40), amount, category, subcategory });
   }
 
