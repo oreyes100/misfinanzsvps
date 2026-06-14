@@ -68,7 +68,6 @@ export function TransferModal({ onClose, preset }) {
     if (!from || !to) return setError("Selecciona ambas cuentas.");
     if (fromId === toId) return setError("La cuenta de origen y destino no pueden ser la misma.");
     if (amt <= 0) return setError("Introduce un importe mayor que cero.");
-    if (amt > from.balance) return setError(`Saldo insuficiente: dispones de ${fmtMoney(from.balance, from.currency)}.`);
     setError("");
     setStep("confirm");
   };
