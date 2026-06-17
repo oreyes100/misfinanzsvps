@@ -2,6 +2,8 @@
 // NOTA: control de acceso en cliente. Para comercialización real se requiere
 // backend de autenticación (ver CONTEXTO.md → roadmap comercial).
 
+import { API_BASE } from "./utils.js";
+
 const USERS_KEY = "mis-finazas-users";
 const SESSION_KEY = "mis-finazas-session";
 
@@ -51,7 +53,7 @@ export function saveUsers(users) {
 /** Baja la lista de usuarios de la nube. null si no hay red/endpoint. */
 async function pullCloudUsers() {
   try {
-    const r = await fetch("/api/users");
+    const r = await fetch(`${API_BASE}/api/users`);
     if (!r.ok) return null;
     const data = await r.json();
     return Array.isArray(data.users) ? data.users : null;
@@ -63,7 +65,7 @@ async function pullCloudUsers() {
 /** Sube la lista completa de usuarios a la nube (best-effort). */
 export async function pushCloudUsers(users) {
   try {
-    await fetch("/api/users", {
+    await fetch(`${API_BASE}/api/users`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ users }),
@@ -159,4 +161,63 @@ export function filterAccounts(accounts, session) {
   if (!session || session.accounts === "all" || session.role === "admin") return accounts;
   if (!Array.isArray(session.accounts)) return [];
   return accounts.filter((a) => session.accounts.includes(a.id));
+}
+
+// ---------- Biometría (WebAuthn) ----------
+
+const CRED_KEY = "mis-finazas-webauthn-cred";
+
+export function isBiometricAvailable() {
+  return !!(window.PublicKeyCredential && navigator.credentials);
+}
+
+export function hasBiometricCredential() {
+  return !!localStorage.getItem(CRED_KEY);
+}
+
+export async function registerBiometric(username) {
+  if (!isBiometricAvailable()) throw new Error("Biometría no disponible en este navegador.");
+  const userId = new TextEncoder().encode(username);
+  const challenge = crypto.getRandomValues(new Uint8Array(32));
+  const credential = await navigator.credentials.create({
+    publicKey: {
+      challenge,
+      rp: { name: "Mis Finanzas", id: location.hostname },
+      user: { id: userId, name: username, displayName: username },
+      pubKeyCredParams: [{ alg: -7, type: "public-key" }],
+      authenticatorSelection: {
+        authenticatorAttachment: "platform",
+        userVerification: "required",
+      },
+      timeout: 60000,
+    },
+  });
+  if (!credential) throw new Error("Registro biométrico cancelado.");
+  localStorage.setItem(CRED_KEY, JSON.stringify({
+    id: credential.id,
+    rawId: btoa(String.fromCharCode(...new Uint8Array(credential.rawId))),
+    username,
+  }));
+  return true;
+}
+
+export async function verifyBiometric() {
+  const stored = JSON.parse(localStorage.getItem(CRED_KEY) || "null");
+  if (!stored) throw new Error("No hay credencial biométrica registrada.");
+  const rawId = Uint8Array.from(atob(stored.rawId), (c) => c.charCodeAt(0));
+  const challenge = crypto.getRandomValues(new Uint8Array(32));
+  const assertion = await navigator.credentials.get({
+    publicKey: {
+      challenge,
+      allowCredentials: [{ id: rawId, type: "public-key" }],
+      userVerification: "required",
+      timeout: 60000,
+    },
+  });
+  if (!assertion) throw new Error("Verificación biométrica cancelada.");
+  return stored.username;
+}
+
+export function removeBiometric() {
+  localStorage.removeItem(CRED_KEY);
 }

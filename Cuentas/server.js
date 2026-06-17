@@ -284,7 +284,10 @@ function getAiKey() {
 // El modelo spa.traineddata se incluye en public/ (lo bundlea vercel.json).
 const TESS_OPTS = IS_VERCEL ? { langPath: path.join(__dirname, 'public'), cachePath: '/tmp', gzip: false } : {};
 
-const AI_PROMPT = `Analiza esta imagen de un recibo de contabilidad de una congregación.
+function buildAiPrompt() {
+  const today = new Date().toISOString().slice(0, 10);
+  const year = new Date().getFullYear();
+  return `Analiza esta imagen de un recibo de contabilidad de una congregación.
 Normalmente es un formulario "REGISTRO DE TRANSACCIÓN" (S-24-S) con:
 - una fecha (a menudo manuscrita),
 - cuatro casillas: Donación, Pago, Depósito en la caja de efectivo, Adelanto de efectivo (una está marcada con palomita o X),
@@ -292,6 +295,12 @@ Normalmente es un formulario "REGISTRO DE TRANSACCIÓN" (S-24-S) con:
 - un TOTAL al final.
 
 Lee con MUCHO cuidado las cantidades manuscritas (suelen llevar "$"). Verifica que la suma de las partidas coincida con el TOTAL; si no coincide, vuelve a leer las cantidades.
+
+IMPORTANTE sobre la FECHA:
+- Hoy es ${today}. El año actual es ${year}.
+- Las fechas manuscritas en estos recibos usan formato DD/MM/AA (día/mes/año de dos dígitos). Por ejemplo: "14/06/26" significa 14 de junio de 2026, NO junio 26 de 2014.
+- Un año de dos dígitos como "26" se refiere a ${year > 2025 ? year : 2026}, no a 2014 ni a 1926.
+- SIEMPRE interpreta el PRIMER número como el DÍA y el SEGUNDO como el MES.
 
 Responde SOLO con JSON válido, sin texto adicional:
 {
@@ -301,6 +310,7 @@ Responde SOLO con JSON válido, sin texto adicional:
   "total": 123.45
 }
 Reglas: usa null cuando un dato no se vea; NO incluyas el TOTAL como partida; NO inventes partidas; incluye solo líneas que realmente tengan cantidad.`;
+}
 
 async function interpretWithAI(filePath, apiKey) {
   const buf = await sharp(filePath)
@@ -319,7 +329,7 @@ async function interpretWithAI(filePath, apiKey) {
       contents: [{
         parts: [
           { inline_data: { mime_type: 'image/jpeg', data: buf.toString('base64') } },
-          { text: AI_PROMPT }
+          { text: buildAiPrompt() }
         ]
       }],
       generationConfig: {
@@ -340,10 +350,38 @@ async function interpretWithAI(filePath, apiKey) {
   return { text: JSON.stringify(parsed, null, 2), suggested: aiToSuggested(parsed) };
 }
 
+/** Corrige fechas donde la IA invirtió año/mes o usó el siglo equivocado.
+ *  Estos recibos son recientes (máx ~1 año atrás). Si la IA devuelve un año
+ *  lejano como 2014, intenta reconstruir la fecha con los dígitos disponibles. */
+function fixAiDate(dateStr) {
+  if (!dateStr) return null;
+  const m = String(dateStr).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  let [, y, mo, d] = m.map(Number);
+  const curYear = new Date().getFullYear();
+  if (y < curYear - 1 || y > curYear + 1) {
+    const y2 = y % 100;
+    if (y2 >= 1 && y2 <= 31 && d >= 0 && d <= 99) {
+      const newYear = 2000 + d;
+      if (newYear >= curYear - 1 && newYear <= curYear + 1) {
+        d = y2;
+        y = newYear;
+      } else {
+        y = curYear;
+      }
+    } else {
+      y = curYear;
+    }
+  }
+  if (mo > 12 && d <= 12) { [mo, d] = [d, mo]; }
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+  return `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+}
+
 /** Convierte la respuesta JSON de la IA al formato de captura sugerida. */
 function aiToSuggested(p) {
   let date = null;
-  if (p.fecha && /^\d{4}-\d{2}-\d{2}$/.test(String(p.fecha))) date = p.fecha;
+  if (p.fecha && /^\d{4}-\d{2}-\d{2}$/.test(String(p.fecha))) date = fixAiDate(p.fecha);
   else if (p.fecha) date = parseDate(String(p.fecha));
   if (!date) date = new Date().toISOString().slice(0, 10);
 

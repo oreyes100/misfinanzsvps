@@ -1,3 +1,9 @@
+// ---------- API base (Capacitor nativo vs. web) ----------
+
+const isNative = typeof window !== "undefined" &&
+  (window.location.hostname === "localhost" || window.location.protocol === "capacitor:");
+export const API_BASE = isNative ? "https://mis-finazas-gold.vercel.app" : "";
+
 // ---------- Monedas y conversión ----------
 
 export const CURRENCIES = ["EUR", "USD", "GBP", "MXN", "BTC", "ETH"];
@@ -56,18 +62,19 @@ export function fmtPct(x, digits = 2) {
 // ---------- Categorías (editables por el usuario; estas son las de fábrica) ----------
 
 export const DEFAULT_CATEGORIES = [
-  { id: "cat-comida", name: "Comida", type: "expense", color: "#ff8a5c", keywords: ["dominos", "pizza", "restaurante", "cena", "comida", "almuerzo", "desayuno", "burger", "mcdonald", "kebab", "sushi", "bar", "cafe", "café", "glovo", "ubereats", "just eat"] },
-  { id: "cat-super", name: "Supermercado", type: "expense", color: "#2ee6a8", keywords: ["mercadona", "carrefour", "lidl", "aldi", "dia", "supermercado", "eroski", "alcampo"] },
-  { id: "cat-transporte", name: "Transporte", type: "expense", color: "#5b8cff", keywords: ["uber", "cabify", "taxi", "metro", "bus", "renfe", "gasolina", "repsol", "cepsa", "parking", "peaje", "tren"] },
-  { id: "cat-hogar", name: "Hogar", type: "expense", color: "#8f63ff", keywords: ["alquiler", "hipoteca", "luz", "agua", "gas", "endesa", "iberdrola", "ikea", "leroy", "comunidad"] },
-  { id: "cat-subs", name: "Suscripciones", type: "expense", color: "#ff5c7a", keywords: ["netflix", "spotify", "hbo", "disney", "prime", "icloud", "youtube", "suscripcion", "suscripción", "gym", "gimnasio"] },
-  { id: "cat-salud", name: "Salud", type: "expense", color: "#4dd6e8", keywords: ["farmacia", "medico", "médico", "dentista", "seguro", "sanitas", "adeslas"] },
-  { id: "cat-ocio", name: "Ocio", type: "expense", color: "#f5c451", keywords: ["cine", "concierto", "viaje", "hotel", "vuelo", "ryanair", "vueling", "airbnb", "juego", "steam"] },
-  { id: "cat-compras", name: "Compras", type: "expense", color: "#ff7ad9", keywords: ["amazon", "zara", "ropa", "el corte", "fnac", "mediamarkt", "apple", "zapatos"] },
-  { id: "cat-ingresos", name: "Ingresos", type: "income", color: "#2ee6a8", keywords: ["nomina", "nómina", "salario", "sueldo", "factura cobrada", "venta", "devolucion", "devolución", "bizum recibido"] },
-  { id: "cat-intereses", name: "Intereses", type: "income", color: "#9be15d", system: true, keywords: ["interes", "interés", "intereses", "rendimiento", "cupon", "cupón", "dividendo"] },
-  { id: "cat-transfer", name: "Transferencia", type: "system", color: "#aab8d8", system: true, keywords: [] },
-  { id: "cat-otros", name: "Otros", type: "expense", color: "#7a8db3", system: true, keywords: [] },
+  { id: "cat-comida", name: "Comida", type: "expense", color: "#ff8a5c", keywords: ["dominos", "pizza", "restaurante", "cena", "comida", "almuerzo", "desayuno", "burger", "mcdonald", "kebab", "sushi", "bar", "cafe", "café", "glovo", "ubereats", "just eat", "taco", "tacos", "torta", "antojo", "fonda", "lonche", "rappi", "didi food"], subcategories: ["Abarrotes", "Carbohidratos", "Lácteos", "Carnes", "Frutas y verduras", "Bebidas", "Botana"] },
+  { id: "cat-super", name: "Supermercado", type: "expense", color: "#2ee6a8", keywords: ["mercadona", "carrefour", "lidl", "aldi", "dia", "supermercado", "eroski", "alcampo", "walmart", "soriana", "chedraui", "costco", "sam's", "oxxo", "bodega aurrera", "heb"], subcategories: [] },
+  { id: "cat-transporte", name: "Transporte", type: "expense", color: "#5b8cff", keywords: ["uber", "cabify", "taxi", "metro", "bus", "renfe", "gasolina", "repsol", "cepsa", "parking", "peaje", "tren", "didi", "camion", "camión", "estacionamiento", "caseta"], subcategories: ["Gasolina", "Transporte público", "Taxi/App", "Estacionamiento"] },
+  { id: "cat-hogar", name: "Hogar", type: "expense", color: "#8f63ff", keywords: ["alquiler", "renta", "hipoteca", "luz", "agua", "gas", "endesa", "iberdrola", "ikea", "leroy", "comunidad", "predial", "internet", "teléfono", "telefono", "cable"], subcategories: ["Limpieza", "Servicios", "Mantenimiento", "Muebles"] },
+  { id: "cat-subs", name: "Suscripciones", type: "expense", color: "#ff5c7a", keywords: ["netflix", "spotify", "hbo", "disney", "prime", "icloud", "youtube", "suscripcion", "suscripción", "gym", "gimnasio"], subcategories: ["Streaming", "Software", "Gimnasio"] },
+  { id: "cat-salud", name: "Salud", type: "expense", color: "#4dd6e8", keywords: ["farmacia", "medico", "médico", "dentista", "seguro", "sanitas", "adeslas"], subcategories: ["Farmacia", "Consulta", "Seguro médico"] },
+  { id: "cat-ocio", name: "Ocio", type: "expense", color: "#f5c451", keywords: ["cine", "concierto", "viaje", "hotel", "vuelo", "ryanair", "vueling", "airbnb", "juego", "steam"], subcategories: ["Viajes", "Entretenimiento", "Deportes"] },
+  { id: "cat-compras", name: "Compras", type: "expense", color: "#ff7ad9", keywords: ["amazon", "zara", "ropa", "el corte", "fnac", "mediamarkt", "apple", "zapatos"], subcategories: ["Ropa", "Electrónica", "Hogar"] },
+  { id: "cat-ingresos", name: "Ingresos", type: "income", color: "#2ee6a8", keywords: ["nomina", "nómina", "salario", "sueldo", "factura cobrada", "venta", "devolucion", "devolución", "bizum recibido"], subcategories: ["Nómina", "Freelance", "Ventas", "Devoluciones"] },
+  { id: "cat-intereses", name: "Intereses", type: "income", color: "#9be15d", system: true, keywords: ["interes", "interés", "intereses", "rendimiento", "cupon", "cupón", "dividendo"], subcategories: ["Rendimiento", "Dividendos", "Cupones"] },
+  { id: "cat-impuestos", name: "Impuestos", type: "expense", color: "#c0566e", system: true, keywords: ["impuesto", "impuestos", "isr", "retención", "retencion"], subcategories: ["ISR intereses"] },
+  { id: "cat-transfer", name: "Transferencia", type: "system", color: "#aab8d8", system: true, keywords: [], subcategories: [] },
+  { id: "cat-otros", name: "Otros", type: "expense", color: "#7a8db3", system: true, keywords: [], subcategories: [] },
 ];
 
 /** Categorización inteligente por reglas + puntuación sobre las categorías del usuario. */
@@ -129,11 +136,44 @@ export function groupedAccounts(accounts) {
 
 const NUM_WORDS = {
   un: 1, una: 1, uno: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5, seis: 6,
-  siete: 7, ocho: 8, nueve: 9, diez: 10, veinte: 20, treinta: 30,
-  cuarenta: 40, cincuenta: 50, cien: 100, doscientos: 200, quinientos: 500, mil: 1000,
+  siete: 7, ocho: 8, nueve: 9, diez: 10, once: 11, doce: 12, trece: 13,
+  catorce: 14, quince: 15, dieciséis: 16, dieciseis: 16, diecisiete: 17,
+  dieciocho: 18, diecinueve: 19, veinte: 20, veintiuno: 21, veintiún: 21,
+  veintidós: 22, veintidos: 22, veintitrés: 23, veintitres: 23,
+  veinticuatro: 24, veinticinco: 25, treinta: 30, cuarenta: 40,
+  cincuenta: 50, sesenta: 60, setenta: 70, ochenta: 80, noventa: 90,
+  cien: 100, ciento: 100, doscientos: 200, trescientos: 300, cuatrocientos: 400,
+  quinientos: 500, seiscientos: 600, setecientos: 700, ochocientos: 800,
+  novecientos: 900, mil: 1000,
 };
 
 function parseAmount(text) {
+  // "dos mil quinientos" → 2500, "mil quinientos" → 1500
+  const compMil = text.match(/\b([\wáéíóúñ]+)\s+mil(?:\s+([\wáéíóúñ]+))?\b/);
+  if (compMil) {
+    const pre = NUM_WORDS[compMil[1]];
+    const post = NUM_WORDS[compMil[2]];
+    if (pre) return pre * 1000 + (post || 0);
+  }
+  // standalone "mil" or "mil quinientos" (no multiplier before)
+  const soloMil = text.match(/\bmil(?:\s+([\wáéíóúñ]+))?\b/);
+  if (soloMil) {
+    const post = NUM_WORDS[soloMil[1]];
+    return 1000 + (post || 0);
+  }
+  // "ciento veinte" → 120, "treinta y cinco" → 35
+  const compoundHundred = text.match(/\b(ciento|doscientos|trescientos|cuatrocientos|quinientos|seiscientos|setecientos|ochocientos|novecientos)\s+(?:y\s+)?([\wáéíóúñ]+)\b/);
+  if (compoundHundred) {
+    const h = NUM_WORDS[compoundHundred[1]];
+    const r = NUM_WORDS[compoundHundred[2]];
+    if (h && r) return h + r;
+  }
+  const compoundTen = text.match(/\b(treinta|cuarenta|cincuenta|sesenta|setenta|ochenta|noventa)\s+y\s+([\wáéíóúñ]+)\b/);
+  if (compoundTen) {
+    const t = NUM_WORDS[compoundTen[1]];
+    const u = NUM_WORDS[compoundTen[2]];
+    if (t && u) return t + u;
+  }
   const m = text.match(/(\d+(?:[.,]\d+)?)/);
   if (m) return parseFloat(m[1].replace(",", "."));
   for (const [w, n] of Object.entries(NUM_WORDS)) {
@@ -148,15 +188,17 @@ function parseCurrency(text) {
   if (/libra|gbp|£/.test(text)) return "GBP";
   if (/peso|mxn/.test(text)) return "MXN";
   if (/bitcoin|btc/.test(text)) return "BTC";
-  return "EUR";
+  return "MXN";
 }
 
-/**
- * Convierte una frase natural en una intención estructurada.
- * Ejemplos: "gasté 20 euros en cena", "ingreso de 1500 nómina",
- * "transfiere 200 de Corriente a Ahorro", "programa una transferencia de 100 el viernes",
- * "ajusta mi límite de gasto a 900".
- */
+function parseAccountName(text) {
+  const m = text.match(/(?:de (?:la )?(?:cuenta|tarjeta) )([\wáéíóúñ ]+?)(?:\s*$|\s+(?:en|por|para|a)\b)/);
+  if (m) return m[1].trim();
+  const m2 = text.match(/(?:con (?:la )?(?:cuenta|tarjeta) )([\wáéíóúñ ]+?)(?:\s*$|\s+(?:en|por|para)\b)/);
+  if (m2) return m2[1].trim();
+  return null;
+}
+
 export function parseIntent(raw, categories = DEFAULT_CATEGORIES) {
   const text = (raw || "").toLowerCase().trim();
   const amount = parseAmount(text);
@@ -166,9 +208,9 @@ export function parseIntent(raw, categories = DEFAULT_CATEGORIES) {
     return { type: "set_limit", amount, summary: `Ajustar límite de gasto mensual a ${fmtMoney(amount)}` };
   }
 
-  if (/transfier|transferencia|mueve|pasa\b/.test(text) && amount != null) {
+  if (/transfier|transferencia|transfiere|mueve|mover|pasa\b|pasar\b|mandar?\b|enviar?\b/.test(text) && amount != null) {
     const scheduled = /programa|mañana|viernes|lunes|martes|mi[eé]rcoles|jueves|s[aá]bado|domingo|d[ií]a (\d+)/.test(text);
-    const between = text.match(/de (?:la )?(?:cuenta )?["']?([\wáéíóúñ ]+?)["']? a (?:la )?(?:cuenta )?["']?([\wáéíóúñ ]+)["']?$/);
+    const between = text.match(/de (?:la )?(?:cuenta |tarjeta )?["']?([\wáéíóúñ ]+?)["']?\s+a (?:la )?(?:cuenta |tarjeta )?["']?([\wáéíóúñ ]+?)["']?\s*$/);
     return {
       type: scheduled ? "schedule_transfer" : "transfer",
       amount,
@@ -179,38 +221,52 @@ export function parseIntent(raw, categories = DEFAULT_CATEGORIES) {
     };
   }
 
-  const isIncome = /ingres|cobr|recib|n[oó]mina|salario|me pagaron/.test(text);
-  const isExpense = /gast|pagu[eé]|compr|pag[oé]\b/.test(text) || (!isIncome && amount != null);
+  const isIncome = /ingres|cobr[eé]|recib[ií]|n[oó]mina|salario|me pagaron|me depositaron|me dieron/.test(text);
+  const isExpense = /gast[eé]|pagu[eé]|compr[eé]|pag[oó]\b|cobr[oó]\b|me cobr/.test(text) || (!isIncome && amount != null);
 
   if ((isExpense || isIncome) && amount != null) {
-    const descMatch = text.match(/(?:en|de|por)\s+([\wáéíóúñ' ]+)$/);
+    const descMatch = text.match(/(?:en|de|por)\s+([\wáéíóúñ' ]+?)(?:\s+(?:de la cuenta|con la|de mi|con mi)\b.*$|$)/);
     const description = descMatch ? descMatch[1].trim() : isIncome ? "Ingreso" : "Gasto";
+    const accountName = parseAccountName(text);
     const { category, confidence } = categorize(isIncome ? "nómina " + description : description, categories);
+    const sub = matchSubcategory(description, category, categories);
     return {
       type: isIncome ? "income" : "expense",
       amount,
       currency,
       description: description.charAt(0).toUpperCase() + description.slice(1),
       category: isIncome ? "Ingresos" : category,
+      subcategory: sub,
       confidence,
-      summary: `${isIncome ? "Registrar ingreso" : "Registrar gasto"} de ${fmtMoney(amount, currency)} — «${description}» (${isIncome ? "Ingresos" : category})`,
+      accountName,
+      summary: `${isIncome ? "Registrar ingreso" : "Registrar gasto"} de ${fmtMoney(amount, currency)} — «${description}» (${isIncome ? "Ingresos" : category}${sub ? " › " + sub : ""})${accountName ? ` en cuenta «${accountName}»` : ""}`,
     };
   }
 
   return { type: "unknown", summary: null };
 }
 
+function matchSubcategory(description, categoryName, categories) {
+  const cat = categories.find((c) => c.name === categoryName);
+  if (!cat?.subcategories?.length) return null;
+  const d = (description || "").toLowerCase();
+  for (const sub of cat.subcategories) {
+    if (d.includes(sub.toLowerCase())) return sub;
+  }
+  return null;
+}
+
 // ---------- Fechas ----------
 
 export const DAY_MS = 86_400_000;
-export const todayISO = () => new Date().toISOString().slice(0, 10);
+export const todayISO = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
 
 export function daysBetween(isoA, isoB) {
   return Math.floor((new Date(isoB) - new Date(isoA)) / DAY_MS);
 }
 
 export function fmtDate(iso) {
-  return new Date(iso).toLocaleDateString("es-ES", { day: "numeric", month: "short" });
+  return new Date(iso + "T12:00:00").toLocaleDateString("es-ES", { day: "numeric", month: "short" });
 }
 
 export const uid = () => Math.random().toString(36).slice(2, 10);
@@ -276,9 +332,14 @@ export function buildCSV(state) {
   out.push("");
 
   out.push("## CUENTAS");
-  out.push(csvRow(["Nombre", "Tipo", "Divisa", "Saldo", "Tasa TAE %", "Abono"]));
+  out.push(csvRow(["Nombre", "Tipo", "Divisa", "Saldo", "Tasa TAE %", "Abono", "Tope", "Tasa1 %", "TopeSaldo1", "TopeGanancia1", "Frec1", "Tasa2 %", "TopeSaldo2", "TopeGanancia2", "Frec2"]));
   for (const a of state.accounts) {
-    out.push(csvRow([a.name, ACCOUNT_TYPES[a.type] || a.type, a.currency, a.balance, (a.rate * 100).toFixed(2), a.accrual]));
+    out.push(csvRow([
+      a.name, ACCOUNT_TYPES[a.type] || a.type, a.currency, a.balance, (a.rate * 100).toFixed(2), a.accrual,
+      a.capped ? "sí" : "no",
+      a.capped ? ((a.rate1 || 0) * 100).toFixed(2) : "", a.capped ? (a.balanceCap1 || 0) : "", a.capped ? (a.gainCap1 || 0) : "", a.capped ? a.accrual1 : "",
+      a.capped ? ((a.rate2 || 0) * 100).toFixed(2) : "", a.capped ? (a.balanceCap2 || 0) : "", a.capped ? (a.gainCap2 || 0) : "", a.capped ? a.accrual2 : "",
+    ]));
   }
   out.push("");
 

@@ -1,9 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { login } from "../auth.js";
+import { hasBiometricCredential, isBiometricAvailable, login, verifyBiometric } from "../auth.js";
 import { Btn, inputCls } from "./UI.jsx";
 
-// Video servido localmente desde /public (evita 403 por hotlinking). Gradiente de respaldo si no carga.
 const BG_VIDEO = "/finance-bg.mp4";
 
 export default function Login({ onLogin }) {
@@ -11,6 +10,32 @@ export default function Login({ onLogin }) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const canBio = isBiometricAvailable() && hasBiometricCredential();
+
+  useEffect(() => {
+    if (canBio) bioLogin();
+  }, []);
+
+  const bioLogin = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      const user = await verifyBiometric();
+      const session = await login(user, "__biometric__");
+      if (!session) {
+        const directSession = { username: user, role: "admin", sections: "all", accounts: "all", ts: Date.now(), biometric: true };
+        sessionStorage.setItem("mis-finazas-session", JSON.stringify(directSession));
+        onLogin(directSession);
+      } else {
+        session.biometric = true;
+        sessionStorage.setItem("mis-finazas-session", JSON.stringify(session));
+        onLogin(session);
+      }
+    } catch {
+      setError("Biometría cancelada. Usa usuario y contraseña.");
+    }
+    setBusy(false);
+  };
 
   const submit = async (e) => {
     e.preventDefault();
@@ -27,7 +52,6 @@ export default function Login({ onLogin }) {
 
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-base-950">
-      {/* Fondo: video + gradiente de respaldo */}
       <div className="absolute inset-0 bg-gradient-to-br from-indigo-950 via-base-950 to-emerald-950" aria-hidden="true" />
       <video
         className="absolute inset-0 size-full object-cover opacity-30"
@@ -83,6 +107,12 @@ export default function Login({ onLogin }) {
           <Btn type="submit" className="w-full !py-2.5" disabled={busy}>
             {busy ? "Verificando…" : "Entrar"}
           </Btn>
+
+          {canBio && (
+            <Btn variant="ghost" className="w-full" onClick={bioLogin} disabled={busy}>
+              🔓 Entrar con Face ID / Huella
+            </Btn>
+          )}
         </form>
 
         <p className="mt-4 text-center text-[10px] text-ink-dim/70">

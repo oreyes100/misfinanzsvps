@@ -1,0 +1,50 @@
+{
+  "_doc": "RTK token-efficiency filter — Mis Finanzas. Stage 1 de BLUEPRINT_Token_Memory_Pipeline. Reduce ruido antes de que toque el contexto. Consumido por el hook RTK global (rtk <cmd>) y como referencia de patrones a excluir en find/grep manuales.",
+  "filters": {
+    "files": {
+      "exclude": [
+        "node_modules",
+        "dist",
+        "android/app/build",
+        "android/build",
+        "android/.gradle",
+        ".vercel",
+        "__pycache__",
+        ".git"
+      ],
+      "exclude_glob": [
+        "*.db",
+        "*.pdf",
+        "*.zip",
+        "*.apk",
+        "*.traineddata",
+        "*.mp4",
+        "*.jpeg",
+        "*.png",
+        "*.log",
+        "package-lock.json",
+        "*.conversation.json"
+      ],
+      "max_size": "512KB"
+    },
+    "logs": {
+      "enabled": true,
+      "pattern": "\\[.*\\]\\s*(DEBUG|TRACE)",
+      "keep": ["ERROR", "WARN"]
+    },
+    "dedup": {
+      "consecutive": true,
+      "similarity": 0.95
+    }
+  },
+  "compression": {
+    "enabled": true,
+    "truncate": 500,
+    "keep_start_end": true
+  },
+  "notes": [
+    "store.jsx (548 lineas) NO se excluye — pero por JIT loading no se carga en boot. Ver boot.md.",
+    "Cuentas/*.pdf y *.db son datos privados del subproyecto contable — nunca al contexto.",
+    "Para grep/find manual usar: --exclude-dir={node_modules,dist,.git,.vercel} --exclude=*.{db,pdf,zip,apk,mp4}"
+  ]
+}

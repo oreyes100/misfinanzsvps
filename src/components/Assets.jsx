@@ -236,7 +236,7 @@ export default function Assets() {
         <div className="mb-3 flex items-center justify-between">
           <div>
             <h2 className="text-base font-semibold">Inmuebles</h2>
-            <p className="text-xs text-ink-dim">Marca con ★ el inmueble que se muestra en Inicio.</p>
+            <p className="text-xs text-ink-dim">Marca con ★ los inmuebles destacados en Inicio.</p>
           </div>
           <div className="flex items-center gap-3">
             {state.assets.realEstate.length > 0 && (

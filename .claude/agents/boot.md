@@ -9,6 +9,11 @@ SCOPE: Solo inicialización. No ejecutar tareas del usuario en este skill.
 
 INPUTS: Ninguno requerido. Leer filesystem.
 
+JIT CONTEXT LOADING (Just-In-Time — token efficiency):
+- Boot carga SOLO: CLAUDE.md, CONTEXTO.md, verified-patterns.md, learned-rules.md, corrections.jsonl.
+- Boot NO carga: src/store.jsx (548 líneas), src/utils.js, Assistant.jsx, Wiki/ completo, node_modules, dist, Cuentas/. Esos se inyectan SOLO al momento exacto de editar/referenciar.
+- grep/find: aplicar exclusiones de .claude/rtk-filter.json (node_modules, dist, .git, .vercel, *.db, *.pdf, *.zip, *.mp4).
+
 CONTEXT:
 - Stack: React 19 + Vite 6 + Tailwind CSS v4 + Framer Motion 12
 - Estado: useReducer + Context (store.jsx) + localStorage `mis-finazas-v1`
@@ -27,6 +32,8 @@ PROCEDURE (Heartbeat Pattern — ejecutar en orden):
    - Leer .claude/rules/verified-patterns.md → patrones confirmados (peso alto)
    - Leer .claude/memory/learned-rules.md → candidatos (verificar antes de aplicar)
    - Leer .claude/memory/corrections.jsonl si existe → correcciones recientes
+   - Privacy audit: `python3 .claude/memory/privacy-filter.py --check .claude/memory/corrections.jsonl`
+     Si exit 1 (sensible expuesto): reportar como PRIMERA prioridad, NO continuar hasta envolver en `<private>` o eliminar.
 
 4. **Leer handoff de sesión anterior**
    Buscar Logs/[fecha-más-reciente].md si existe. Extraer bloqueos o trabajo en progreso.

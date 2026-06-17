@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
 import { StoreProvider, useStore } from "./store.jsx";
-import { canAccess, currentSession, logout } from "./auth.js";
+import { canAccess, currentSession, hasBiometricCredential, logout } from "./auth.js";
 import Assistant from "./components/Assistant.jsx";
 import BottomNav from "./components/BottomNav.jsx";
 import Congregacion from "./components/Congregacion.jsx";
@@ -43,7 +43,7 @@ function Shell({ session, onLogout }) {
           <span aria-hidden="true" className="mr-1.5">◈</span>Mis finazas
         </h1>
         <div className="flex items-center gap-2">
-          <SecurityBadge biometric={state.settings.biometric} />
+          <SecurityBadge biometric={hasBiometricCredential()} />
           <button
             type="button"
             onClick={onLogout}

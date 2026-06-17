@@ -7,12 +7,42 @@ import { Btn, Field, Modal, Money, inputCls } from "./UI.jsx";
 
 const aliasNorm = (s) => (s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
 
+/** Conmutador Gasto / Ingreso / Transferencia compartido entre los modales de alta. */
+export function TypeTabs({ value, onChange }) {
+  const opts = [["expense", "Gasto"], ["income", "Ingreso"], ["transfer", "Transferencia"]];
+  return (
+    <div className="flex gap-2" role="radiogroup" aria-label="Tipo de movimiento">
+      {opts.map(([v, l]) => {
+        const active = value === v;
+        const tone = v === "expense" ? "border-loss/60 bg-loss/15 text-loss"
+          : v === "income" ? "border-gain/60 bg-gain/15 text-gain"
+          : "border-accent/60 bg-accent/15 text-accent-soft";
+        return (
+          <button
+            key={v}
+            type="button"
+            role="radio"
+            aria-checked={active}
+            onClick={() => onChange(v)}
+            className={`pressable flex-1 rounded-xl border px-3 py-2 text-sm font-medium transition-colors duration-150 ${
+              active ? tone : "border-white/12 bg-white/6 text-ink-dim"
+            }`}
+          >
+            {l}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 /** Transferencia entre cuentas con paso de confirmación explícito + OCR de captura. */
-export function TransferModal({ onClose, preset }) {
+export function TransferModal({ onClose, preset, tabs }) {
   const { state, dispatch } = useStore();
   const [fromId, setFromId] = useState(preset?.fromId || state.accounts[0]?.id);
   const [toId, setToId] = useState(preset?.toId || state.accounts[1]?.id);
   const [amount, setAmount] = useState(preset?.amount || "");
+  const [date, setDate] = useState(preset?.date || todayISO());
   const [step, setStep] = useState("form"); // form | confirm | done
   const [error, setError] = useState("");
   const [ocr, setOcr] = useState(null); // { busy, progress, fromHint, toHint, note }
@@ -73,7 +103,7 @@ export function TransferModal({ onClose, preset }) {
   };
 
   const execute = () => {
-    dispatch({ type: "transfer", fromId, toId, amount: amt });
+    dispatch({ type: "transfer", fromId, toId, amount: amt, date });
     // Aprender: asociar el texto OCR de origen/destino a las cuentas elegidas.
     const aliases = {};
     if (ocrHints.current.fromHint) aliases[aliasNorm(ocrHints.current.fromHint)] = fromId;
@@ -87,6 +117,7 @@ export function TransferModal({ onClose, preset }) {
     <Modal title="Transferencia entre cuentas" onClose={onClose} labelId="transfer-title">
       {step === "form" && (
         <form className="space-y-3" onSubmit={(e) => { e.preventDefault(); review(); }}>
+          {tabs}
           <input ref={fileRef} type="file" accept="image/*" className="sr-only" aria-hidden="true" tabIndex={-1} onChange={scanTransfer} />
           <Btn variant="ghost" className="w-full" onClick={() => fileRef.current?.click()} disabled={ocr?.busy}>
             {ocr?.busy
@@ -113,19 +144,27 @@ export function TransferModal({ onClose, preset }) {
               ))}
             </select>
           </Field>
-          <Field label={`Importe (${from?.currency || "EUR"})`} hint={from && to && from.currency !== to.currency ? `Conversión en tiempo real: recibirás ≈ ${fmtMoney(credited, to.currency)}` : undefined}>
-            <input
-              className={inputCls}
-              type="number"
-              inputMode="decimal"
-              min="0"
-              step="0.01"
-              placeholder="0,00"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              required
-            />
-          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label={`Importe (${from?.currency || "EUR"})`}>
+              <input
+                className={inputCls}
+                type="number"
+                inputMode="decimal"
+                min="0"
+                step="0.01"
+                placeholder="0,00"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                required
+              />
+            </Field>
+            <Field label="Fecha">
+              <input className={inputCls} type="date" max={todayISO()} value={date} onChange={(e) => setDate(e.target.value)} required />
+            </Field>
+          </div>
+          {from && to && from.currency !== to.currency && (
+            <p className="text-xs text-ink-dim">Conversión en tiempo real: recibirás ≈ {fmtMoney(credited, to.currency)}</p>
+          )}
           {error && <p role="alert" className="text-sm text-loss">{error}</p>}
           <div className="flex justify-end gap-2 pt-1">
             <Btn variant="ghost" onClick={onClose}>Cancelar</Btn>
@@ -143,6 +182,7 @@ export function TransferModal({ onClose, preset }) {
               <div className="flex justify-between"><dt className="text-ink-dim">Destino</dt><dd>{to.name} ({to.currency})</dd></div>
               <div className="flex justify-between"><dt className="text-ink-dim">Envías</dt><dd className="font-semibold">{fmtMoney(amt, from.currency)}</dd></div>
               <div className="flex justify-between"><dt className="text-ink-dim">Destino recibe</dt><dd className="font-semibold">{fmtMoney(credited, to.currency)}</dd></div>
+              <div className="flex justify-between"><dt className="text-ink-dim">Fecha</dt><dd>{date}</dd></div>
             </dl>
           </div>
           <p className="text-xs text-ink-dim">Esta acción se registra al instante y queda reflejada en ambas cuentas.</p>
@@ -177,8 +217,9 @@ export function TransactionModal({ onClose, preset, tx }) {
   const [date, setDate] = useState(tx?.date || todayISO());
   const [accountId, setAccountId] = useState(tx?.accountId || state.accounts[0]?.id);
   const [catOverride, setCatOverride] = useState(tx?.category || "");
+  const [subcat, setSubcat] = useState(tx?.subcategory || "");
   const [ocr, setOcr] = useState(null); // { busy, progress, ai, note }
-  const [receipt, setReceipt] = useState(null); // { merchant, total, date, groups } tras escanear
+  const [receipt, setReceipt] = useState(null); // { merchant, total, date, items } tras escanear
   const [statement, setStatement] = useState(null); // { merchant, rows } captura bancaria con varios movimientos
   const fileRef = useRef(null);
 
@@ -186,6 +227,8 @@ export function TransactionModal({ onClose, preset, tx }) {
   const suggested = sign === "income" ? "Ingresos" : ai.category;
   const category = catOverride || suggested;
   const catOptions = state.categories.filter((c) => c.type === (sign === "income" ? "income" : "expense"));
+  const activeCat = state.categories.find((c) => c.name === category);
+  const subcatOptions = activeCat?.subcategories || [];
 
   const acctCurrency = state.accounts.find((a) => a.id === accountId)?.currency || "EUR";
 
@@ -358,6 +401,7 @@ export function TransactionModal({ onClose, preset, tx }) {
       currency: acc.currency,
       accountId,
       category,
+      subcategory: subcat || null,
       date,
     };
     if (isEdit) dispatch({ type: "update_transaction", id: tx.id, patch: payload });
@@ -371,6 +415,19 @@ export function TransactionModal({ onClose, preset, tx }) {
       onClose();
     }
   };
+
+  // Conmutador de tipo: Gasto / Ingreso / Transferencia.
+  const handleType = (v) => {
+    if (v === "transfer") { setSign("transfer"); return; }
+    setSign(v);
+    setCatOverride("");
+  };
+
+  // En modo transferencia se delega al modal de transferencia (mismo conmutador arriba).
+  // Solo al crear (no al editar un movimiento existente).
+  if (!isEdit && sign === "transfer") {
+    return <TransferModal onClose={onClose} tabs={<TypeTabs value="transfer" onChange={handleType} />} />;
+  }
 
   if (statement) {
     const expenseCats = state.categories.filter((c) => c.type === "expense");
@@ -545,7 +602,7 @@ export function TransactionModal({ onClose, preset, tx }) {
                   aria-label="Importe"
                 />
                 <select
-                  className={`${inputCls} !w-40 !py-1 text-xs ${it.category !== it.origCategory ? "!border-accent/60" : ""}`}
+                  className={`${inputCls} !w-32 !py-1 text-xs ${it.category !== it.origCategory ? "!border-accent/60" : ""}`}
                   value={it.category}
                   onChange={(e) => updateItem(it.id, { category: e.target.value, subcategory: null })}
                   aria-label="Categoría"
@@ -554,6 +611,19 @@ export function TransactionModal({ onClose, preset, tx }) {
                   {expenseCats.map((c) => <option key={c.id} value={c.name}>{c.name}</option>)}
                   {!expenseCats.some((c) => c.name === it.category) && <option value={it.category}>{it.category}</option>}
                 </select>
+                {(state.categories.find((c) => c.name === it.category)?.subcategories || []).length > 0 && (
+                  <select
+                    className={`${inputCls} !w-32 !py-1 text-xs`}
+                    value={it.subcategory || ""}
+                    onChange={(e) => updateItem(it.id, { subcategory: e.target.value || null })}
+                    aria-label="Subcategoría"
+                  >
+                    <option value="">—</option>
+                    {(state.categories.find((c) => c.name === it.category)?.subcategories || []).map((s) => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
+                )}
               </li>
             ))}
           </ul>
@@ -572,24 +642,28 @@ export function TransactionModal({ onClose, preset, tx }) {
   return (
     <Modal title={isEdit ? "Editar movimiento" : "Nuevo movimiento"} onClose={onClose} labelId="tx-title">
       <form className="space-y-3" onSubmit={save}>
-        <div className="flex gap-2" role="radiogroup" aria-label="Tipo de movimiento">
-          {[["expense", "Gasto"], ["income", "Ingreso"]].map(([v, l]) => (
-            <button
-              key={v}
-              type="button"
-              role="radio"
-              aria-checked={sign === v}
-              onClick={() => { setSign(v); setCatOverride(""); }}
-              className={`pressable flex-1 rounded-xl border px-3 py-2 text-sm font-medium transition-colors duration-150 ${
-                sign === v
-                  ? v === "expense" ? "border-loss/60 bg-loss/15 text-loss" : "border-gain/60 bg-gain/15 text-gain"
-                  : "border-white/12 bg-white/6 text-ink-dim"
-              }`}
-            >
-              {l}
-            </button>
-          ))}
-        </div>
+        {isEdit ? (
+          <div className="flex gap-2" role="radiogroup" aria-label="Tipo de movimiento">
+            {[["expense", "Gasto"], ["income", "Ingreso"]].map(([v, l]) => (
+              <button
+                key={v}
+                type="button"
+                role="radio"
+                aria-checked={sign === v}
+                onClick={() => { setSign(v); setCatOverride(""); }}
+                className={`pressable flex-1 rounded-xl border px-3 py-2 text-sm font-medium transition-colors duration-150 ${
+                  sign === v
+                    ? v === "expense" ? "border-loss/60 bg-loss/15 text-loss" : "border-gain/60 bg-gain/15 text-gain"
+                    : "border-white/12 bg-white/6 text-ink-dim"
+                }`}
+              >
+                {l}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <TypeTabs value={sign} onChange={handleType} />
+        )}
 
         <Field label="Descripción">
           <input className={inputCls} value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Ej.: Dominos Pizza" required />
@@ -610,12 +684,22 @@ export function TransactionModal({ onClose, preset, tx }) {
           </AnimatePresence>
         )}
 
-        <Field label="Categoría" hint={catOverride ? "Selección manual." : "Sugerida por la IA; puedes cambiarla."}>
-          <select className={inputCls} value={category} onChange={(e) => setCatOverride(e.target.value)}>
-            {catOptions.map((c) => <option key={c.id} value={c.name}>{c.name}</option>)}
-            {!catOptions.some((c) => c.name === category) && <option value={category}>{category}</option>}
-          </select>
-        </Field>
+        <div className={`grid gap-3 ${subcatOptions.length ? "grid-cols-2" : ""}`}>
+          <Field label="Categoría" hint={catOverride ? "Selección manual." : "Sugerida por la IA; puedes cambiarla."}>
+            <select className={inputCls} value={category} onChange={(e) => { setCatOverride(e.target.value); setSubcat(""); }}>
+              {catOptions.map((c) => <option key={c.id} value={c.name}>{c.name}</option>)}
+              {!catOptions.some((c) => c.name === category) && <option value={category}>{category}</option>}
+            </select>
+          </Field>
+          {subcatOptions.length > 0 && (
+            <Field label="Subcategoría">
+              <select className={inputCls} value={subcat} onChange={(e) => setSubcat(e.target.value)}>
+                <option value="">— Sin especificar —</option>
+                {subcatOptions.map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </Field>
+          )}
+        </div>
 
         <div className="grid grid-cols-2 gap-3">
           <Field label="Importe">

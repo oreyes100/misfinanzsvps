@@ -1,5 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState } from "react";
-import { BASE_FX, DAY_MS, DEFAULT_CATEGORIES, categorize, daysBetween, todayISO, uid } from "./utils.js";
+import { API_BASE, BASE_FX, DAY_MS, DEFAULT_CATEGORIES, categorize, todayISO, uid } from "./utils.js";
+import { accrueInterest } from "./interest.js";
+
+export { accrueInterest };
 
 // ---------- Estado semilla ----------
 
@@ -59,58 +62,6 @@ const SEED = {
   },
   goldPriceEUR: 68.4, // €/gramo
 };
-
-// ---------- Intereses automáticos ----------
-// Recorre cada cuenta con tasa configurada y registra las ganancias pendientes
-// (devengo diario o mensual) desde el último cierre.
-
-export function accrueInterest(state) {
-  const now = todayISO();
-  let accounts = [];
-  const newTx = [];
-
-  for (const acc of state.accounts) {
-    if (!acc.rate || acc.accrual === "none") { accounts.push(acc); continue; }
-    const days = daysBetween(acc.lastAccrual, now);
-    if (days <= 0) { accounts.push(acc); continue; }
-
-    let balance = acc.balance;
-    let gained = 0;
-
-    if (acc.accrual === "daily") {
-      const dailyRate = acc.rate / 365;
-      const grown = balance * Math.pow(1 + dailyRate, days);
-      gained = grown - balance;
-      balance = grown;
-    } else if (acc.accrual === "monthly") {
-      const months = Math.floor(days / 30);
-      if (months > 0) {
-        const grown = balance * Math.pow(1 + acc.rate / 12, months);
-        gained = grown - balance;
-        balance = grown;
-      }
-    }
-
-    if (gained > 0.005) {
-      newTx.push({
-        id: uid(),
-        date: now,
-        description: `Intereses ${acc.name} (${(acc.rate * 100).toFixed(2)} % TAE)`,
-        amount: Math.round(gained * 100) / 100,
-        currency: acc.currency,
-        category: "Intereses",
-        accountId: acc.id,
-        auto: true,
-      });
-      accounts.push({ ...acc, balance: Math.round(balance * 100) / 100, lastAccrual: now });
-    } else {
-      accounts.push(acc);
-    }
-  }
-
-  if (!newTx.length) return state;
-  return { ...state, accounts, transactions: [...newTx, ...state.transactions] };
-}
 
 // ---------- Reducer ----------
 
@@ -185,12 +136,12 @@ function reducer(state, action) {
       const { fromId, toId, amount } = action;
       const from = state.accounts.find((a) => a.id === fromId);
       const to = state.accounts.find((a) => a.id === toId);
-      if (!from || !to || amount <= 0 || from.balance < amount) return state;
+      if (!from || !to || amount <= 0) return state;
       // Conversión si las divisas difieren
       const credited = from.currency === to.currency
         ? amount
         : (amount * state.fx[from.currency]) / state.fx[to.currency];
-      const date = todayISO();
+      const date = action.date || todayISO();
       const accounts = state.accounts.map((a) => {
         if (a.id === fromId) return { ...a, balance: Math.round((a.balance - amount) * 100) / 100 };
         if (a.id === toId) return { ...a, balance: Math.round((a.balance + credited) * 100) / 100 };
@@ -226,17 +177,33 @@ function reducer(state, action) {
       return accrueInterest(state);
 
     case "add_account": {
-      const account = { id: uid(), lastAccrual: todayISO(), ...action.account };
+      const today = todayISO();
+      const account = { id: uid(), lastAccrual: today, ...action.account };
+      // Cuenta con tope: arrancar relojes y contadores de cada tramo.
+      if (account.capped) {
+        account.lastAccrual1 = account.lastAccrual1 || today;
+        account.lastAccrual2 = account.lastAccrual2 || today;
+        account.gainAccrued1 = account.gainAccrued1 || 0;
+        account.gainAccrued2 = account.gainAccrued2 || 0;
+      }
       return { ...state, accounts: [...state.accounts, account] };
     }
 
     case "update_account": {
+      const today = todayISO();
       const accounts = state.accounts.map((a) => {
         if (a.id !== action.accountId) return a;
         const next = { ...a, ...action.patch };
         // Si los intereses se activan ahora, el devengo arranca hoy
         // (evita acumular retroactivamente desde un lastAccrual antiguo).
-        if (a.rate === 0 && next.rate > 0) next.lastAccrual = todayISO();
+        if (a.rate === 0 && next.rate > 0) next.lastAccrual = today;
+        // Tope recién activado: arrancar relojes/contadores de los tramos hoy.
+        if (!a.capped && next.capped) {
+          next.lastAccrual1 = today;
+          next.lastAccrual2 = today;
+          next.gainAccrued1 = a.gainAccrued1 || 0;
+          next.gainAccrued2 = a.gainAccrued2 || 0;
+        }
         return next;
       });
       return { ...state, accounts };
@@ -308,7 +275,9 @@ function reducer(state, action) {
     }
 
     case "set_featured_realestate": {
-      const realEstate = state.assets.realEstate.map((r) => ({ ...r, featured: r.id === action.id }));
+      const realEstate = state.assets.realEstate.map((r) =>
+        r.id === action.id ? { ...r, featured: !r.featured } : r
+      );
       return { ...state, assets: { ...state.assets, realEstate } };
     }
 
@@ -378,12 +347,22 @@ function reducer(state, action) {
 const StoreCtx = createContext(null);
 const KEY = "mis-finazas-v1";
 
+/** Garantiza que existan las categorías de sistema nuevas (ej. Impuestos) en estados antiguos. */
+function ensureSystemCategories(categories) {
+  const cats = Array.isArray(categories) ? categories : DEFAULT_CATEGORIES;
+  const names = new Set(cats.map((c) => c.name));
+  const missing = DEFAULT_CATEGORIES.filter((c) => c.system && !names.has(c.name));
+  return missing.length ? [...cats, ...missing] : cats;
+}
+
 function load() {
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return accrueInterest(SEED);
     const saved = JSON.parse(raw);
-    return accrueInterest({ ...SEED, ...saved, fx: { ...BASE_FX, ...saved.fx } });
+    const merged = { ...SEED, ...saved, fx: { ...BASE_FX, ...saved.fx } };
+    merged.categories = ensureSystemCategories(merged.categories);
+    return accrueInterest(merged);
   } catch {
     return accrueInterest(SEED);
   }
@@ -416,7 +395,7 @@ export function StoreProvider({ children }) {
   const pushNow = useCallback(async (id) => {
     setSyncStatus("pushing");
     const snapshot = syncableRef.current;
-    const r = await fetch(`/api/sync?id=${encodeURIComponent(id)}`, {
+    const r = await fetch(`${API_BASE}/api/sync?id=${encodeURIComponent(id)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: `{"state":${snapshot}}`,
@@ -436,7 +415,7 @@ export function StoreProvider({ children }) {
       if (pullingRef.current) return;
       if (syncableRef.current === lastPushedRef.current) return;
       try {
-        fetch(`/api/sync?id=${encodeURIComponent(syncId)}`, {
+        fetch(`${API_BASE}/api/sync?id=${encodeURIComponent(syncId)}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: `{"state":${syncableRef.current}}`,
@@ -462,7 +441,7 @@ export function StoreProvider({ children }) {
     (async () => {
       setSyncStatus("pulling");
       try {
-        const r = await fetch(`/api/sync?id=${encodeURIComponent(syncId)}`);
+        const r = await fetch(`${API_BASE}/api/sync?id=${encodeURIComponent(syncId)}`);
         if (!r.ok) throw new Error(`sync pull ${r.status}`);
         const data = await r.json();
         if (cancelled) return;

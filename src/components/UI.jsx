@@ -1,3 +1,4 @@
+import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
 
 /** Tarjeta de vidrio con entrada animada. */
@@ -45,7 +46,7 @@ export function Money({ value, formatted, className = "" }) {
   );
 }
 
-/** Indicador de seguridad: cifrado + biometría. */
+/** Indicador de seguridad: cifrado + biometría (WebAuthn real). */
 export function SecurityBadge({ biometric }) {
   return (
     <div
@@ -71,19 +72,21 @@ export function SecurityBadge({ biometric }) {
 /** Modal accesible con fondo de desenfoque. `size`: "md" (def.) | "lg" (captura ancha). */
 export function Modal({ title, onClose, children, labelId, size = "md" }) {
   const width = size === "lg" ? "max-w-2xl" : "max-w-md";
-  return (
+  // Portal a <body>: evita que un ancestro con `transform` (motion/Glass) capture el
+  // `position: fixed` y empuje el diálogo al fondo de la página. Centrado en el viewport.
+  const overlay = (
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       transition={{ duration: 0.18 }}
-      className="fixed inset-0 z-50 flex items-end justify-center bg-base-950/60 backdrop-blur-sm p-4 sm:items-center"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-base-950/60 backdrop-blur-sm p-4"
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
       <motion.div
-        initial={{ y: 40, scale: 0.97 }}
+        initial={{ y: 24, scale: 0.97 }}
         animate={{ y: 0, scale: 1 }}
-        exit={{ y: 40, opacity: 0 }}
+        exit={{ y: 24, opacity: 0 }}
         transition={{ duration: 0.22, ease: "easeOut" }}
         role="dialog"
         aria-modal="true"
@@ -98,6 +101,7 @@ export function Modal({ title, onClose, children, labelId, size = "md" }) {
       </motion.div>
     </motion.div>
   );
+  return typeof document !== "undefined" ? createPortal(overlay, document.body) : overlay;
 }
 
 export function Field({ label, children, hint }) {

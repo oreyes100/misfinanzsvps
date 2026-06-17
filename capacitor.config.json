@@ -1,0 +1,11 @@
+{
+  "appId": "com.misfinazas.app",
+  "appName": "Mis Finanzas",
+  "webDir": "dist",
+  "android": {
+    "allowMixedContent": true
+  },
+  "server": {
+    "androidScheme": "https"
+  }
+}

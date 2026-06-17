@@ -3,14 +3,14 @@ import { AnimatePresence } from "framer-motion";
 import { useStore } from "../store.jsx";
 import { Btn, Field, Glass, Modal, inputCls } from "./UI.jsx";
 
-/** Alta/edición de categoría. `category` null → crear. */
+/** Alta/edición de categoría con subcategorías. `category` null → crear. */
 function CategoryModal({ category, onClose }) {
   const { state, dispatch } = useStore();
   const isNew = !category;
   const [form, setForm] = useState(
     category
-      ? { ...category, keywords: (category.keywords || []).join(", ") }
-      : { name: "", type: "expense", color: "#5b8cff", keywords: "" }
+      ? { ...category, keywords: (category.keywords || []).join(", "), subcategories: (category.subcategories || []).join(", ") }
+      : { name: "", type: "expense", color: "#5b8cff", keywords: "", subcategories: "" }
   );
   const [error, setError] = useState("");
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
@@ -26,6 +26,7 @@ function CategoryModal({ category, onClose }) {
       type: form.type,
       color: form.color,
       keywords: form.keywords.split(",").map((w) => w.trim().toLowerCase()).filter(Boolean),
+      subcategories: form.subcategories.split(",").map((s) => s.trim()).filter(Boolean),
     };
     if (isNew) dispatch({ type: "add_category", category: payload });
     else dispatch({ type: "update_category", id: category.id, patch: payload });
@@ -55,6 +56,18 @@ function CategoryModal({ category, onClose }) {
             <option value="expense">Gasto</option>
             <option value="income">Ingreso</option>
           </select>
+        </Field>
+
+        <Field
+          label="Subcategorías (separadas por comas)"
+          hint="Subdivision interna. Útil para desglosar recibos y reportes detallados."
+        >
+          <textarea
+            className={`${inputCls} min-h-16 resize-y`}
+            value={form.subcategories}
+            onChange={(e) => set("subcategories", e.target.value)}
+            placeholder="ej.: Abarrotes, Carnes, Lácteos, Bebidas"
+          />
         </Field>
 
         <Field
@@ -92,6 +105,9 @@ function CategoryList({ title, items, onEdit, onDelete }) {
                 {c.name}
                 {c.system && <span className="ml-1.5 rounded bg-white/10 px-1.5 py-0.5 text-[10px] text-ink-dim">sistema</span>}
               </p>
+              {c.subcategories?.length > 0 && (
+                <p className="truncate text-xs text-accent-soft">{c.subcategories.join(" · ")}</p>
+              )}
               {c.keywords?.length > 0 && (
                 <p className="truncate text-xs text-ink-dim">{c.keywords.slice(0, 5).join(" · ")}{c.keywords.length > 5 ? " …" : ""}</p>
               )}
@@ -110,7 +126,7 @@ function CategoryList({ title, items, onEdit, onDelete }) {
 
 export default function Categories() {
   const { state, dispatch } = useStore();
-  const [modal, setModal] = useState(null); // "new" | category
+  const [modal, setModal] = useState(null);
 
   const expenses = state.categories.filter((c) => c.type === "expense");
   const incomes = state.categories.filter((c) => c.type === "income");
@@ -127,7 +143,7 @@ export default function Categories() {
       <div className="mb-3 flex items-center justify-between">
         <div>
           <h2 className="text-base font-semibold">Categorías</h2>
-          <p className="text-xs text-ink-dim">La IA usa las palabras clave para categorizar automáticamente.</p>
+          <p className="text-xs text-ink-dim">Edita subcategorías, palabras clave y colores. La IA usa todo para categorizar.</p>
         </div>
         <Btn onClick={() => setModal("new")} className="!py-1.5 text-xs">+ Nueva categoría</Btn>
       </div>

@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { useStore } from "../store.jsx";
+import { hasBiometricCredential, isBiometricAvailable, registerBiometric, removeBiometric } from "../auth.js";
 import { CURRENCIES, downloadBackup, downloadCSV, fmtMoney, parseBackup } from "../utils.js";
 import { Btn, Field, Glass, inputCls } from "./UI.jsx";
 import Users from "./Users.jsx";
@@ -136,12 +137,66 @@ export default function Settings({ session }) {
         )}
       </Glass>
 
+      <BiometricSettings session={session} />
+
       <AIEngine />
 
       <CloudSync />
 
       <DataTools />
     </div>
+  );
+}
+
+function BiometricSettings({ session }) {
+  const available = isBiometricAvailable();
+  const [enrolled, setEnrolled] = useState(hasBiometricCredential());
+  const [msg, setMsg] = useState(null);
+
+  const enroll = async () => {
+    try {
+      await registerBiometric(session.username);
+      setEnrolled(true);
+      setMsg({ tone: "gain", text: "Face ID / huella registrado. En el próximo login podrás entrar con biometría." });
+    } catch (e) {
+      setMsg({ tone: "loss", text: e.message || "No se pudo registrar." });
+    }
+  };
+
+  const remove = () => {
+    removeBiometric();
+    setEnrolled(false);
+    setMsg({ tone: "gain", text: "Biometría desactivada." });
+  };
+
+  return (
+    <Glass aria-label="Seguridad biométrica">
+      <div className="mb-1 flex items-center justify-between">
+        <h2 className="text-base font-semibold">Face ID / Huella digital</h2>
+        <span className={`text-xs ${enrolled ? "text-gain" : "text-ink-dim"}`} role="status">
+          {enrolled ? "● Activo" : "○ Inactivo"}
+        </span>
+      </div>
+      {!available ? (
+        <p className="text-sm text-ink-dim">Tu navegador no soporta autenticación biométrica (WebAuthn).</p>
+      ) : enrolled ? (
+        <div className="space-y-2">
+          <p className="text-sm text-ink-dim">
+            Biometría activada para <strong className="text-ink">{session.username}</strong>. Al iniciar sesión se pedirá
+            Face ID o huella antes de pedir contraseña.
+          </p>
+          <Btn variant="danger" className="text-xs" onClick={remove}>Desactivar biometría</Btn>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          <p className="text-sm text-ink-dim">
+            Activa Face ID o huella digital para entrar sin contraseña. Se registra en este dispositivo.
+          </p>
+          <Btn onClick={enroll}>🔓 Activar Face ID / Huella</Btn>
+        </div>
+      )}
+      {msg && <p role="status" className={`mt-2 text-sm ${msg.tone === "gain" ? "text-gain" : "text-loss"}`}>{msg.text}</p>}
+    </Glass>
   );
 }
 

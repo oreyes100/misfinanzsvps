@@ -1,4 +1,21 @@
 {
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/precommit-privacy.sh\""
+          },
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/filter-rewrite.sh\""
+          }
+        ]
+      }
+    ]
+  },
   "permissions": {
     "allow": [
       "Bash(npm install *)",
@@ -95,7 +112,13 @@
       "Bash(curl -s -X POST --max-time 20 -H 'Content-Type: application/json' -d '{\"state\":{\"accounts\":[{\"id\":\"x\",\"name\":\"Prueba\",\"balance\":123,\"type\":\"checking\",\"currency\":\"MXN\"}]}}' https://mis-finazas-gold.vercel.app/api/sync?id=test-sync-__CMDSUB_OUTPUT__-abcdef123456)",
       "Bash(curl -s --max-time 20 https://mis-finazas-gold.vercel.app/api/sync?id=test-sync-__CMDSUB_OUTPUT__-abcdef123456)",
       "mcp__obsidian__obsidian_list_vault_root",
-      "Bash(find ~ -name \"*blueprint*\" -o -name \"*methodology*\" 2>/dev/null | head -20)"
+      "Bash(find ~ -name \"*blueprint*\" -o -name \"*methodology*\" 2>/dev/null | head -20)",
+      "Bash(brew install *)",
+      "Bash(ls -lh \"/Users/jorge/No sync/Mis finazas/android/app/build/outputs/apk/debug/app-debug.apk\" && cp \"/Users/jorge/No sync/Mis finazas/android/app/build/outputs/apk/debug/app-debug.apk\" \"/Users/jorge/Desktop/MisFinanzas.apk\" && echo \"Copiado a ~/Desktop/MisFinanzas.apk\")",
+      "Bash(grep -rn 'fetch\\(\"/api\\\\|fetch\\(`/api' src/)",
+      "Bash(grep -n 'fetch\\(`/api/sync' src/store.jsx)",
+      "Bash(npx cap *)",
+      "Bash(npm ls *)"
     ]
   }
 }

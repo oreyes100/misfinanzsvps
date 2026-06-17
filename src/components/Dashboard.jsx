@@ -121,7 +121,7 @@ export default function Dashboard() {
   const goldValue = state.assets.gold.grams * state.goldPriceEUR;
   const reValue = state.assets.realEstate.reduce((s, r) => s + r.valueEUR, 0);
   const reCost = state.assets.realEstate.reduce((s, r) => s + r.costBasisEUR, 0);
-  const featuredRE = state.assets.realEstate.find((r) => r.featured) || state.assets.realEstate[0];
+  const rePct = reCost > 0 ? (reValue - reCost) / reCost : 0;
 
   // Total invertido/líquido = todas las cuentas de activo (corriente, ahorro,
   // depósito, inversión, sofipo). Total deudas = pasivos (tarjeta, préstamo).
@@ -275,19 +275,23 @@ export default function Dashboard() {
         <LineChart data={state.priceHistory.GOLD} stroke="#f5c451" height={34} label="Precio del oro" />
       </Glass>
 
-      {/* ---- Inmuebles: muestra el inmueble destacado (configurable en Gestión) ---- */}
+      {/* ---- Inmuebles: todos con total ---- */}
       <Glass className="lg:col-span-1" aria-label="Bienes raíces">
         <div className="mb-1 flex items-baseline justify-between">
           <h2 className="text-sm font-semibold">Inmuebles</h2>
-          {featuredRE && <Delta value={(featuredRE.valueEUR - featuredRE.costBasisEUR) / featuredRE.costBasisEUR} />}
+          {reValue > 0 && <Delta value={rePct} />}
         </div>
-        {featuredRE ? (
+        {state.assets.realEstate.length ? (
           <>
-            <p className="text-xl font-bold tabular-nums">{fmtMoney(inBase(featuredRE.valueEUR), base, { compact: true })}</p>
-            <p className="mt-1 text-xs text-ink-dim">{featuredRE.name}<br /><span className="opacity-70">{featuredRE.source}</span></p>
-            {state.assets.realEstate.length > 1 && (
-              <p className="mt-1 text-xs text-ink-dim/70">+{state.assets.realEstate.length - 1} más · total {fmtMoney(inBase(reValue), base, { compact: true })}</p>
-            )}
+            <p className="text-xl font-bold tabular-nums">{fmtMoney(inBase(reValue), base, { compact: true })}</p>
+            <ul className="mt-2 space-y-1 text-xs">
+              {state.assets.realEstate.map((r) => (
+                <li key={r.id} className="flex items-center justify-between">
+                  <span className="truncate text-ink-dim">{r.featured ? "★ " : ""}{r.name}</span>
+                  <span className="font-medium tabular-nums">{fmtMoney(inBase(r.valueEUR), base, { compact: true })}</span>
+                </li>
+              ))}
+            </ul>
           </>
         ) : (
           <p className="text-sm text-ink-dim">Sin inmuebles. Añádelos en Gestión.</p>
