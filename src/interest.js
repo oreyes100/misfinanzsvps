@@ -14,11 +14,16 @@ export function addDaysISO(iso, n) {
   return new Date(new Date(iso).getTime() + n * DAY_MS).toISOString().slice(0, 10);
 }
 
-/** Siguiente día hábil: lun-jue→+1, vie→+3 (lunes), sáb→+2 (lunes), dom→+1 (lunes). */
-function nextBusinessDay(iso) {
-  const dow = new Date(iso + "T12:00:00").getDay(); // 0=dom,5=vie,6=sáb
-  const add = dow === 5 ? 3 : dow === 6 ? 2 : 1;
-  return addDaysISO(iso, add);
+/**
+ * Fecha de depósito real de los intereses. El devengo corre el día D y abona
+ * "hoy" (D) lo devengado hasta ayer: ese es el depósito real. Si D cae en fin
+ * de semana se difiere al lunes (sáb→+2, dom→+1). Día hábil → mismo día.
+ */
+function depositDate(iso) {
+  const dow = new Date(iso + "T12:00:00").getDay(); // 0=dom, 6=sáb
+  if (dow === 6) return addDaysISO(iso, 2); // sábado → lunes
+  if (dow === 0) return addDaysISO(iso, 1); // domingo → lunes
+  return iso;
 }
 
 // ---------- Cuentas con tope escalonado (investment / sofipo + capped) ----------
@@ -35,6 +40,7 @@ function accrueCapped(acc, now) {
   const startBalance = acc.balance;
   const cap1 = acc.balanceCap1 || 0;
   const cap2 = acc.balanceCap2 || 0;
+  const chargesISR = acc.type === "investment"; // SOFIPOs NO pagan ISR; solo inversión.
 
   // Bases por tramo, calculadas sobre el saldo al inicio del devengo (deterministas).
   const base1 = cap1 > 0 ? Math.min(startBalance, cap1) : startBalance;
@@ -75,18 +81,20 @@ function accrueCapped(acc, now) {
     const taxDivisor = t.accrual === "daily" ? 365 : 12;
     const tax = r2(t.base * (INTEREST_TAX_RATE / taxDivisor) * periods);
 
+    const date = depositDate(now);
     if (gain > 0.005) {
       txs.push({
-        id: uid(), date: nextBusinessDay(now),
+        id: uid(), date,
         description: `Intereses ${acc.name} · ${t.label} (${(t.rate * 100).toFixed(2)} % TAE)`,
         amount: gain, currency: acc.currency, category: "Intereses", accountId: acc.id, auto: true,
       });
       balance = r2(balance + gain);
       out[`gainAccrued${t.n}`] = r2(t.gainAcc + gain);
     }
-    if (tax > 0.005) {
+    // ISR (0.9 % anual) SOLO para inversión; las SOFIPOs no pagan ISR.
+    if (chargesISR && tax > 0.005) {
       txs.push({
-        id: uid(), date: nextBusinessDay(now),
+        id: uid(), date,
         description: `Impuesto intereses ${acc.name} · ${t.label} (0.90 % anual)`,
         amount: -tax, currency: acc.currency, category: "Impuestos", accountId: acc.id, auto: true,
       });
@@ -123,30 +131,47 @@ export function accrueInterest(state) {
     const days = daysBetween(acc.lastAccrual, now);
     if (days <= 0) { accounts.push(acc); continue; }
 
+    const startBalance = acc.balance;
     let balance = acc.balance;
     let gained = 0;
+    let periods = 0;
 
     if (acc.accrual === "daily") {
-      const dailyRate = acc.rate / 365;
-      const grown = balance * Math.pow(1 + dailyRate, days);
+      periods = days;
+      const grown = balance * Math.pow(1 + acc.rate / 365, days);
       gained = grown - balance;
       balance = grown;
     } else if (acc.accrual === "monthly") {
-      const months = Math.floor(days / 30);
-      if (months > 0) {
-        const grown = balance * Math.pow(1 + acc.rate / 12, months);
+      periods = Math.floor(days / 30);
+      if (periods > 0) {
+        const grown = balance * Math.pow(1 + acc.rate / 12, periods);
         gained = grown - balance;
         balance = grown;
       }
     }
 
     if (gained > 0.005) {
+      const date = depositDate(now);
       newTx.push({
-        id: uid(), date: nextBusinessDay(now),
+        id: uid(), date,
         description: `Intereses ${acc.name} (${(acc.rate * 100).toFixed(2)} % TAE)`,
         amount: r2(gained), currency: acc.currency, category: "Intereses", accountId: acc.id, auto: true,
       });
-      accounts.push({ ...acc, balance: r2(balance), lastAccrual: now });
+      let finalBalance = r2(balance);
+      // ISR (0.9 % anual) SOLO para inversión en pesos; SOFIPOs/ahorro/depósito no pagan.
+      if (acc.type === "investment" && acc.currency === "MXN") {
+        const taxDivisor = acc.accrual === "daily" ? 365 : 12;
+        const tax = r2(startBalance * (INTEREST_TAX_RATE / taxDivisor) * periods);
+        if (tax > 0.005) {
+          newTx.push({
+            id: uid(), date,
+            description: `Impuesto intereses ${acc.name} (0.90 % anual)`,
+            amount: -tax, currency: acc.currency, category: "Impuestos", accountId: acc.id, auto: true,
+          });
+          finalBalance = r2(finalBalance - tax);
+        }
+      }
+      accounts.push({ ...acc, balance: finalBalance, lastAccrual: now });
     } else {
       accounts.push(acc);
     }

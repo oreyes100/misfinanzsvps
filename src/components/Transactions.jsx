@@ -17,30 +17,39 @@ export default function Transactions() {
     [state.transactions]
   );
 
+  // Orden canónico: por fecha descendente (lo más reciente arriba). El sort de JS
+  // es estable, así que ante misma fecha se preserva el orden de inserción (la
+  // última generada queda arriba). Esta lista ordena tanto el saldo corriente
+  // como lo que se muestra.
+  const sorted = useMemo(
+    () => [...state.transactions].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)),
+    [state.transactions]
+  );
+
   // Saldo corriente por transacción: para cada cuenta, partir del saldo actual
   // (más reciente) y descontar hacia atrás el importe de cada movimiento más nuevo.
   const runningById = useMemo(() => {
     const map = {};
     for (const acc of state.accounts) {
       let running = acc.balance;
-      for (const t of state.transactions) {
+      for (const t of sorted) {
         if (t.accountId !== acc.id) continue;
         map[t.id] = running; // saldo justo después de este movimiento
         running = Math.round((running - t.amount) * 100) / 100;
       }
     }
     return map;
-  }, [state.transactions, state.accounts]);
+  }, [sorted, state.accounts]);
 
   const list = useMemo(
     () =>
-      state.transactions.filter(
+      sorted.filter(
         (t) =>
           (cat === "Todas" || t.category === cat) &&
           (acctId === "Todas" || t.accountId === acctId) &&
           t.description.toLowerCase().includes(query.toLowerCase())
       ),
-    [state.transactions, query, cat, acctId]
+    [sorted, query, cat, acctId]
   );
 
   const accName = (id) => state.accounts.find((a) => a.id === id)?.name || "—";
