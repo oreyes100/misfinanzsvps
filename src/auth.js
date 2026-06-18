@@ -141,6 +141,22 @@ export async function createUser({ username, password, sections, accounts }) {
   return users;
 }
 
+/**
+ * Cambia la contraseña de un usuario (admin la resetea cuando se olvida o no
+ * sirve). Reescribe el hash y propaga a la nube para que el nuevo acceso valga
+ * desde cualquier dispositivo. Idempotente sobre el username.
+ */
+export async function changePassword(username, newPassword) {
+  if (!newPassword || newPassword.length < 6) throw new Error("La contraseña debe tener al menos 6 caracteres.");
+  const users = loadUsers();
+  const u = users.find((x) => x.username.toLowerCase() === username.toLowerCase().trim());
+  if (!u) throw new Error("Usuario no encontrado.");
+  u.hash = await sha256(newPassword);
+  saveUsers(users);
+  await pushCloudUsers(users);
+  return users;
+}
+
 export function deleteUser(username) {
   if (username === "admin") throw new Error("No se puede eliminar al administrador.");
   const users = loadUsers().filter((u) => u.username !== username);

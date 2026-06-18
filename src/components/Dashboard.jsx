@@ -126,7 +126,12 @@ export default function Dashboard() {
       const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
       bars.push({ iso, label: String(d.getDate()), value: perDay[iso] || 0 });
     }
-    return { bars, totalAll };
+    // Tendencia actual: promedio diario sobre los días con interés en la ventana
+    // (evita que los días sin devengo aún hundan la proyección). Proyección
+    // simple = ese ritmo diario × 30 (mes) y × 365 (año).
+    const active = bars.filter((b) => b.value > 0);
+    const avgDaily = active.length ? active.reduce((s, b) => s + b.value, 0) / active.length : 0;
+    return { bars, totalAll, avgDaily, monthly: avgDaily * 30, annual: avgDaily * 365 };
   }, [state.transactions, state.fx]);
 
   // Tendencia de patrimonio simulada a partir del histórico de precios en vivo
@@ -291,6 +296,18 @@ export default function Dashboard() {
                 label="Intereses por día"
               />
             </div>
+            {/* Proyección con la tendencia actual: ritmo diario × 30 y × 365. */}
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              <div className="rounded-xl bg-white/5 px-3 py-2">
+                <p className="text-[10px] uppercase tracking-wide text-ink-dim">Proyección / mes</p>
+                <p className="text-base font-bold tabular-nums text-gain">≈ {fmtMoney(inBase(interestDaily.monthly), base, { compact: true })}</p>
+              </div>
+              <div className="rounded-xl bg-white/5 px-3 py-2">
+                <p className="text-[10px] uppercase tracking-wide text-ink-dim">Proyección / año</p>
+                <p className="text-base font-bold tabular-nums text-gain">≈ {fmtMoney(inBase(interestDaily.annual), base, { compact: true })}</p>
+              </div>
+            </div>
+            <p className="mt-1 text-[10px] text-ink-dim">Estimado con la tendencia actual ({fmtMoney(inBase(interestDaily.avgDaily), base, { compact: true })}/día).</p>
             <div className="mt-2 flex items-center justify-between border-t border-white/8 pt-2 text-xs">
               <span className="text-ink-dim">Interés acumulado · {fmtMoney(inBase(interestDaily.totalAll), base, { compact: true })}</span>
               <span className="font-semibold tabular-nums text-gain" title="Interés total acumulado ÷ total invertido actual">

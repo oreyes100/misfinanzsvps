@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useStore } from "../store.jsx";
-import { ALL_SECTIONS, createUser, deleteUser, loadUsers } from "../auth.js";
+import { ALL_SECTIONS, changePassword, createUser, deleteUser, loadUsers } from "../auth.js";
 import { Btn, Field, Glass, inputCls } from "./UI.jsx";
 
 /** Administración de usuarios secundarios con permisos por sección y por cuenta. Solo admin. */
@@ -13,6 +13,9 @@ export default function Users({ session }) {
   const [accountIds, setAccountIds] = useState([]);
   const [allAccounts, setAllAccounts] = useState(false);
   const [msg, setMsg] = useState("");
+  const [pwUser, setPwUser] = useState(null);   // username con el editor de contraseña abierto
+  const [pwValue, setPwValue] = useState("");
+  const [pwMsg, setPwMsg] = useState("");
 
   if (session?.role !== "admin") {
     return <Glass><p className="text-sm text-ink-dim">Solo el administrador puede gestionar usuarios.</p></Glass>;
@@ -50,6 +53,26 @@ export default function Users({ session }) {
     setUsers(deleteUser(name));
   };
 
+  const openPw = (name) => {
+    setPwUser((cur) => (cur === name ? null : name));
+    setPwValue("");
+    setPwMsg("");
+  };
+
+  const savePw = async (e) => {
+    e.preventDefault();
+    setPwMsg("");
+    try {
+      const updated = await changePassword(pwUser, pwValue);
+      setUsers(updated);
+      setPwMsg(`✓ Contraseña de "${pwUser}" actualizada.`);
+      setPwValue("");
+      setPwUser(null);
+    } catch (err) {
+      setPwMsg(`⚠ ${err.message}`);
+    }
+  };
+
   return (
     <Glass aria-label="Gestión de usuarios">
       <h2 className="mb-1 text-base font-semibold">Usuarios</h2>
@@ -58,21 +81,44 @@ export default function Users({ session }) {
       {/* Lista actual */}
       <ul className="mb-4 space-y-1.5">
         {users.map((u) => (
-          <li key={u.username} className="flex items-center justify-between rounded-xl bg-white/5 px-3 py-2">
-            <div>
-              <p className="text-sm font-medium">{u.username} {u.role === "admin" && <span className="text-xs text-gold">· administrador</span>}</p>
-              <p className="text-xs text-ink-dim">
-                {u.sections === "all" ? "Todas las secciones" : `${(u.sections || []).length} secciones`}
-                {" · "}
-                {u.accounts === "all" ? "todas las cuentas" : `${(u.accounts || []).length} cuentas`}
-              </p>
+          <li key={u.username} className="rounded-xl bg-white/5 px-3 py-2">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium">{u.username} {u.role === "admin" && <span className="text-xs text-gold">· administrador</span>}</p>
+                <p className="text-xs text-ink-dim">
+                  {u.sections === "all" ? "Todas las secciones" : `${(u.sections || []).length} secciones`}
+                  {" · "}
+                  {u.accounts === "all" ? "todas las cuentas" : `${(u.accounts || []).length} cuentas`}
+                </p>
+              </div>
+              <div className="flex gap-1.5">
+                <Btn variant="ghost" className="!px-2.5 !py-1.5 text-xs" onClick={() => openPw(u.username)} aria-label={`Cambiar contraseña de ${u.username}`}>🔑 Contraseña</Btn>
+                {u.username !== "admin" && (
+                  <Btn variant="danger" className="!px-2.5 !py-1.5 text-xs" onClick={() => remove(u.username)} aria-label={`Eliminar usuario ${u.username}`}>🗑</Btn>
+                )}
+              </div>
             </div>
-            {u.username !== "admin" && (
-              <Btn variant="danger" className="!px-2.5 !py-1.5 text-xs" onClick={() => remove(u.username)} aria-label={`Eliminar usuario ${u.username}`}>🗑</Btn>
+
+            {pwUser === u.username && (
+              <form onSubmit={savePw} className="mt-2 flex flex-wrap gap-2 border-t border-white/8 pt-2">
+                <input
+                  className={`${inputCls} min-w-44 flex-1`}
+                  type="password"
+                  value={pwValue}
+                  onChange={(e) => setPwValue(e.target.value)}
+                  placeholder={`Nueva contraseña para ${u.username}…`}
+                  autoComplete="new-password"
+                  aria-label={`Nueva contraseña para ${u.username}`}
+                  required
+                />
+                <Btn type="submit" className="shrink-0 !py-2 text-xs">Guardar</Btn>
+                <Btn variant="ghost" type="button" className="shrink-0 !py-2 text-xs" onClick={() => setPwUser(null)}>Cancelar</Btn>
+              </form>
             )}
           </li>
         ))}
       </ul>
+      {pwMsg && <p className="mb-3 text-xs font-medium" role="status">{pwMsg}</p>}
 
       {/* Alta */}
       <form onSubmit={submit} className="space-y-3 rounded-2xl border border-white/8 p-3">
