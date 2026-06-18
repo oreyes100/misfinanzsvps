@@ -51,6 +51,42 @@ export function LineChart({ data, width = 280, height = 80, stroke = "#5b8cff", 
   );
 }
 
+/** Gráfico de barras SVG. `bars` = [{ label, value, title? }]. Resalta la última barra. */
+export function BarChart({ bars, height = 96, color = "#2ee6a8", fmt = (v) => v.toFixed(2), label = "Gráfico de barras" }) {
+  if (!bars || !bars.length) {
+    return <p className="text-sm text-ink-dim">Sin datos todavía.</p>;
+  }
+  const max = Math.max(...bars.map((b) => b.value), 0) || 1;
+  const W = 280;
+  const pad = 4;
+  const n = bars.length;
+  const slot = (W - pad * 2) / n;
+  const bw = Math.max(2, slot * 0.62);
+
+  return (
+    <svg viewBox={`0 0 ${W} ${height}`} className="w-full" role="img"
+      aria-label={`${label}: ${bars.map((b) => `${b.label}: ${fmt(b.value)}`).join(", ")}`}>
+      {bars.map((b, i) => {
+        const h = max > 0 ? (b.value / max) * (height - 16) : 0;
+        const x = pad + i * slot + (slot - bw) / 2;
+        const y = height - 12 - h;
+        const isLast = i === n - 1;
+        return (
+          <g key={i}>
+            <rect x={x} y={y} width={bw} height={Math.max(0, h)} rx="2"
+              fill={color} opacity={isLast ? 1 : 0.5}>
+              <title>{b.title || `${b.label}: ${fmt(b.value)}`}</title>
+            </rect>
+            {(isLast || n <= 10 || i % Math.ceil(n / 10) === 0) && (
+              <text x={x + bw / 2} y={height - 2} textAnchor="middle" fill="#8a97b8" fontSize="7">{b.label}</text>
+            )}
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
 /** Donut SVG. `slices` = [{ label, value, color }]. */
 export function PieChart({ slices, size = 150, totalLabel }) {
   const total = slices.reduce((s, x) => s + x.value, 0);

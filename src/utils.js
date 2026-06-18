@@ -107,6 +107,21 @@ export const INTEREST_ACCOUNT_TYPES = ["savings", "deposit", "investment", "sofi
 // Pasivos: el saldo representa deuda (resta del patrimonio).
 export const LIABILITY_ACCOUNT_TYPES = ["credit", "auto_loan"];
 
+// Tarjetas del dashboard que el usuario puede mostrar/ocultar desde Ajustes.
+// El patrimonio neto y los avisos de pago siempre se muestran (no son opcionales).
+export const DASHBOARD_CARDS = [
+  { id: "intereses", label: "Intereses por día" },
+  { id: "criptoOro", label: "Cripto y Oro" },
+  { id: "inmuebles", label: "Inmuebles" },
+  { id: "inversiones", label: "Total de inversiones" },
+  { id: "deudas", label: "Total de deudas" },
+  { id: "cuentas", label: "Cuentas" },
+  { id: "gastosIngresos", label: "Gastos e ingresos" },
+];
+
+/** ¿La tarjeta `id` está visible? Por defecto sí (undefined = visible) para compatibilidad. */
+export const cardOn = (settings, id) => settings?.dashboardCards?.[id] !== false;
+
 const ACCOUNT_TYPE_ORDER = ["checking", "savings", "deposit", "investment", "sofipo", "credit", "auto_loan"];
 
 /** Ordena cuentas: tipo (corriente → ahorro → depósito → inversión → sofipo → crédito → préstamo) y dentro de cada tipo alfabéticamente. */

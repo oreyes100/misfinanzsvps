@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { useStore } from "../store.jsx";
 import { hasBiometricCredential, isBiometricAvailable, registerBiometric, removeBiometric } from "../auth.js";
-import { CURRENCIES, downloadBackup, downloadCSV, fmtMoney, parseBackup } from "../utils.js";
+import { CURRENCIES, DASHBOARD_CARDS, cardOn, downloadBackup, downloadCSV, fmtMoney, parseBackup } from "../utils.js";
 import { Btn, Field, Glass, inputCls } from "./UI.jsx";
 import Users from "./Users.jsx";
 
@@ -109,6 +109,8 @@ export default function Settings({ session }) {
         </div>
       </Glass>
 
+      <DashboardCards />
+
       <Glass aria-label="Intereses automáticos">
         <h2 className="mb-1 text-base font-semibold">Intereses automáticos</h2>
         <p className="text-sm text-ink-dim">
@@ -145,6 +147,41 @@ export default function Settings({ session }) {
 
       <DataTools />
     </div>
+  );
+}
+
+function DashboardCards() {
+  const { state, dispatch } = useStore();
+  const toggle = (id) => {
+    const current = state.settings.dashboardCards || {};
+    dispatch({ type: "update_settings", patch: { dashboardCards: { ...current, [id]: !cardOn(state.settings, id) } } });
+  };
+
+  return (
+    <Glass aria-label="Tarjetas del dashboard">
+      <h2 className="mb-1 text-base font-semibold">Tarjetas del dashboard</h2>
+      <p className="mb-3 text-xs text-ink-dim">
+        Elige qué recuadros aparecen en Inicio. El patrimonio neto y los avisos de pago siempre se muestran.
+      </p>
+      <ul className="space-y-1.5">
+        {DASHBOARD_CARDS.map((c) => {
+          const on = cardOn(state.settings, c.id);
+          return (
+            <li key={c.id}>
+              <label className="flex cursor-pointer items-center gap-3 rounded-xl bg-white/5 px-3 py-2.5 text-sm">
+                <input
+                  type="checkbox"
+                  className="size-4 accent-gain"
+                  checked={on}
+                  onChange={() => toggle(c.id)}
+                />
+                <span className={on ? "text-ink" : "text-ink-dim line-through"}>{c.label}</span>
+              </label>
+            </li>
+          );
+        })}
+      </ul>
+    </Glass>
   );
 }
 

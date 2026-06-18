@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
 import { AnimatePresence } from "framer-motion";
 import { monthSpend, netWorthEUR, pendingCardPayments, useStore } from "../store.jsx";
-import { ACCOUNT_TYPES, LIABILITY_ACCOUNT_TYPES, catColor, convert, fmtMoney, fmtPct, groupedAccounts, sortedAccounts } from "../utils.js";
-import { LineChart, PieChart } from "./Charts.jsx";
+import { ACCOUNT_TYPES, LIABILITY_ACCOUNT_TYPES, cardOn, catColor, convert, fmtMoney, fmtPct, groupedAccounts, sortedAccounts } from "../utils.js";
+import { BarChart, LineChart, PieChart } from "./Charts.jsx";
 import { TransactionModal, TransferModal } from "./Modals.jsx";
 import { Btn, Glass, Money } from "./UI.jsx";
 
@@ -105,6 +105,28 @@ export default function Dashboard() {
       if (t.category === "Intereses") months[idx[k]].interest += eur;
     }
     return months;
+  }, [state.transactions, state.fx]);
+
+  // Intereses generados por día (últimos 14 días) en divisa base, y porcentaje
+  // global que el interés acumulado representa sobre el total invertido.
+  const interestDaily = useMemo(() => {
+    const DAYS = 14;
+    const perDay = {};
+    let totalAll = 0;
+    for (const t of state.transactions) {
+      if (t.category !== "Intereses" || t.amount <= 0) continue;
+      const eur = t.amount * (state.fx[t.currency] ?? 1);
+      perDay[t.date] = (perDay[t.date] || 0) + eur;
+      totalAll += eur;
+    }
+    const bars = [];
+    const now = new Date();
+    for (let i = DAYS - 1; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
+      const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      bars.push({ iso, label: String(d.getDate()), value: perDay[iso] || 0 });
+    }
+    return { bars, totalAll };
   }, [state.transactions, state.fx]);
 
   // Tendencia de patrimonio simulada a partir del histórico de precios en vivo
@@ -248,7 +270,39 @@ export default function Dashboard() {
         </div>
       </Glass>
 
+      {/* ---- Intereses generados por día + % sobre la inversión ---- */}
+      {cardOn(state.settings, "intereses") && (() => {
+        const pct = investTotal > 0 ? (interestDaily.totalAll / investTotal) * 100 : 0;
+        const last = interestDaily.bars[interestDaily.bars.length - 1];
+        return (
+          <Glass className="col-span-2 lg:col-span-2" aria-label="Intereses generados por día">
+            <div className="mb-1 flex items-baseline justify-between">
+              <h2 className="text-sm font-semibold">Intereses por día</h2>
+              <span className="text-xs text-ink-dim">últimos 14 días</span>
+            </div>
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+              <p className="text-xl font-bold tabular-nums text-gain">{fmtMoney(inBase(last?.value || 0), base, { compact: true })}</p>
+              <span className="text-xs text-ink-dim">hoy</span>
+            </div>
+            <div className="mt-2">
+              <BarChart
+                bars={interestDaily.bars.map((b) => ({ label: b.label, value: inBase(b.value), title: `${b.iso}: ${fmtMoney(inBase(b.value), base)}` }))}
+                fmt={(v) => fmtMoney(v, base, { compact: true })}
+                label="Intereses por día"
+              />
+            </div>
+            <div className="mt-2 flex items-center justify-between border-t border-white/8 pt-2 text-xs">
+              <span className="text-ink-dim">Interés acumulado · {fmtMoney(inBase(interestDaily.totalAll), base, { compact: true })}</span>
+              <span className="font-semibold tabular-nums text-gain" title="Interés total acumulado ÷ total invertido actual">
+                {fmtPct(pct / 100)} sobre la inversión
+              </span>
+            </div>
+          </Glass>
+        );
+      })()}
+
       {/* ---- Cripto y Oro combinados ---- */}
+      {cardOn(state.settings, "criptoOro") && (
       <Glass className="col-span-2 lg:col-span-1" aria-label="Cripto y oro">
         <div className="mb-1 flex items-baseline justify-between">
           <h2 className="text-sm font-semibold">Cripto y Oro</h2>
@@ -274,8 +328,10 @@ export default function Dashboard() {
         </div>
         <LineChart data={state.priceHistory.GOLD} stroke="#f5c451" height={34} label="Precio del oro" />
       </Glass>
+      )}
 
       {/* ---- Inmuebles: todos con total ---- */}
+      {cardOn(state.settings, "inmuebles") && (
       <Glass className="lg:col-span-1" aria-label="Bienes raíces">
         <div className="mb-1 flex items-baseline justify-between">
           <h2 className="text-sm font-semibold">Inmuebles</h2>
@@ -297,8 +353,10 @@ export default function Dashboard() {
           <p className="text-sm text-ink-dim">Sin inmuebles. Añádelos en Gestión.</p>
         )}
       </Glass>
+      )}
 
       {/* ---- Total de inversiones por moneda ---- */}
+      {cardOn(state.settings, "inversiones") && (
       <Glass className="lg:col-span-1" aria-label="Total de inversiones y efectivo">
         <h2 className="mb-1 text-sm font-semibold">Total de inversiones</h2>
         <p className="text-xl font-bold tabular-nums text-gain">{fmtMoney(inBase(investTotal), base)}</p>
@@ -322,8 +380,10 @@ export default function Dashboard() {
           ))}
         </div>
       </Glass>
+      )}
 
       {/* ---- Total de deudas (pasivos: tarjeta, préstamo) ---- */}
+      {cardOn(state.settings, "deudas") && (
       <Glass className="lg:col-span-1" aria-label="Total de deudas">
         <h2 className="mb-1 text-sm font-semibold">Total de deudas</h2>
         <p className={`text-xl font-bold tabular-nums ${debtTotal > 0 ? "text-loss" : "text-ink"}`}>
@@ -352,8 +412,10 @@ export default function Dashboard() {
           </div>
         )}
       </Glass>
+      )}
 
       {/* ---- Cuentas ---- */}
+      {cardOn(state.settings, "cuentas") && (
       <Glass className="col-span-2 lg:col-span-2" aria-label="Cuentas bancarias">
         <h2 className="mb-2 text-sm font-semibold">Cuentas</h2>
         <ul className="space-y-1">
@@ -387,8 +449,10 @@ export default function Dashboard() {
           ))}
         </ul>
       </Glass>
+      )}
 
       {/* ---- Distribución de gastos + Ingresos por mes (debajo de la dona) ---- */}
+      {cardOn(state.settings, "gastosIngresos") && (
       <Glass className="col-span-2 lg:col-span-2" aria-label="Distribución de gastos e ingresos por mes">
         <h2 className="mb-2 text-sm font-semibold">Distribución de gastos</h2>
         <PieChart slices={expenseSlices} totalLabel={fmtMoney(inBase(spend), base, { compact: true })} />
@@ -399,6 +463,7 @@ export default function Dashboard() {
         <CurrentMonthIncome months={incomeMonths} base={base} fx={state.fx} />
         <p className="mt-2 text-xs text-ink-dim">Histórico de 3, 6 y 12 meses en la sección <strong>Reportes</strong>.</p>
       </Glass>
+      )}
 
       <AnimatePresence>
         {modal === "transfer" && <TransferModal onClose={() => setModal(null)} />}
