@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { API_BASE, BASE_FX, DAY_MS, DEFAULT_CATEGORIES, categorize, todayISO, uid } from "./utils.js";
 import { accrueInterest } from "./interest.js";
+import { migrate } from "./migrations.js";
 
 export { accrueInterest };
 
@@ -347,22 +348,13 @@ function reducer(state, action) {
 const StoreCtx = createContext(null);
 const KEY = "mis-finazas-v1";
 
-/** Garantiza que existan las categorías de sistema nuevas (ej. Impuestos) en estados antiguos. */
-function ensureSystemCategories(categories) {
-  const cats = Array.isArray(categories) ? categories : DEFAULT_CATEGORIES;
-  const names = new Set(cats.map((c) => c.name));
-  const missing = DEFAULT_CATEGORIES.filter((c) => c.system && !names.has(c.name));
-  return missing.length ? [...cats, ...missing] : cats;
-}
-
 function load() {
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return accrueInterest(SEED);
     const saved = JSON.parse(raw);
     const merged = { ...SEED, ...saved, fx: { ...BASE_FX, ...saved.fx } };
-    merged.categories = ensureSystemCategories(merged.categories);
-    return accrueInterest(merged);
+    return migrate(accrueInterest(merged));
   } catch {
     return accrueInterest(SEED);
   }
@@ -384,6 +376,11 @@ export function StoreProvider({ children }) {
   const [syncStatus, setSyncStatus] = useState(syncId ? "pulling" : "off");
   const pullingRef = useRef(false);
   const skipPushRef = useRef(false);
+  // Bloquea CUALQUIER push hasta que el primer pull se resuelva con éxito. Sin
+  // esto, abrir la app con un localStorage viejo (p. ej. la APK del día anterior)
+  // podía subir datos rancios y machacar la config buena de la nube — por eso
+  // "ayer guardé la tasa escalonada y hoy no estaba".
+  const cloudReadyRef = useRef(!syncId);
   const syncable = useMemo(() => JSON.stringify(syncableSlice(state)), [
     state.settings, state.accounts, state.assets, state.transactions, state.scheduled, state.categories, state.transferAliases, state.categoryAliases,
   ]);
@@ -412,7 +409,7 @@ export function StoreProvider({ children }) {
   useEffect(() => {
     if (!syncId) return;
     const flush = () => {
-      if (pullingRef.current) return;
+      if (pullingRef.current || !cloudReadyRef.current) return;
       if (syncableRef.current === lastPushedRef.current) return;
       try {
         fetch(`${API_BASE}/api/sync?id=${encodeURIComponent(syncId)}`, {
@@ -437,6 +434,7 @@ export function StoreProvider({ children }) {
   useEffect(() => {
     if (!syncId) return;
     let cancelled = false;
+    cloudReadyRef.current = false; // toda (re)conexión baja antes de subir.
     pullingRef.current = true;
     (async () => {
       setSyncStatus("pulling");
@@ -447,15 +445,19 @@ export function StoreProvider({ children }) {
         if (cancelled) return;
         if (data.found && data.state) {
           skipPushRef.current = true;
+          cloudReadyRef.current = true; // pull OK → ya es seguro subir cambios.
           dispatch({
             type: "hydrate",
-            state: accrueInterest({ ...SEED, ...data.state, fx: { ...BASE_FX, ...state.fx }, priceHistory: state.priceHistory }),
+            state: migrate(accrueInterest({ ...SEED, ...data.state, fx: { ...BASE_FX, ...state.fx }, priceHistory: state.priceHistory })),
           });
           setSyncStatus("synced");
         } else {
+          // No existe estado en la nube: el local es la fuente, subirlo.
+          cloudReadyRef.current = true;
           await pushNow(syncId);
         }
       } catch {
+        // Pull falló: NO habilitar push para no machacar la nube con datos locales viejos.
         if (!cancelled) setSyncStatus("error");
       } finally {
         pullingRef.current = false;
@@ -466,10 +468,10 @@ export function StoreProvider({ children }) {
 
   // Subida automática con debounce cuando cambian datos relevantes.
   useEffect(() => {
-    if (!syncId || pullingRef.current) return;
+    if (!syncId || pullingRef.current || !cloudReadyRef.current) return;
     if (skipPushRef.current) { skipPushRef.current = false; return; }
     const t = setTimeout(() => {
-      if (pullingRef.current) return;
+      if (pullingRef.current || !cloudReadyRef.current) return;
       pushNow(syncId).catch(() => setSyncStatus("error"));
     }, 1500);
     return () => clearTimeout(t);

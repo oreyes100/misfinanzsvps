@@ -269,7 +269,7 @@ export default function Accounts() {
                           <span className="text-gain"> · ⚡ {(a.rate * 100).toFixed(2)} % TAE, abono {a.accrual === "daily" ? "diario" : "mensual"}</span>
                         )}
                         {tiered && (
-                          <span className="text-gain"> · 🎯 {((a.rate1 || 0) * 100).toFixed(2)} % / {((a.rate2 || 0) * 100).toFixed(2)} % con tope · imp. 0,9 %</span>
+                          <span className="text-gain"> · 🎯 {((a.rate1 || 0) * 100).toFixed(2)} % / {((a.rate2 || 0) * 100).toFixed(2)} % con tope{a.type === "investment" ? " · imp. 0,9 %" : ""}</span>
                         )}
                         {a.type === "credit" && (a.cutDay || a.payDay) && (
                           <span> · 📅 corte {a.cutDay || "—"}, pago {a.payDay || "—"}</span>
