@@ -1,119 +1,95 @@
 @echo off
-REM Mis Finanzas — Launcher Windows (doble clic para iniciar)
-REM Inicia servidor Vite, abre navegador en http://localhost:5173
-REM Mata cualquier proceso previo en el puerto 5173
+REM Mis Finanzas — Launcher Windows (doble clic)
+REM Abre una terminal persistente con npm run dev y el navegador.
 
-setlocal enabledelayedexpansion
+cd /d "%~dp0"
 
-set "PROJECT_DIR=%~dp0"
-set "DEFAULT_PORT=5173"
-set "LOG_FILE=%PROJECT_DIR%.server.log"
-set "PID_FILE=%PROJECT_DIR%.server.pid"
+title Mis Finanzas — Dev Server
 
-cd /d "%PROJECT_DIR%"
-
-echo ╔══════════════════════════════════════════════════════════╗
-echo ║           🚀 Mis Finanzas — Dev Launcher (Windows)       ║
-echo ╚══════════════════════════════════════════════════════════╝
+echo ╔══════════════════════════════════════════╗
+echo ║   🚀 Mis Finanzas — Dev Server (Windows) ║
+echo ╚══════════════════════════════════════════╝
 echo.
 
-REM ── 1. Verificar/liberar puerto ──
-echo [!] Verificando puerto %DEFAULT_PORT%...
-set "PORT_FREE=1"
-for /f "tokens=5" %%a in ('netstat -ano ^| findstr :%DEFAULT_PORT% 2^>nul') do (
-    set "PORT_FREE=0"
-    set "OLD_PID=%%a"
+REM ── 1. Liberar puerto 5173 si está ocupado ──
+echo [1/5] Verificando puerto 5173...
+set "PORT_CLEAR=1"
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":5173 " 2^>nul') do (
+    taskkill /F /PID %%a >nul 2>&1
+    set "PORT_CLEAR=0"
 )
-
-if "%PORT_FREE%"=="0" (
-    echo [!] Puerto %DEFAULT_PORT% ocupado por PID !OLD_PID! — matando...
-    taskkill /F /PID !OLD_PID! >nul 2>&1
-    timeout /t 1 /nobreak >nul
-    echo [✓] Proceso eliminado
+if "%PORT_CLEAR%"=="0" (
+    echo   [✓] Puerto liberado
+    timeout /t 1 >nul
 ) else (
-    echo [✓] Puerto %DEFAULT_PORT% libre
+    echo   [✓] Puerto libre
 )
 
-REM ── 2. Verificar package.json ──
-if not exist "package.json" (
-    echo [✗] No se encuentra package.json
+REM ── 2. Verificar npm disponible ──
+echo [2/5] Verificando npm...
+where npm >nul 2>&1
+if %errorlevel% neq 0 (
+    echo   [✗] npm no encontrado. Instala Node.js desde https://nodejs.org
     pause
     exit /b 1
 )
+echo   [✓] npm disponible
 
-REM ── 3. Limpiar log anterior ──
-if exist "%LOG_FILE%" del "%LOG_FILE%"
-if exist "%PID_FILE%" del "%PID_FILE%"
+REM ── 3. Verificar node_modules ──
+echo [3/5] Verificando dependencias...
+if not exist "node_modules" (
+    echo   Instalando dependencias...
+    call npm install
+)
+echo   [✓] Dependencias listas
 
 REM ── 4. Iniciar servidor ──
+echo [4/5] Iniciando servidor Vite...
+echo   Ejecutando: npm run dev
 echo.
-echo [Mis Finanzas] Iniciando: npm run dev
+echo   ── Output del servidor ──────────────────────
 
-start /B "" npm run dev > "%LOG_FILE%" 2>&1
+start "Mis Finanzas — npm run dev" cmd /k "npm run dev"
 
-:: Esperar a que el puerto se abra
-timeout /t 3 /nobreak >nul
-
-set "SERVER_PID="
-for /f "tokens=5" %%a in ('netstat -ano ^| findstr :%DEFAULT_PORT% 2^>nul') do (
-    set "SERVER_PID=%%a"
-)
-if defined SERVER_PID (
-    echo !SERVER_PID! > "%PID_FILE%"
-    echo [Mis Finanzas] Servidor iniciado (PID: !SERVER_PID!)
-) else (
-    echo [Mis Finanzas] Servidor lanzado (proceso en segundo plano)
-)
-echo [Mis Finanzas] Logs: type "%LOG_FILE%"
-
-REM ── 5. Esperar servidor ──
+echo   ──────────────────────────────────────────────
 echo.
-echo [Mis Finanzas] Esperando servidor en http://localhost:%DEFAULT_PORT%...
-set "TIMEOUT=30"
-set "ATTEMPT=0"
 
-:wait_loop
-if !ATTEMPT! geq %TIMEOUT% (
-    echo [✗] Timeout: servidor no respondio en %TIMEOUT%s
-    echo     Revisa logs: type "%LOG_FILE%"
+REM ── 5. Esperar servidor y abrir navegador ──
+echo [5/5] Esperando que el servidor responda...
+set "TIMEOUT=0"
+:health_check
+timeout /t 2 >nul
+set /a TIMEOUT+=1
+if %TIMEOUT% gtr 20 (
+    echo   [✗] El servidor no arrancó en 40 segundos.
+    echo       Revisa la ventana "Mis Finanzas - npm run dev"
     pause
     exit /b 1
 )
-powershell -Command "try { $r = Invoke-WebRequest -Uri 'http://localhost:%DEFAULT_PORT%' -UseBasicParsing -TimeoutSec 2; if ($r.StatusCode -eq 200) { exit 0 } else { exit 1 } } catch { exit 1 }" >nul 2>&1
-if %errorlevel% equ 0 (
-    echo [✓] Servidor listo
-    goto :server_ready
-)
-timeout /t 1 /nobreak >nul
-set /a ATTEMPT+=1
-goto :wait_loop
+powershell -Command "try { (Invoke-WebRequest -Uri 'http://localhost:5173' -UseBasicParsing -TimeoutSec 2).StatusCode -eq 200 } catch { 0 }" >nul 2>&1
+if %errorlevel% neq 0 goto health_check
 
-:server_ready
+echo   [✓] Servidor listo en http://localhost:5173
+echo.
+start http://localhost:5173
 
-REM ── 6. Abrir navegador ──
+echo ══════════════════════════════════════════
+echo  ✅ Web UI abierta en el navegador
+echo  📌 Cierra la ventana "Mis Finanzas — npm run dev"
+echo     para detener el servidor.
+echo ══════════════════════════════════════════
 echo.
-echo [Mis Finanzas] Abriendo navegador...
-start "" http://localhost:%DEFAULT_PORT%
+echo Presiona Ctrl+C para salir de este panel.
+echo.
 
-echo.
-echo [✓] Mis Finanzas corriendo en http://localhost:%DEFAULT_PORT%
-echo.
-echo ────────────────────────────────────────────────────────────
-echo   Para detener:  Cierra esta ventana o ejecuta:
-echo                  taskkill /F /PID !SERVER_PID!
-echo   Logs en vivo:  type "%LOG_FILE%"
-echo   Puerto:        %DEFAULT_PORT%
-echo ────────────────────────────────────────────────────────────
-echo.
-echo Presiona Ctrl+C para detener el servidor y cerrar.
-
-REM ── 7. Mantener script vivo ──
-:keep_alive
-timeout /t 5 /nobreak >nul
-for /f "tokens=5" %%a in ('netstat -ano ^| findstr :%DEFAULT_PORT% 2^>nul') do set "CURRENT_PID=%%a"
-if not defined CURRENT_PID (
-    echo [!] El servidor se ha detenido.
+REM Mantener esta ventana viva
+:keep
+timeout /t 10 >nul
+:: Verificar que el proceso node aun existe
+tasklist /fi "WindowTitle eq Mis Finanzas — npm run dev*" 2>nul | find "cmd.exe" >nul
+if %errorlevel% neq 0 (
+    echo [!] La ventana del servidor se cerro.
     pause
     exit /b 0
 )
-goto :keep_alive
+goto keep
