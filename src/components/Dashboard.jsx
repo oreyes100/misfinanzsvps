@@ -278,6 +278,8 @@ export default function Dashboard() {
       {/* ---- Intereses generados por día + % sobre la inversión ---- */}
       {cardOn(state.settings, "intereses") && (() => {
         const pct = investTotal > 0 ? (interestDaily.totalAll / investTotal) * 100 : 0;
+        const monthlyPct = investTotal > 0 ? (interestDaily.monthly / investTotal) * 100 : 0;
+        const annualPct = investTotal > 0 ? (interestDaily.annual / investTotal) * 100 : 0;
         const last = interestDaily.bars[interestDaily.bars.length - 1];
         return (
           <Glass className="col-span-2 lg:col-span-2" aria-label="Intereses generados por día">
@@ -300,11 +302,11 @@ export default function Dashboard() {
             <div className="mt-2 grid grid-cols-2 gap-2">
               <div className="rounded-xl bg-white/5 px-3 py-2">
                 <p className="text-[10px] uppercase tracking-wide text-ink-dim">Proyección / mes</p>
-                <p className="text-base font-bold tabular-nums text-gain">≈ {fmtMoney(inBase(interestDaily.monthly), base, { compact: true })}</p>
+                <p className="text-base font-bold tabular-nums text-gain">≈ {fmtMoney(inBase(interestDaily.monthly), base, { compact: true })} <span className="text-xs font-normal text-ink-dim">{fmtPct(monthlyPct / 100)}</span></p>
               </div>
               <div className="rounded-xl bg-white/5 px-3 py-2">
                 <p className="text-[10px] uppercase tracking-wide text-ink-dim">Proyección / año</p>
-                <p className="text-base font-bold tabular-nums text-gain">≈ {fmtMoney(inBase(interestDaily.annual), base, { compact: true })}</p>
+                <p className="text-base font-bold tabular-nums text-gain">≈ {fmtMoney(inBase(interestDaily.annual), base, { compact: true })} <span className="text-xs font-normal text-ink-dim">{fmtPct(annualPct / 100)}</span></p>
               </div>
             </div>
             <p className="mt-1 text-[10px] text-ink-dim">Estimado con la tendencia actual ({fmtMoney(inBase(interestDaily.avgDaily), base, { compact: true })}/día).</p>
