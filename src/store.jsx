@@ -374,6 +374,7 @@ export function StoreProvider({ children }) {
   // ---- Sincronización en la nube (opcional, por código único) ----
   const [syncId, setSyncId] = useState(() => localStorage.getItem(SYNC_KEY));
   const [syncStatus, setSyncStatus] = useState(syncId ? "pulling" : "off");
+  const [syncRetry, setSyncRetry] = useState(0);
   const pullingRef = useRef(false);
   const skipPushRef = useRef(false);
   // Bloquea CUALQUIER push hasta que el primer pull se resuelva con éxito. Sin
@@ -431,42 +432,48 @@ export function StoreProvider({ children }) {
   }, [syncId]);
 
   // Al activar/conectar un código: bajar el estado de la nube (o subir el local si no existe).
-  useEffect(() => {
-    if (!syncId) return;
-    let cancelled = false;
-    cloudReadyRef.current = false; // toda (re)conexión baja antes de subir.
-    pullingRef.current = true;
-    (async () => {
-      setSyncStatus("pulling");
-      try {
-        const r = await fetch(`${API_BASE}/api/sync?id=${encodeURIComponent(syncId)}`);
-        if (!r.ok) throw new Error(`sync pull ${r.status}`);
-        const data = await r.json();
-        if (cancelled) return;
-        if (data.found && data.state) {
-          skipPushRef.current = true;
-          cloudReadyRef.current = true; // pull OK → ya es seguro subir cambios.
-          dispatch({
-            type: "hydrate",
-            state: migrate(accrueInterest({ ...SEED, ...data.state, fx: { ...BASE_FX, ...state.fx }, priceHistory: state.priceHistory })),
+    useEffect(() => {
+      if (!syncId) return;
+      let cancelled = false;
+      cloudReadyRef.current = false; // toda (re)conexión baja antes de subir.
+      pullingRef.current = true;
+      (async () => {
+        setSyncStatus("pulling");
+        try {
+          const controller = new AbortController();
+          const id = setTimeout(() => controller.abort(), 8000);
+          const r = await fetch(`${API_BASE}/api/sync?id=${encodeURIComponent(syncId)}`, {
+            signal: controller.signal,
           });
-          setSyncStatus("synced");
-        } else {
-          // No existe estado en la nube: el local es la fuente, subirlo.
-          cloudReadyRef.current = true;
-          await pushNow(syncId);
+          clearTimeout(id);
+          if (!r.ok) throw new Error(`sync pull ${r.status}`);
+          const data = await r.json();
+          if (cancelled) return;
+          if (data.found && data.state) {
+            skipPushRef.current = true;
+            cloudReadyRef.current = true; // pull OK → ya es seguro subir cambios.
+            dispatch({
+              type: "hydrate",
+              state: migrate(accrueInterest({ ...SEED, ...data.state, fx: { ...BASE_FX, ...state.fx }, priceHistory: state.priceHistory })),
+            });
+            setSyncStatus("synced");
+          } else {
+            // No existe estado en la nube: el local es la fuente, subirlo.
+            cloudReadyRef.current = true;
+            await pushNow(syncId);
+          }
+        } catch (err) {
+          // Pull falló o timeout: NO habilitar push para no machacar la nube con datos locales viejos.
+          if (!cancelled) setSyncStatus("error");
+          console.warn("Sync pull failed:", err);
+        } finally {
+          pullingRef.current = false;
         }
-      } catch {
-        // Pull falló: NO habilitar push para no machacar la nube con datos locales viejos.
-        if (!cancelled) setSyncStatus("error");
-      } finally {
-        pullingRef.current = false;
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [syncId]); // eslint-disable-line react-hooks/exhaustive-deps
+      })();
+      return () => { cancelled = true; };
+    }, [syncRetry, syncId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Subida automática con debounce cuando cambian datos relevantes.
+      // Subida automática con debounce cuando cambian datos relevantes.
   useEffect(() => {
     if (!syncId || pullingRef.current || !cloudReadyRef.current) return;
     if (skipPushRef.current) { skipPushRef.current = false; return; }
@@ -484,12 +491,14 @@ export function StoreProvider({ children }) {
       const id = crypto.randomUUID();
       localStorage.setItem(SYNC_KEY, id);
       setSyncId(id);
+      setSyncRetry(n => n + 1);
     },
     link: (code) => {
       const id = code.trim().toLowerCase();
       if (!/^[a-z0-9-]{16,64}$/.test(id)) return false;
       localStorage.setItem(SYNC_KEY, id);
       setSyncId(id);
+      setSyncRetry(n => n + 1);
       return true;
     },
     disable: () => {
