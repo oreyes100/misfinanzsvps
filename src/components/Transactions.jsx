@@ -108,6 +108,9 @@ export default function Transactions() {
                   <p className="truncate text-sm font-medium">{t.description}</p>
                   <p className="text-xs text-ink-dim">
                     {fmtDate(t.date)} · {t.category}{t.subcategory ? ` › ${t.subcategory}` : ""} · {accName(t.accountId)}
+                    {t.category === "Transferencia" && t.counterpartId && (
+                      <span> → {accName(t.counterpartId)}</span>
+                    )}
                     {t.auto && t.category === "Intereses" && <span className="ml-1 text-gain">⚡ automático</span>}
                   </p>
                 </div>

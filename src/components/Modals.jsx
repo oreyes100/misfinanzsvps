@@ -221,6 +221,7 @@ export function TransactionModal({ onClose, preset, tx }) {
   const [ocr, setOcr] = useState(null); // { busy, progress, ai, note }
   const [receipt, setReceipt] = useState(null); // { merchant, total, date, items } tras escanear
   const [statement, setStatement] = useState(null); // { merchant, rows } captura bancaria con varios movimientos
+  const [counterpartId, setCounterpartId] = useState(tx?.counterpartId || "");
   const fileRef = useRef(null);
 
   const ai = categorize(desc, state.categories);
@@ -404,6 +405,7 @@ export function TransactionModal({ onClose, preset, tx }) {
       subcategory: subcat || null,
       date,
     };
+    if (category === "Transferencia" && counterpartId) payload.counterpartId = counterpartId;
     if (isEdit) dispatch({ type: "update_transaction", id: tx.id, patch: payload });
     else dispatch({ type: "add_transaction", tx: payload });
     onClose();
@@ -705,15 +707,32 @@ export function TransactionModal({ onClose, preset, tx }) {
           <Field label="Importe">
             <input className={inputCls} type="number" inputMode="decimal" min="0" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} required />
           </Field>
-          <Field label="Cuenta">
-            <select className={inputCls} value={accountId} onChange={(e) => setAccountId(e.target.value)}>
-              {groupedAccounts(state.accounts).map(({ type, label, accounts }) => (
-                <optgroup key={type} label={label}>
-                  {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-                </optgroup>
-              ))}
-            </select>
-          </Field>
+          <div>
+            <Field label="Cuenta">
+              <select className={inputCls} value={accountId} onChange={(e) => setAccountId(e.target.value)}>
+                {groupedAccounts(state.accounts).map(({ type, label, accounts }) => (
+                  <optgroup key={type} label={label}>
+                    {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                  </optgroup>
+                ))}
+              </select>
+            </Field>
+          </div>
+          {isEdit && category === "Transferencia" && (
+            <Field label={tx?.amount < 0 ? "Cuenta destino →" : "Cuenta origen ←"}>
+              <select className={inputCls} value={counterpartId || ""} onChange={(e) => setCounterpartId(e.target.value)}>
+                {counterpartId ? (
+                  groupedAccounts(state.accounts).map(({ type, label, accounts }) => (
+                    <optgroup key={type} label={label}>
+                      {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                    </optgroup>
+                  ))
+                ) : (
+                  <option value="">— Sin especificar —</option>
+                )}
+              </select>
+            </Field>
+          )}
         </div>
 
         <Field label="Fecha">
