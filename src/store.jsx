@@ -55,6 +55,7 @@ const SEED = {
   categories: DEFAULT_CATEGORIES,
   transferAliases: {}, // texto OCR normalizado → accountId (aprendizaje)
   categoryAliases: {}, // texto de ítem normalizado → category (aprendizaje OCR recibos)
+  statementPatterns: {}, // texto OCR normalizado → { description, category, direction, accountId, appliedCount } (aprendizaje EDCs)
   fx: { ...BASE_FX },
   priceHistory: {
     BTC: seedHistory(BASE_FX.BTC, 48, 0.012),
@@ -320,6 +321,19 @@ function reducer(state, action) {
       return { ...state, categoryAliases };
     }
 
+    case "learn_statement_pattern": {
+      const { key, pattern } = action;
+      if (!key || !pattern) return state;
+      const existing = state.statementPatterns[key];
+      const statementPatterns = {
+        ...state.statementPatterns,
+        [key]: existing
+          ? { ...existing, ...pattern, appliedCount: (existing.appliedCount || 0) + 1 }
+          : { ...pattern, appliedCount: 1, learnedAt: new Date().toISOString() },
+      };
+      return { ...state, statementPatterns };
+    }
+
     case "restore": {
       const s = action.state || {};
       return accrueInterest({
@@ -332,6 +346,7 @@ function reducer(state, action) {
         categories: Array.isArray(s.categories) && s.categories.length ? s.categories : state.categories,
         transferAliases: s.transferAliases || state.transferAliases,
         categoryAliases: s.categoryAliases || state.categoryAliases,
+        statementPatterns: s.statementPatterns || state.statementPatterns,
       });
     }
 
@@ -364,8 +379,8 @@ const SYNC_KEY = "mis-finazas-sync-id";
 
 /** Partes del estado que viajan a la nube (precios/FX en vivo se quedan fuera). */
 function syncableSlice(state) {
-  const { settings, accounts, assets, transactions, scheduled, categories, transferAliases, categoryAliases } = state;
-  return { settings, accounts, assets, transactions, scheduled, categories, transferAliases, categoryAliases };
+  const { settings, accounts, assets, transactions, scheduled, categories, transferAliases, categoryAliases, statementPatterns } = state;
+  return { settings, accounts, assets, transactions, scheduled, categories, transferAliases, categoryAliases, statementPatterns };
 }
 
 export function StoreProvider({ children }) {

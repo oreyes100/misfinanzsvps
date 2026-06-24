@@ -3,7 +3,8 @@ import { motion } from "framer-motion";
 import { useStore } from "../store.jsx";
 import { fmtMoney, groupedAccounts } from "../utils.js";
 import { aiExtract, ocrImage } from "../ocr.js";
-import { auditStatement } from "../audit.js";
+import { auditStatement, buildCorrectionActions } from "../audit.js";
+import { parseStatement, makePatternKey, buildPattern } from "../statement-parser.js";
 import AuditChecklist from "./AuditChecklist.jsx";
 import { Btn, Glass, inputCls } from "./UI.jsx";
 
@@ -11,9 +12,7 @@ const ACCEPT = "image/jpeg,image/png,image/webp,application/pdf";
 const MAX_SIZE = 20 * 1024 * 1024; // 20 MB
 
 // Extrae texto de un PDF usando renderizado a canvas + OCR
-// (el navegador renderiza el PDF, nosotros capturamos imágenes)
 async function pdfPageToImage(file, pageNum = 1) {
-  // Usamos pdfjs-dist para renderizar el PDF en un canvas
   const pdfjs = await import("pdfjs-dist");
   pdfjs.GlobalWorkerOptions.workerSrc = new URL(
     "pdfjs-dist/build/pdf.worker.min.mjs",
@@ -59,6 +58,7 @@ export default function Auditoria() {
   const { state, dispatch } = useStore();
   const accounts = state.accounts;
   const settings = state.settings;
+  const statementPatterns = state.statementPatterns || {};
 
   const [phase, setPhase] = useState("upload"); // upload | processing | account_select | results | error
   const [file, setFile] = useState(null);
@@ -93,6 +93,14 @@ export default function Auditoria() {
     setItemStates({});
   };
 
+  // Aprende un patrón cuando el usuario aplica una corrección
+  const learnPattern = (correctionItem) => {
+    const pattern = buildPattern(correctionItem, selectedAccountId);
+    if (pattern) {
+      dispatch({ type: "learn_statement_pattern", key: pattern.key, pattern: pattern.pattern });
+    }
+  };
+
   const onFile = useCallback(async (f) => {
     if (!f) return;
     if (f.size > MAX_SIZE) {
@@ -115,10 +123,8 @@ export default function Auditoria() {
         setProgressLabel("Renderizando PDF a imágenes...");
         imagesToAnalyze = await pdfToImages(f);
         setProgress(40);
-        // Usar la primera página como preview
         setPreview(URL.createObjectURL(imagesToAnalyze[0]));
       } else {
-        // Es imagen
         setPreview(URL.createObjectURL(f));
         imagesToAnalyze = [f];
       }
@@ -129,7 +135,6 @@ export default function Auditoria() {
         setProgressLabel("Analizando con IA (Gemini)...");
         setProgress(50);
 
-        // Analizar cada página con Gemini y combinar resultados
         let allMovements = [];
         let merchant = "";
         for (let i = 0; i < imagesToAnalyze.length; i++) {
@@ -146,6 +151,21 @@ export default function Auditoria() {
           if (pageExtract.movements?.length) allMovements.push(...pageExtract.movements);
         }
 
+        // Mejorar movimientos con patrones aprendidos
+        allMovements = allMovements.map((m) => {
+          const key = makePatternKey(m.description);
+          const learned = statementPatterns[key];
+          if (learned) {
+            return {
+              ...m,
+              description: learned.description || m.description,
+              category: learned.category || m.category,
+              direction: learned.direction || m.direction,
+            };
+          }
+          return m;
+        });
+
         setProgress(90);
         setProgressLabel("Aplicando auditoría...");
 
@@ -156,11 +176,9 @@ export default function Auditoria() {
         };
         setExtract(combinedExtract);
 
-        // Ejecutar auditoría
         const auditResult = auditStatement(combinedExtract, accounts, state.transactions);
         setResult(auditResult);
 
-        // Inicializar estados de checklist
         const states = {};
         for (const item of auditResult.checklist) {
           states[item.id] = "pending";
@@ -171,15 +189,13 @@ export default function Auditoria() {
           setSelectedAccountId(auditResult.account.id);
           setPhase("results");
         } else {
-          // No se pudo identificar automáticamente
           setPhase("account_select");
-          // Si solo hay una cuenta, preseleccionarla
           if (accounts.length === 1) {
             setSelectedAccountId(accounts[0].id);
           }
         }
       } else {
-        // Sin Gemini: usar Tesseract.js local (OCR básico)
+        // Sin Gemini: usar Tesseract.js local + statement-parser
         setProgressLabel("Aplicando OCR local...");
         let allText = "";
         for (let i = 0; i < imagesToAnalyze.length; i++) {
@@ -193,11 +209,21 @@ export default function Auditoria() {
         setProgress(85);
         setProgressLabel("Analizando texto OCR...");
 
-        // Parse simple del texto OCR
-        const simpleExtract = parseTextToMovements(allText);
-        setExtract(simpleExtract);
+        // Parser inteligente con detección de banco y patrones aprendidos
+        const parsed = parseStatement(allText, {
+          statementPatterns,
+          accounts,
+        });
 
-        const auditResult = auditStatement(simpleExtract, accounts, state.transactions);
+        const parsedExtract = {
+          type: "statement",
+          merchant: parsed.merchant || file.name,
+          movements: parsed.movements,
+          detectedBank: parsed.detectedBank,
+        };
+        setExtract(parsedExtract);
+
+        const auditResult = auditStatement(parsedExtract, accounts, state.transactions);
         setResult(auditResult);
 
         const states = {};
@@ -220,11 +246,10 @@ export default function Auditoria() {
       setError(err.message || "Error al procesar el archivo");
       setPhase("error");
     }
-  }, [accounts, state.categories, state.transactions, state.settings, preview]);
+  }, [accounts, state.categories, state.transactions, state.settings, statementPatterns, preview]);
 
   const confirmAccount = () => {
     if (!selectedAccountId) return;
-    // Re-ejecutar auditoría con la cuenta seleccionada
     const auditResult = auditStatement(extract, accounts, state.transactions, {
       overrideAccountId: selectedAccountId,
     });
@@ -237,6 +262,11 @@ export default function Auditoria() {
 
   const toggleItem = (id, newState) => {
     setItemStates((prev) => ({ ...prev, [id]: newState }));
+    // Cuando el usuario aplica una corrección, aprender el patrón
+    if (newState === "applied" && result) {
+      const item = result.checklist.find((c) => c.id === id);
+      if (item) learnPattern(item);
+    }
   };
 
   // --- Render por fase ---
@@ -286,6 +316,7 @@ export default function Auditoria() {
           <p className="text-xs text-ink-dim">
             Extracto: <strong>{extract?.merchant || file?.name}</strong>
             {" · "}{extract?.movements?.length || 0} movimientos detectados
+            {extract?.detectedBank && ` · Banco: ${extract.detectedBank}`}
           </p>
           <select
             className={inputCls}
@@ -311,7 +342,7 @@ export default function Auditoria() {
 
       {phase === "results" && result && (
         <div className="space-y-4">
-          {/* Account info */}
+          {/* Account info + bank + learned patterns count */}
           <Glass className="!rounded-2xl p-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
@@ -331,9 +362,17 @@ export default function Auditoria() {
             {extract?.merchant && (
               <p className="mt-1 text-xs text-ink-dim">Origen: {extract.merchant}</p>
             )}
+            {extract?.detectedBank && (
+              <p className="text-xs text-ink-dim">Banco detectado: {extract.detectedBank}</p>
+            )}
             {result.period && (
               <p className="text-xs text-ink-dim">
                 Período: {result.period.from} → {result.period.to}
+              </p>
+            )}
+            {Object.keys(statementPatterns).length > 0 && (
+              <p className="mt-1 text-xs text-green-400">
+                🧠 {Object.keys(statementPatterns).length} patrón(es) aprendido(s) activo(s)
               </p>
             )}
           </Glass>
@@ -398,50 +437,11 @@ function UploadZone({ onClick }) {
       <p className="text-sm font-medium text-ink">Sube un estado de cuenta</p>
       <p className="mt-1 text-xs text-ink-dim">PDF o imagen (JPG/PNG) · máx 20MB</p>
       <p className="mt-3 text-[11px] text-ink-dim opacity-60">
-        El sistema detectará la cuenta, comparará movimientos y generará una checklist de correcciones
+        Detecta el banco, identifica la cuenta, y aprende de cada corrección que apliques
       </p>
       <div className="mt-4 inline-flex items-center gap-1.5 rounded-full bg-accent/20 px-4 py-1.5 text-xs font-medium text-accent-soft">
         <span>Seleccionar archivo</span>
       </div>
     </button>
   );
-}
-
-// ---------- Fallback OCR parser (sin Gemini) ----------
-
-function parseTextToMovements(text) {
-  if (!text) return { type: "statement", merchant: "OCR local", movements: [] };
-
-  const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
-  const movements = [];
-
-  // Patrones comunes en EDC mexicanos
-  const DATE_RE = /(\d{2}[/-]\d{2}[/-]\d{2,4})/;
-  const AMOUNT_RE = /([-+]?\s*[\d,]+\.\d{2})\s*$/;
-
-  for (const line of lines) {
-    const dateMatch = line.match(DATE_RE);
-    const amountMatch = line.match(AMOUNT_RE);
-
-    if (dateMatch && amountMatch) {
-      const date = dateMatch[1].replace(/(\d{2})[/-](\d{2})[/-](\d{2,4})/, (_, d, m, y) => {
-        const yy = y.length === 2 ? "20" + y : y;
-        return `${yy}-${m}-${d}`;
-      });
-      const amount = parseFloat(amountMatch[1].replace(/[, ]/g, ""));
-      const description = line
-        .replace(dateMatch[0], "")
-        .replace(amountMatch[0], "")
-        .replace(/[-+]\s*/, "")
-        .trim();
-      const isNegative = line.includes("-") && !line.startsWith("+");
-      const direction = isNegative ? "out" : "in";
-
-      if (isFinite(amount) && amount > 0) {
-        movements.push({ date, description: description.slice(0, 60), amount, direction, isTransfer: false, category: null });
-      }
-    }
-  }
-
-  return { type: "statement", merchant: "OCR local", movements };
 }
