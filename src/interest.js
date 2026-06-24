@@ -67,9 +67,10 @@ function accrueCapped(acc, now) {
     const newLast = addDaysISO(t.last, periods * periodDays);
     const room = t.gainCap > 0 ? Math.max(0, t.gainCap - t.gainAcc) : Infinity;
 
-    // Tramo agotado (tope de ganancias alcanzado) o sin capital → solo avanzar reloj.
+    // Tramo agotado (tope de ganancias alcanzado) o sin capital.
+    // NO avanzar lastAccrual: si el usuario después configura el balanceCap/rate
+    // para este tramo, el backlog se calcula retroactivamente desde la fecha real.
     if (room <= 0 || t.base <= 0) {
-      out[`lastAccrual${t.n}`] = newLast;
       continue;
     }
 
