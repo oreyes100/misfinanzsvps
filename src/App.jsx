@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 import { StoreProvider, useStore } from "./store.jsx";
 import { canAccess, currentSession, hasBiometricCredential, logout } from "./auth.js";
 import Assistant from "./components/Assistant.jsx";
+import Auditoria from "./components/Auditoria.jsx";
 import BottomNav from "./components/BottomNav.jsx";
 import Congregacion from "./components/Congregacion.jsx";
 import Dashboard from "./components/Dashboard.jsx";
@@ -18,6 +19,7 @@ const VIEWS = {
   movimientos: Transactions,
   gestion: Manage,
   reportes: Reports,
+  auditoria: Auditoria,
   asistente: Assistant,
   congregacion: Congregacion,
   ajustes: Settings,

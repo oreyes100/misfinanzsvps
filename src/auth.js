@@ -12,6 +12,7 @@ export const ALL_SECTIONS = [
   { id: "movimientos", label: "Movimientos" },
   { id: "gestion", label: "Gestión" },
   { id: "reportes", label: "Reportes" },
+  { id: "auditoria", label: "Auditoría" },
   { id: "asistente", label: "Asistente IA" },
   { id: "congregacion", label: "Congregación (Cuentas)" },
   { id: "ajustes", label: "Ajustes" },
