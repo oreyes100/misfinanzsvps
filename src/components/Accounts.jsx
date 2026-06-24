@@ -17,12 +17,14 @@ function AccountModal({ account, onClose }) {
           capped: account.capped || false,
           rate1: account.rate1 || 0, balanceCap1: account.balanceCap1 || "", gainCap1: account.gainCap1 || "", accrual1: account.accrual1 || "monthly",
           rate2: account.rate2 || 0, balanceCap2: account.balanceCap2 || "", gainCap2: account.gainCap2 || "", accrual2: account.accrual2 || "monthly",
+          isrRate: account.isrRate || 0,
         }
       : {
           name: "", type: "checking", currency: state.settings.baseCurrency, balance: "", rate: 0, accrual: "none",
           capped: false,
           rate1: 0, balanceCap1: "", gainCap1: "", accrual1: "monthly",
           rate2: 0, balanceCap2: "", gainCap2: "", accrual2: "monthly",
+          isrRate: 0,
         }
   );
   const [error, setError] = useState("");
@@ -60,8 +62,10 @@ function AccountModal({ account, onClose }) {
       payload.balanceCap2 = parseFloat(form.balanceCap2) || 0;
       payload.gainCap2 = parseFloat(form.gainCap2) || 0;
       payload.accrual2 = form.accrual2;
+      payload.isrRate = form.isrRate;
     } else if (isCappable) {
       payload.capped = false;
+      payload.isrRate = form.isrRate;
     }
     if (form.type === "credit") {
       payload.cutDay = Math.min(31, Math.max(1, parseInt(form.cutDay, 10) || 0)) || null;
@@ -171,8 +175,12 @@ function AccountModal({ account, onClose }) {
 
             <p className="text-xs text-ink-dim">
               Los tramos son <strong>acumulativos</strong>: el dinero por encima de (tope principal + tope secundario) no genera intereses.
-              Cada abono genera además un <strong className="text-loss">impuesto del 0,9 % anual</strong> sobre el capital que genera intereses.
             </p>
+            <Field label="ISR anual (%)" hint="% anual sobre el saldo invertido. 0 = sin impuesto.">
+              <input className={inputCls} type="number" inputMode="decimal" min="0" max="5" step="0.0001"
+                value={(form.isrRate * 100).toFixed(4)}
+                onChange={(e) => set("isrRate", (parseFloat(e.target.value) || 0) / 100)} />
+            </Field>
           </fieldset>
         )}
 
@@ -205,6 +213,13 @@ function AccountModal({ account, onClose }) {
                 ? <>Las ganancias se registrarán solas en Movimientos. Estimado: <strong className="text-gain">≈ {fmtMoney(monthlyEst, form.currency)}/mes</strong>.</>
                 : "Configura tasa y frecuencia para que los intereses se acumulen automáticamente."}
             </p>
+            {isCappable && (
+              <Field label="ISR anual (%)" hint="% anual sobre el saldo invertido. 0 = sin impuesto.">
+                <input className={inputCls} type="number" inputMode="decimal" min="0" max="5" step="0.0001"
+                  value={(form.isrRate * 100).toFixed(4)}
+                  onChange={(e) => set("isrRate", (parseFloat(e.target.value) || 0) / 100)} />
+              </Field>
+            )}
           </fieldset>
         )}
 
@@ -269,7 +284,9 @@ export default function Accounts() {
                           <span className="text-gain"> · ⚡ {(a.rate * 100).toFixed(2)} % TAE, abono {a.accrual === "daily" ? "diario" : "mensual"}</span>
                         )}
                         {tiered && (
-                          <span className="text-gain"> · 🎯 {((a.rate1 || 0) * 100).toFixed(2)} % / {((a.rate2 || 0) * 100).toFixed(2)} % con tope{a.type === "investment" ? " · imp. 0,9 %" : ""}</span>
+                          <span className="text-gain"> · 🎯 {((a.rate1 || 0) * 100).toFixed(2)} % / {((a.rate2 || 0) * 100).toFixed(2)} % con tope
+                            {a.isrRate > 0 && <span className="text-loss"> · ISR {(a.isrRate * 100).toFixed(4)}%</span>}
+                          </span>
                         )}
                         {a.type === "credit" && (a.cutDay || a.payDay) && (
                           <span> · 📅 corte {a.cutDay || "—"}, pago {a.payDay || "—"}</span>

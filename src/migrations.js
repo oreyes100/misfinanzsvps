@@ -114,10 +114,26 @@ export function backfillInvestmentISR(state) {
   return { ...state, accounts, transactions };
 }
 
+/**
+ * Asigna isrRate a cuentas de inversión MXN existentes (pre-migración) para
+ * que no pierdan su ISR al activar el modelo per-account. Idempotente: solo
+ * añade si no existe el campo.
+ */
+function migrateIsrRate(state) {
+  const accounts = (state.accounts || []).map((a) => {
+    if (a.isrRate != null) return a; // ya tiene, saltar
+    // Antes del modelo per-account: las inversiones en MXN pagaban ISR al 0.0524 % anual.
+    if (a.type === "investment" && a.currency === "MXN") return { ...a, isrRate: 0.000524 };
+    // SOFIPOs y demás no pagaban ISR.
+    return { ...a, isrRate: 0 };
+  });
+  return { ...state, accounts };
+}
+
 /** Migraciones idempotentes aplicadas al cargar local y al bajar de la nube. */
 export function migrate(state) {
   let s = { ...state, categories: migrateCategories(state.categories) };
-  s = stripSofipoISR(s);        // quita ISR erróneo en sofipos (regla: no pagan ISR)
-  s = backfillInvestmentISR(s); // agrega ISR faltante en inversión MXN
+  s = stripSofipoISR(s);
+  s = migrateIsrRate(s);
   return s;
 }

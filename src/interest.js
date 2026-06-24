@@ -4,12 +4,6 @@
 
 import { DAY_MS, daysBetween, todayISO, uid } from "./utils.js";
 
-/** ISR México: 0.9 % ANUAL sobre el capital que genera intereses (no sobre la ganancia). */
-export const INTEREST_TAX_RATE = 0.009;
-
-/** ISR reducido para cuentas de inversión en pesos (p. ej. OBmio): 0.0524 % anual ≈ 0.000144 % diario. */
-export const MXN_INVESTMENT_TAX_RATE = 0.000524;
-
 const r2 = (x) => Math.round(x * 100) / 100;
 
 /** Suma n días a una fecha ISO (n puede ser negativo). */
@@ -42,12 +36,11 @@ function accrueCapped(acc, now) {
   const startBalance = acc.balance;
   const cap1 = acc.balanceCap1 || 0;
   const cap2 = acc.balanceCap2 || 0;
-  const chargesISR = acc.type === "investment"; // SOFIPOs NO pagan ISR; solo inversión.
+  // ISR: porcentaje anual configurable por cuenta (decimal, p. ej. 0.000524 = 0.0524 % anual).
+  // Se aplica a ambos tramos con la misma frecuencia que los intereses.
+  const isrRate = acc.isrRate || 0;
   // Bancos mexicanos usan año comercial: 360 días (30 días × 12 meses).
   const DAYS_PER_YEAR = 360;
-
-  // Tasa de ISR: las inversiones en pesos usan la tasa reducida (0.0524 % anual).
-  const taxRate = (chargesISR && acc.currency === "MXN") ? MXN_INVESTMENT_TAX_RATE : INTEREST_TAX_RATE;
 
   // Bases por tramo, calculadas sobre el saldo al inicio del devengo (deterministas).
   const base1 = cap1 > 0 ? Math.min(startBalance, cap1) : startBalance;
@@ -86,7 +79,7 @@ function accrueCapped(acc, now) {
     gain = r2(gain);
 
     const taxDivisor = t.accrual === "daily" ? DAYS_PER_YEAR : 12;
-    const tax = r2(t.base * (taxRate / taxDivisor) * periods);
+    const tax = r2(isrRate > 0 ? t.base * (isrRate / taxDivisor) * periods : 0);
 
     const date = depositDate(now);
     if (gain > 0.005) {
@@ -98,11 +91,11 @@ function accrueCapped(acc, now) {
       balance = r2(balance + gain);
       out[`gainAccrued${t.n}`] = r2(t.gainAcc + gain);
     }
-    // ISR (0.9 % anual) SOLO para inversión; las SOFIPOs no pagan ISR.
-    if (chargesISR && tax > 0.005) {
+    // ISR configurable por cuenta. Se aplica a ambos tramos con la misma frecuencia que los intereses.
+    if (isrRate > 0 && tax > 0.005) {
       txs.push({
         id: uid(), date,
-        description: `Impuesto intereses ${acc.name} · ${t.label} (0.0524 % anual)`,
+        description: `Impuesto intereses ${acc.name} · ${t.label} (${(isrRate * 100).toFixed(4)} % anual)`,
         amount: -tax, currency: acc.currency, category: "Impuestos", accountId: acc.id, auto: true,
       });
       balance = r2(balance - tax);
@@ -170,14 +163,15 @@ export function accrueInterest(state) {
         amount: r2(gained), currency: acc.currency, category: "Intereses", accountId: acc.id, auto: true,
       });
       let finalBalance = r2(balance);
-      // ISR (0.0524 % anual) para inversión en pesos; SOFIPOs/ahorro/depósito no pagan.
-      if (acc.type === "investment" && acc.currency === "MXN") {
+      // ISR configurable por cuenta (0 = no aplica). Misma frecuencia que los intereses.
+      const isrRate = acc.isrRate || 0;
+      if (isrRate > 0) {
         const taxDivisor = acc.accrual === "daily" ? 365 : 12;
-        const tax = r2(startBalance * (MXN_INVESTMENT_TAX_RATE / taxDivisor) * periods);
+        const tax = r2(startBalance * (isrRate / taxDivisor) * periods);
         if (tax > 0.005) {
           newTx.push({
             id: uid(), date,
-            description: `Impuesto intereses ${acc.name} (0.0524 % anual)`,
+            description: `Impuesto intereses ${acc.name} (${(isrRate * 100).toFixed(4)} % anual)`,
             amount: -tax, currency: acc.currency, category: "Impuestos", accountId: acc.id, auto: true,
           });
           finalBalance = r2(finalBalance - tax);
