@@ -20,7 +20,7 @@ async function pdfPageToImage(file, pageNum = 1) {
     import.meta.url
   ).href;
   const arr = file instanceof File ? await file.arrayBuffer() : file;
-  const doc = await pdfjs.getDocument(arr).promise;
+  const doc = await pdfjs.getDocument({ data: arr }).promise;
   const page = await doc.getPage(pageNum);
   const viewport = page.getViewport({ scale: 2 });
   const canvas = document.createElement("canvas");
@@ -39,7 +39,7 @@ async function pdfToImages(file) {
     import.meta.url
   ).href;
   const arr = file instanceof File ? await file.arrayBuffer() : file;
-  const doc = await pdfjs.getDocument(arr).promise;
+  const doc = await pdfjs.getDocument({ data: arr }).promise;
   const blobs = [];
   for (let i = 1; i <= doc.numPages; i++) {
     const page = await doc.getPage(i);
