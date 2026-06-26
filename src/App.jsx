@@ -1,9 +1,7 @@
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { motion } from "framer-motion";
 import { StoreProvider, useStore } from "./store.jsx";
 import { canAccess, currentSession, hasBiometricCredential, logout } from "./auth.js";
-import Assistant from "./components/Assistant.jsx";
-import Auditoria from "./components/Auditoria.jsx";
 import BottomNav from "./components/BottomNav.jsx";
 import Congregacion from "./components/Congregacion.jsx";
 import Dashboard from "./components/Dashboard.jsx";
@@ -13,6 +11,9 @@ import Reports from "./components/Reports.jsx";
 import Settings from "./components/Settings.jsx";
 import Transactions from "./components/Transactions.jsx";
 import { SecurityBadge } from "./components/UI.jsx";
+
+const Assistant = lazy(() => import("./components/Assistant.jsx"));
+const Auditoria = lazy(() => import("./components/Auditoria.jsx"));
 
 const VIEWS = {
   inicio: Dashboard,
@@ -64,7 +65,9 @@ function Shell({ session, onLogout }) {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.2, ease: "easeOut" }}
         >
-          {View ? <View session={session} /> : <p className="text-sm text-ink-dim">No tienes acceso a esta sección.</p>}
+          <Suspense fallback={<div className="p-8 text-center text-ink-dim">Cargando…</div>}>
+            {View ? <View session={session} /> : <p className="text-sm text-ink-dim">No tienes acceso a esta sección.</p>}
+          </Suspense>
         </motion.div>
       </main>
 

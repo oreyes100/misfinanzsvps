@@ -1,14 +1,20 @@
+// utils.ts — Utilidades de Mis Finanzas (tipado completo)
+import type {
+  Currency, FXRates, Account, AccountType, Category, AppState,
+  ParsedIntent,
+} from "./types.ts";
+
 // ---------- API base (Capacitor nativo vs. web) ----------
 
 const isNative = typeof window !== "undefined" &&
   (window.location.hostname === "localhost" || window.location.protocol === "capacitor:");
-export const API_BASE = isNative ? "https://mis-finazas-gold.vercel.app" : "";
+export const API_BASE: string = isNative ? "https://mis-finazas-gold.vercel.app" : "";
 
 // ---------- Monedas y conversión ----------
 
-export const CURRENCIES = ["EUR", "USD", "GBP", "MXN", "BTC", "ETH"];
+export const CURRENCIES: Currency[] = ["EUR", "USD", "GBP", "MXN", "BTC", "ETH"];
 
-export const CURRENCY_SYMBOL = {
+export const CURRENCY_SYMBOL: Record<Currency, string> = {
   EUR: "€",
   USD: "$",
   GBP: "£",
@@ -18,7 +24,7 @@ export const CURRENCY_SYMBOL = {
 };
 
 // Tasas base: 1 unidad de la divisa expresada en EUR.
-export const BASE_FX = {
+export const BASE_FX: FXRates = {
   EUR: 1,
   USD: 0.92,
   GBP: 1.17,
@@ -27,19 +33,23 @@ export const BASE_FX = {
   ETH: 3120,
 };
 
-export function toEUR(amount, currency, fx) {
+export function toEUR(amount: number, currency: Currency, fx: FXRates): number {
   return amount * (fx[currency] ?? 1);
 }
 
-export function convert(amount, from, to, fx) {
+export function convert(amount: number, from: Currency, to: Currency, fx: FXRates): number {
   return (amount * (fx[from] ?? 1)) / (fx[to] ?? 1);
 }
 
 // Separadores por divisa: MXN/USD usan miles "," y decimal "." (formato en-US);
 // EUR/GBP usan miles "." y decimal "," (formato es-ES).
-const MONEY_LOCALE = { USD: "en-US", MXN: "en-US", EUR: "es-ES", GBP: "es-ES" };
+const MONEY_LOCALE: Partial<Record<Currency, string>> = {
+  USD: "en-US", MXN: "en-US", EUR: "es-ES", GBP: "es-ES",
+};
 
-export function fmtMoney(amount, currency = "EUR", opts = {}) {
+interface FmtMoneyOpts { compact?: boolean }
+
+export function fmtMoney(amount: number, currency: Currency = "EUR", opts: FmtMoneyOpts = {}): string {
   const digits = currency === "BTC" || currency === "ETH" ? 5 : 2;
   if (currency === "BTC" || currency === "ETH") {
     return `${amount.toFixed(digits)} ${currency}`;
@@ -48,20 +58,18 @@ export function fmtMoney(amount, currency = "EUR", opts = {}) {
     style: "currency",
     currency,
     maximumFractionDigits: opts.compact ? 0 : digits,
-    // Siempre notación estándar: mostrar la cifra completa con separadores de
-    // miles (ej. MX$1,234,567), nunca abreviada con "M"/"K".
     notation: "standard",
   }).format(amount);
 }
 
-export function fmtPct(x, digits = 2) {
+export function fmtPct(x: number, digits: number = 2): string {
   const sign = x > 0 ? "+" : "";
   return `${sign}${(x * 100).toFixed(digits)} %`;
 }
 
-// ---------- Categorías (editables por el usuario; estas son las de fábrica) ----------
+// ---------- Categorías ----------
 
-export const DEFAULT_CATEGORIES = [
+export const DEFAULT_CATEGORIES: Category[] = [
   { id: "cat-comida", name: "Comida", type: "expense", color: "#ff8a5c", keywords: ["dominos", "pizza", "restaurante", "cena", "comida", "almuerzo", "desayuno", "burger", "mcdonald", "kebab", "sushi", "bar", "cafe", "café", "glovo", "ubereats", "just eat", "taco", "tacos", "torta", "antojo", "fonda", "lonche", "rappi", "didi food"], subcategories: ["Abarrotes", "Carbohidratos", "Lácteos", "Carnes", "Frutas y verduras", "Bebidas", "Botana"] },
   { id: "cat-super", name: "Supermercado", type: "expense", color: "#2ee6a8", keywords: ["mercadona", "carrefour", "lidl", "aldi", "dia", "supermercado", "eroski", "alcampo", "walmart", "soriana", "chedraui", "costco", "sam's", "oxxo", "bodega aurrera", "heb"], subcategories: [] },
   { id: "cat-transporte", name: "Transporte", type: "expense", color: "#5b8cff", keywords: ["uber", "cabify", "taxi", "metro", "bus", "renfe", "gasolina", "repsol", "cepsa", "parking", "peaje", "tren", "didi", "camion", "camión", "estacionamiento", "caseta"], subcategories: ["Gasolina", "Transporte público", "Taxi/App", "Estacionamiento"] },
@@ -77,10 +85,11 @@ export const DEFAULT_CATEGORIES = [
   { id: "cat-otros", name: "Otros", type: "expense", color: "#7a8db3", system: true, keywords: [], subcategories: [] },
 ];
 
-/** Categorización inteligente por reglas + puntuación sobre las categorías del usuario. */
-export function categorize(description, categories = DEFAULT_CATEGORIES) {
+interface CategorizeResult { category: string; confidence: number }
+
+export function categorize(description: string, categories: Category[] = DEFAULT_CATEGORIES): CategorizeResult {
   const d = (description || "").toLowerCase();
-  let best = { cat: "Otros", score: 0 };
+  let best: { cat: string; score: number } = { cat: "Otros", score: 0 };
   for (const c of categories) {
     const score = (c.keywords || []).reduce((s, w) => (w && d.includes(w) ? s + w.length : s), 0);
     if (score > best.score) best = { cat: c.name, score };
@@ -88,11 +97,11 @@ export function categorize(description, categories = DEFAULT_CATEGORIES) {
   return { category: best.cat, confidence: best.score > 0 ? Math.min(0.6 + best.score / 25, 0.99) : 0.3 };
 }
 
-export function catColor(name, categories = DEFAULT_CATEGORIES) {
+export function catColor(name: string, categories: Category[] = DEFAULT_CATEGORIES): string {
   return categories.find((c) => c.name === name)?.color || "#7a8db3";
 }
 
-export const ACCOUNT_TYPES = {
+export const ACCOUNT_TYPES: Record<AccountType, string> = {
   checking: "Corriente",
   savings: "Ahorro",
   deposit: "Depósito",
@@ -102,14 +111,12 @@ export const ACCOUNT_TYPES = {
   auto_loan: "Préstamo auto",
 };
 
-// Tipos que generan intereses a favor del usuario (configuran tasa + abono).
-export const INTEREST_ACCOUNT_TYPES = ["savings", "deposit", "investment", "sofipo"];
-// Pasivos: el saldo representa deuda (resta del patrimonio).
-export const LIABILITY_ACCOUNT_TYPES = ["credit", "auto_loan"];
+export const INTEREST_ACCOUNT_TYPES: AccountType[] = ["savings", "deposit", "investment", "sofipo"];
+export const LIABILITY_ACCOUNT_TYPES: AccountType[] = ["credit", "auto_loan"];
 
-// Tarjetas del dashboard que el usuario puede mostrar/ocultar desde Ajustes.
-// El patrimonio neto y los avisos de pago siempre se muestran (no son opcionales).
-export const DASHBOARD_CARDS = [
+interface DashboardCard { id: string; label: string }
+
+export const DASHBOARD_CARDS: DashboardCard[] = [
   { id: "intereses", label: "Intereses por día" },
   { id: "criptoOro", label: "Cripto y Oro" },
   { id: "inmuebles", label: "Inmuebles" },
@@ -119,13 +126,12 @@ export const DASHBOARD_CARDS = [
   { id: "gastosIngresos", label: "Gastos e ingresos" },
 ];
 
-/** ¿La tarjeta `id` está visible? Por defecto sí (undefined = visible) para compatibilidad. */
-export const cardOn = (settings, id) => settings?.dashboardCards?.[id] !== false;
+export const cardOn = (settings: AppState["settings"] | undefined, id: string): boolean =>
+  settings?.dashboardCards?.[id] !== false;
 
-const ACCOUNT_TYPE_ORDER = ["checking", "savings", "deposit", "investment", "sofipo", "credit", "auto_loan"];
+const ACCOUNT_TYPE_ORDER: AccountType[] = ["checking", "savings", "deposit", "investment", "sofipo", "credit", "auto_loan"];
 
-/** Ordena cuentas: tipo (corriente → ahorro → depósito → inversión → sofipo → crédito → préstamo) y dentro de cada tipo alfabéticamente. */
-export function sortedAccounts(accounts) {
+export function sortedAccounts(accounts: Account[]): Account[] {
   return [...accounts].sort((a, b) => {
     const oa = ACCOUNT_TYPE_ORDER.indexOf(a.type);
     const ob = ACCOUNT_TYPE_ORDER.indexOf(b.type);
@@ -135,21 +141,22 @@ export function sortedAccounts(accounts) {
   });
 }
 
-/** Agrupa cuentas por tipo en el orden canónico, con nombre de grupo. Cada grupo: { type, label, accounts }. */
-export function groupedAccounts(accounts) {
-  const map = {};
+interface AccountGroup { type: AccountType; label: string; accounts: Account[] }
+
+export function groupedAccounts(accounts: Account[]): AccountGroup[] {
+  const map: Partial<Record<AccountType, Account[]>> = {};
   for (const a of sortedAccounts(accounts)) {
     if (!map[a.type]) map[a.type] = [];
-    map[a.type].push(a);
+    map[a.type]!.push(a);
   }
   return ACCOUNT_TYPE_ORDER
     .filter((t) => map[t]?.length)
-    .map((t) => ({ type: t, label: ACCOUNT_TYPES[t] || t, accounts: map[t] }));
+    .map((t) => ({ type: t, label: ACCOUNT_TYPES[t] || t, accounts: map[t]! }));
 }
 
-// ---------- Parser de lenguaje natural (voz y chat) ----------
+// ---------- Parser de lenguaje natural ----------
 
-const NUM_WORDS = {
+const NUM_WORDS: Record<string, number> = {
   un: 1, una: 1, uno: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5, seis: 6,
   siete: 7, ocho: 8, nueve: 9, diez: 10, once: 11, doce: 12, trece: 13,
   catorce: 14, quince: 15, dieciséis: 16, dieciseis: 16, diecisiete: 17,
@@ -162,21 +169,18 @@ const NUM_WORDS = {
   novecientos: 900, mil: 1000,
 };
 
-function parseAmount(text) {
-  // "dos mil quinientos" → 2500, "mil quinientos" → 1500
+function parseAmount(text: string): number | null {
   const compMil = text.match(/\b([\wáéíóúñ]+)\s+mil(?:\s+([\wáéíóúñ]+))?\b/);
   if (compMil) {
     const pre = NUM_WORDS[compMil[1]];
-    const post = NUM_WORDS[compMil[2]];
+    const post = compMil[2] ? NUM_WORDS[compMil[2]] : undefined;
     if (pre) return pre * 1000 + (post || 0);
   }
-  // standalone "mil" or "mil quinientos" (no multiplier before)
   const soloMil = text.match(/\bmil(?:\s+([\wáéíóúñ]+))?\b/);
   if (soloMil) {
-    const post = NUM_WORDS[soloMil[1]];
+    const post = soloMil[1] ? NUM_WORDS[soloMil[1]] : undefined;
     return 1000 + (post || 0);
   }
-  // "ciento veinte" → 120, "treinta y cinco" → 35
   const compoundHundred = text.match(/\b(ciento|doscientos|trescientos|cuatrocientos|quinientos|seiscientos|setecientos|ochocientos|novecientos)\s+(?:y\s+)?([\wáéíóúñ]+)\b/);
   if (compoundHundred) {
     const h = NUM_WORDS[compoundHundred[1]];
@@ -197,7 +201,7 @@ function parseAmount(text) {
   return null;
 }
 
-function parseCurrency(text) {
+function parseCurrency(text: string): Currency {
   if (/euro|eur|€/.test(text)) return "EUR";
   if (/d[oó]lar|usd|\$/.test(text)) return "USD";
   if (/libra|gbp|£/.test(text)) return "GBP";
@@ -206,7 +210,7 @@ function parseCurrency(text) {
   return "MXN";
 }
 
-function parseAccountName(text) {
+function parseAccountName(text: string): string | null {
   const m = text.match(/(?:de (?:la )?(?:cuenta|tarjeta) )([\wáéíóúñ ]+?)(?:\s*$|\s+(?:en|por|para|a)\b)/);
   if (m) return m[1].trim();
   const m2 = text.match(/(?:con (?:la )?(?:cuenta|tarjeta) )([\wáéíóúñ ]+?)(?:\s*$|\s+(?:en|por|para)\b)/);
@@ -214,13 +218,21 @@ function parseAccountName(text) {
   return null;
 }
 
-export function parseIntent(raw, categories = DEFAULT_CATEGORIES) {
+interface ParseIntentResult extends ParsedIntent {
+  subcategory?: string | null;
+  confidence?: number;
+  accountName?: string | null;
+}
+
+type ParseIntentReturn = ParseIntentResult | { type: "unknown"; summary: null };
+
+export function parseIntent(raw: string, categories: Category[] = DEFAULT_CATEGORIES): ParseIntentReturn {
   const text = (raw || "").toLowerCase().trim();
   const amount = parseAmount(text);
   const currency = parseCurrency(text);
 
   if (/l[ií]mite/.test(text) && amount != null) {
-    return { type: "set_limit", amount, summary: `Ajustar límite de gasto mensual a ${fmtMoney(amount)}` };
+    return { type: "set_limit", amount, currency, summary: `Ajustar límite de gasto mensual a ${fmtMoney(amount)}` };
   }
 
   if (/transfier|transferencia|transfiere|mueve|mover|pasa\b|pasar\b|mandar?\b|enviar?\b/.test(text) && amount != null) {
@@ -228,8 +240,7 @@ export function parseIntent(raw, categories = DEFAULT_CATEGORIES) {
     const between = text.match(/de (?:la )?(?:cuenta |tarjeta )?["']?([\wáéíóúñ ]+?)["']?\s+a (?:la )?(?:cuenta |tarjeta )?["']?([\wáéíóúñ ]+?)["']?\s*$/);
     return {
       type: scheduled ? "schedule_transfer" : "transfer",
-      amount,
-      currency,
+      amount, currency,
       fromName: between?.[1]?.trim() || null,
       toName: between?.[2]?.trim() || null,
       summary: `${scheduled ? "Programar transferencia" : "Transferir"} ${fmtMoney(amount, currency)}${between ? ` de «${between[1].trim()}» a «${between[2].trim()}»` : ""}`,
@@ -247,8 +258,7 @@ export function parseIntent(raw, categories = DEFAULT_CATEGORIES) {
     const sub = matchSubcategory(description, category, categories);
     return {
       type: isIncome ? "income" : "expense",
-      amount,
-      currency,
+      amount, currency,
       description: description.charAt(0).toUpperCase() + description.slice(1),
       category: isIncome ? "Ingresos" : category,
       subcategory: sub,
@@ -261,7 +271,7 @@ export function parseIntent(raw, categories = DEFAULT_CATEGORIES) {
   return { type: "unknown", summary: null };
 }
 
-function matchSubcategory(description, categoryName, categories) {
+function matchSubcategory(description: string, categoryName: string, categories: Category[]): string | null {
   const cat = categories.find((c) => c.name === categoryName);
   if (!cat?.subcategories?.length) return null;
   const d = (description || "").toLowerCase();
@@ -274,24 +284,26 @@ function matchSubcategory(description, categoryName, categories) {
 // ---------- Fechas ----------
 
 export const DAY_MS = 86_400_000;
-export const todayISO = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
+export const todayISO = (): string => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
 
-export function daysBetween(isoA, isoB) {
-  return Math.floor((new Date(isoB) - new Date(isoA)) / DAY_MS);
+export function daysBetween(isoA: string, isoB: string): number {
+  return Math.floor((new Date(isoB).getTime() - new Date(isoA).getTime()) / DAY_MS);
 }
 
-export function fmtDate(iso) {
+export function fmtDate(iso: string): string {
   return new Date(iso + "T12:00:00").toLocaleDateString("es-ES", { day: "numeric", month: "short" });
 }
 
-export const uid = () => Math.random().toString(36).slice(2, 10);
+export const uid = (): string => Math.random().toString(36).slice(2, 10);
 
 // ---------- Respaldo / exportación ----------
 
 const BACKUP_VERSION = 1;
 
-/** Slice persistente del estado (sin precios/FX en vivo). */
-export function backupPayload(state) {
+export function backupPayload(state: AppState): { app: string; version: number; exportedAt: string; state: Partial<AppState> } {
   const { settings, accounts, assets, transactions, scheduled, categories } = state;
   return {
     app: "mis-finazas",
@@ -301,17 +313,16 @@ export function backupPayload(state) {
   };
 }
 
-/** Valida y extrae el estado de un respaldo subido. Lanza si es inválido. */
-export function parseBackup(text) {
+export function parseBackup(text: string): Partial<AppState> {
   const data = JSON.parse(text);
-  const state = data?.state ?? data; // admite respaldo nuevo o estado plano
+  const state = data?.state ?? data;
   if (!state || typeof state !== "object" || !Array.isArray(state.accounts)) {
     throw new Error("El archivo no es un respaldo válido de Mis finazas.");
   }
   return state;
 }
 
-function downloadBlob(content, filename, type) {
+function downloadBlob(content: string, filename: string, type: string): void {
   const blob = new Blob([content], { type });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -323,24 +334,23 @@ function downloadBlob(content, filename, type) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-const stamp = () => new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+const stamp = (): string => new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
 
-export function downloadBackup(state) {
+export function downloadBackup(state: AppState): void {
   downloadBlob(JSON.stringify(backupPayload(state), null, 2), `mis-finazas-respaldo-${stamp()}.json`, "application/json");
 }
 
 // ---- CSV ----
 
-function csvCell(v) {
+function csvCell(v: unknown): string {
   const s = v == null ? "" : String(v);
   return /[",\n;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
-const csvRow = (cells) => cells.map(csvCell).join(",");
+const csvRow = (cells: unknown[]): string => cells.map(csvCell).join(",");
 
-/** CSV único con todas las secciones (cuentas, movimientos, categorías, activos). */
-export function buildCSV(state) {
-  const acc = (id) => state.accounts.find((a) => a.id === id)?.name || id || "";
-  const out = [];
+export function buildCSV(state: AppState): string {
+  const acc = (id: string): string => state.accounts.find((a) => a.id === id)?.name || id || "";
+  const out: string[] = [];
 
   out.push("# MIS FINAZAS — EXPORTACIÓN COMPLETA");
   out.push(`# Generado: ${new Date().toISOString()}`);
@@ -391,7 +401,6 @@ export function buildCSV(state) {
   return out.join("\n");
 }
 
-export function downloadCSV(state) {
-  // BOM para que Excel reconozca UTF-8 (acentos).
-  downloadBlob("﻿" + buildCSV(state), `mis-finazas-export-${stamp()}.csv`, "text/csv;charset=utf-8");
+export function downloadCSV(state: AppState): void {
+  downloadBlob("\uFEFF" + buildCSV(state), `mis-finazas-export-${stamp()}.csv`, "text/csv;charset=utf-8");
 }

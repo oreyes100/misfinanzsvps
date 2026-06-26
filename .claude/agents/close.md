@@ -72,4 +72,8 @@ RULES:
 - El scorecard es honesto: si overridearon 5 de 5 propuestas, registrar accepted:0 overridden:5
 - Acceptance rate <70% en 3 sesiones consecutivas = problema de contexto insuficiente, no de modelo
 
+TRIGGER EVOLUTION:
+  Leer sessions.jsonl — si la sesión actual completa el ciclo 10 desde el último /evolution, sugerir:
+  "Han pasado ~10 sesiones — ¿ejecuto /evolution para auditar y graduar reglas?"
+
 TERMINATION: Parar tras confirmar git status (o "nothing to commit"). Mostrar solo: build status + acceptance rate + next action #1. No resumir todo lo que hiciste.

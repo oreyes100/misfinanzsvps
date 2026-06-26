@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { monthSpend, useStore } from "../store.jsx";
+import { useStore } from "../store.jsx";
+import { monthSpend } from "../selectors.js";
 import { fmtMoney, parseIntent, todayISO } from "../utils.js";
 import { Btn, Glass, inputCls } from "./UI.jsx";
 

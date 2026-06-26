@@ -1,22 +1,12 @@
-// ---------- Migraciones de estado (módulo puro, sin React) ----------
-// Idempotentes: se aplican al cargar local y al bajar de la nube. Mantener
-// libre de React/DOM para poder testearlas en Node (scripts/test-migrations.mjs).
+// migrations.ts — Migraciones de estado (módulo puro, sin React)
+import type { AppState, Category } from "./types.ts";
+import { DEFAULT_CATEGORIES, uid } from "./utils.ts";
 
-import { DEFAULT_CATEGORIES, uid } from "./utils.js";
+const r2 = (x: number): number => Math.round(x * 100) / 100;
+const byDateDesc = (x: { date: string }, y: { date: string }): number =>
+  x.date < y.date ? 1 : x.date > y.date ? -1 : 0;
 
-const r2 = (x) => Math.round(x * 100) / 100;
-const byDateDesc = (x, y) => (x.date < y.date ? 1 : x.date > y.date ? -1 : 0);
-
-/**
- * Migra categorías de estados antiguos:
- *  - Agrega categorías de sistema nuevas (ej. Impuestos) que falten.
- *  - Rellena `subcategories` y `keywords` desde DEFAULT_CATEGORIES en las
- *    categorías que coinciden por nombre y aún no las tienen. Las subcategorías
- *    son globales (aplican a todas las cuentas); estados guardados antes de que
- *    existieran quedaban sin ellas, por eso no aparecían en el selector.
- *    Solo rellena cuando faltan: respeta personalizaciones del usuario.
- */
-export function migrateCategories(categories) {
+export function migrateCategories(categories: Category[] | undefined): Category[] {
   const cats = Array.isArray(categories) ? categories : DEFAULT_CATEGORIES;
   const byName = new Map(DEFAULT_CATEGORIES.map((c) => [c.name, c]));
   const merged = cats.map((c) => {
@@ -36,13 +26,7 @@ export function migrateCategories(categories) {
   return missing.length ? [...merged, ...missing] : merged;
 }
 
-/**
- * Elimina cargos de ISR mal registrados en SOFIPOs. Regla del proyecto: las
- * SOFIPOs NO pagan ISR; cualquier "Impuesto intereses" en una cuenta sofipo es
- * un error de deploys anteriores. Borra esas transacciones y devuelve el importe
- * al saldo. Idempotente: si no quedan, no hace nada.
- */
-export function stripSofipoISR(state) {
+export function stripSofipoISR(state: AppState): AppState {
   const sofipo = new Set((state.accounts || []).filter((a) => a.type === "sofipo").map((a) => a.id));
   if (!sofipo.size) return state;
 
@@ -51,23 +35,15 @@ export function stripSofipoISR(state) {
   );
   if (!bad.length) return state;
 
-  const refund = {};
-  for (const t of bad) refund[t.accountId] = (refund[t.accountId] || 0) - t.amount; // t.amount<0 → suma al reembolsar
+  const refund: Record<string, number> = {};
+  for (const t of bad) refund[t.accountId] = (refund[t.accountId] || 0) - t.amount;
   const badIds = new Set(bad.map((t) => t.id));
   const accounts = state.accounts.map((a) => (refund[a.id] ? { ...a, balance: r2(a.balance + refund[a.id]) } : a));
   const transactions = state.transactions.filter((t) => !badIds.has(t.id));
   return { ...state, accounts, transactions };
 }
 
-/**
- * Backfill idempotente del ISR faltante en cuentas de INVERSIÓN en pesos (MXN).
- * Las SOFIPOs NO pagan ISR — se excluyen. Por cada transacción de intereses de
- * una cuenta de inversión MXN sin su impuesto pareja (mismo accountId + fecha +
- * descripción esperada), crea el cargo de ISR (0,9 % anual) derivado de la tasa
- * embebida en la descripción y ajusta el saldo. La verificación de existencia
- * evita duplicados aunque corra en cada arranque/pull.
- */
-export function backfillInvestmentISR(state) {
+export function backfillInvestmentISR(state: AppState): AppState {
   const invMXN = new Set(
     (state.accounts || []).filter((a) => a.type === "investment" && a.currency === "MXN").map((a) => a.id)
   );
@@ -79,12 +55,12 @@ export function backfillInvestmentISR(state) {
       .map((t) => `${t.accountId}|${t.date}|${t.description}`)
   );
 
-  const added = [];
-  const balanceDelta = {};
+  const added: AppState["transactions"] = [];
+  const balanceDelta: Record<string, number> = {};
 
   for (const t of state.transactions || []) {
     if (t.category !== "Intereses" || !invMXN.has(t.accountId) || !(t.amount > 0)) continue;
-    const m = /\(([\d.]+)\s*%\s*TAE\)/.exec(t.description || ""); // "… (13.00 % TAE)"
+    const m = /\(([\d.]+)\s*%\s*TAE\)/.exec(t.description || "");
     if (!m) continue;
     const rateFrac = parseFloat(m[1]) / 100;
     if (!(rateFrac > 0)) continue;
@@ -114,25 +90,17 @@ export function backfillInvestmentISR(state) {
   return { ...state, accounts, transactions };
 }
 
-/**
- * Asigna isrRate a cuentas de inversión MXN existentes (pre-migración) para
- * que no pierdan su ISR al activar el modelo per-account. Idempotente: solo
- * añade si no existe el campo.
- */
-function migrateIsrRate(state) {
+function migrateIsrRate(state: AppState): AppState {
   const accounts = (state.accounts || []).map((a) => {
-    if (a.isrRate != null) return a; // ya tiene, saltar
-    // Antes del modelo per-account: las inversiones en MXN pagaban ISR al 0.0524 % anual.
+    if (a.isrRate != null) return a;
     if (a.type === "investment" && a.currency === "MXN") return { ...a, isrRate: 0.000524 };
-    // SOFIPOs y demás no pagaban ISR.
     return { ...a, isrRate: 0 };
   });
   return { ...state, accounts };
 }
 
-/** Migraciones idempotentes aplicadas al cargar local y al bajar de la nube. */
-export function migrate(state) {
-  let s = { ...state, categories: migrateCategories(state.categories) };
+export function migrate(state: AppState): AppState {
+  let s: AppState = { ...state, categories: migrateCategories(state.categories) };
   s = stripSofipoISR(s);
   s = migrateIsrRate(s);
   return s;

@@ -16,10 +16,10 @@ source: Wiki/ + src/components/ + store.jsx
 - *Pendiente*: `Arquitectura-Componentes.md` — Bento Grid, Glassmorphism, Framer Motion patterns
 
 ## 💰 Dominio Financiero
-- *Pendiente*: `Cuentas-Tipos.md` — checking/savings/deposit, TAE, accrual daily/monthly
-- *Pendiente*: `Multi-Moneda.md` — EUR/USD/GBP/MXN + BTC/ETH, FX simulado, conversión transferencias
-- *Pendiente*: `Portfolio-Multiactivo.md` — Crypto, Gold (€/g), Real Estate, Depreciating assets
-- *Pendiente*: `Intereses-Automaticos.md` — accrueInterest, daily/monthly, lastAccrual tracking
+- [[Cuentas-Tipos]] — checking/savings/deposit, TAE, accrual daily/monthly, capped accounts
+- [[Multi-Moneda]] — EUR/USD/GBP/MXN + BTC/ETH, FX simulado, conversión transferencias
+- [[Portfolio-Multiactivo]] — Crypto, Gold (€/g), Real Estate, Depreciating assets
+- [[Intereses-Automaticos]] — accrueInterest, daily/monthly, lastAccrual tracking, capped model
 
 ## 🤖 IA Integrada
 - [[MCP-Config]] — Configuración MCP (Filesystem, GitHub, Context7, Playwright)

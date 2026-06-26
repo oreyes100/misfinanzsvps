@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useReducer,
 import { API_BASE, BASE_FX, DAY_MS, DEFAULT_CATEGORIES, categorize, todayISO, uid } from "./utils.js";
 import { accrueInterest } from "./interest.js";
 import { migrate } from "./migrations.js";
+import useFX from "./useFX.js";
 
 export { accrueInterest };
 
@@ -63,44 +64,45 @@ const SEED = {
     GOLD: seedHistory(68.4, 48, 0.005),
   },
   goldPriceEUR: 68.4, // €/gramo
+  _syncVersion: 0,
 };
 
 // ---------- Reducer ----------
 
 function reducer(state, action) {
+  const skipVersion = ["hydrate", "update_fx", "accrue"];
+  const result = innerReducer(state, action);
+  if (result !== state && !skipVersion.includes(action.type)) {
+    return { ...result, _syncVersion: (result._syncVersion || 0) + 1 };
+  }
+  return result;
+}
+
+function innerReducer(state, action) {
   switch (action.type) {
     case "hydrate":
       return action.state;
 
-    case "tick_prices": {
-      // Simulación de mercado en tiempo real (paseo aleatorio suave).
-      const jitter = (v, pct) => v * (1 + (Math.random() - 0.5) * pct);
-      const fx = {
-        ...state.fx,
-        USD: jitter(state.fx.USD, 0.002),
-        GBP: jitter(state.fx.GBP, 0.002),
-        MXN: jitter(state.fx.MXN, 0.003),
-        BTC: jitter(state.fx.BTC, 0.012),
-        ETH: jitter(state.fx.ETH, 0.014),
-      };
-      const goldPriceEUR = jitter(state.goldPriceEUR, 0.004);
+    case "update_fx": {
+      const { fx, priceHistory } = action;
       const push = (arr, v) => [...arr.slice(-59), v];
+      const goldPriceEUR = state.goldPriceEUR;
       return {
         ...state,
         fx,
         goldPriceEUR,
-        priceHistory: {
-          BTC: push(state.priceHistory.BTC, fx.BTC),
-          ETH: push(state.priceHistory.ETH, fx.ETH),
-          GOLD: push(state.priceHistory.GOLD, goldPriceEUR),
-        },
+        priceHistory: priceHistory ? {
+          BTC: push(state.priceHistory.BTC, priceHistory.BTC ?? state.fx.BTC),
+          ETH: push(state.priceHistory.ETH, priceHistory.ETH ?? state.fx.ETH),
+          GOLD: "GOLD" in priceHistory ? push(state.priceHistory.GOLD, priceHistory.GOLD) : state.priceHistory.GOLD,
+        } : state.priceHistory,
       };
     }
 
     case "add_transaction": {
       const t = action.tx;
       const cat = t.category || categorize(t.description, state.categories).category;
-      const tx = { id: uid(), date: t.date || todayISO(), ...t, category: cat };
+      const tx = { id: uid(), date: t.date || todayISO(), _updatedAt: Date.now(), ...t, category: cat };
       const accounts = state.accounts.map((a) =>
         a.id === tx.accountId ? { ...a, balance: Math.round((a.balance + tx.amount) * 100) / 100 } : a
       );
@@ -157,7 +159,7 @@ function reducer(state, action) {
     }
 
     case "schedule_transfer":
-      return { ...state, scheduled: [...state.scheduled, { id: uid(), ...action.item }] };
+      return { ...state, scheduled: [...state.scheduled, { id: uid(), _updatedAt: Date.now(), ...action.item }] };
 
     case "set_limit":
       return { ...state, settings: { ...state.settings, spendLimit: action.amount } };
@@ -180,7 +182,7 @@ function reducer(state, action) {
 
     case "add_account": {
       const today = todayISO();
-      const account = { id: uid(), lastAccrual: today, ...action.account };
+      const account = { id: uid(), lastAccrual: today, _updatedAt: Date.now(), ...action.account };
       // Cuenta con tope: arrancar relojes y contadores de cada tramo.
       if (account.capped) {
         account.lastAccrual1 = account.lastAccrual1 || today;
@@ -215,7 +217,7 @@ function reducer(state, action) {
       return { ...state, accounts: state.accounts.filter((a) => a.id !== action.accountId) };
 
     case "add_category":
-      return { ...state, categories: [...state.categories, { id: uid(), ...action.category }] };
+      return { ...state, categories: [...state.categories, { id: uid(), _updatedAt: Date.now(), ...action.category }] };
 
     case "update_category": {
       const old = state.categories.find((c) => c.id === action.id);
@@ -242,7 +244,7 @@ function reducer(state, action) {
       return { ...state, assets: { ...state.assets, gold: { ...state.assets.gold, ...action.patch } } };
 
     case "add_crypto": {
-      const c = { id: uid(), ...action.crypto };
+      const c = { id: uid(), _updatedAt: Date.now(), ...action.crypto };
       return { ...state, assets: { ...state.assets, crypto: [...state.assets.crypto, c] } };
     }
 
@@ -255,7 +257,7 @@ function reducer(state, action) {
       return { ...state, assets: { ...state.assets, crypto: state.assets.crypto.filter((c) => c.id !== action.id) } };
 
     case "add_realestate": {
-      const item = { id: uid(), source: "Valoración manual", ...action.item };
+      const item = { id: uid(), source: "Valoración manual", _updatedAt: Date.now(), ...action.item };
       let realEstate = [...state.assets.realEstate, item];
       // Si es el primero, queda destacado por defecto.
       if (!realEstate.some((r) => r.featured)) realEstate = realEstate.map((r, i) => ({ ...r, featured: i === realEstate.length - 1 }));
@@ -284,7 +286,7 @@ function reducer(state, action) {
     }
 
     case "add_depreciating": {
-      const item = { id: uid(), kind: "auto", depRate: 0.15, ...action.item };
+      const item = { id: uid(), kind: "auto", _updatedAt: Date.now(), depRate: 0.15, ...action.item };
       return { ...state, assets: { ...state.assets, depreciating: [...(state.assets.depreciating || []), item] } };
     }
     case "update_depreciating": {
@@ -336,17 +338,32 @@ function reducer(state, action) {
 
     case "restore": {
       const s = action.state || {};
+      function mergeByID(local, cloud, key = "id") {
+        if (!Array.isArray(cloud) || !cloud.length) return local;
+        if (!Array.isArray(local)) return cloud;
+        const map = new Map(local.map((x) => [x[key], x]));
+        let changed = false;
+        for (const item of cloud) {
+          const existing = map.get(item[key]);
+          if (!existing || (item._updatedAt || 0) > (existing._updatedAt || 0)) {
+            map.set(item[key], item);
+            changed = true;
+          }
+        }
+        return changed ? [...map.values()] : local;
+      }
       return accrueInterest({
         ...state,
+        _syncVersion: Math.max(state._syncVersion, s._syncVersion || 0),
         settings: { ...state.settings, ...(s.settings || {}) },
-        accounts: Array.isArray(s.accounts) ? s.accounts : state.accounts,
-        assets: s.assets || state.assets,
-        transactions: Array.isArray(s.transactions) ? s.transactions : state.transactions,
-        scheduled: Array.isArray(s.scheduled) ? s.scheduled : state.scheduled,
-        categories: Array.isArray(s.categories) && s.categories.length ? s.categories : state.categories,
-        transferAliases: s.transferAliases || state.transferAliases,
-        categoryAliases: s.categoryAliases || state.categoryAliases,
-        statementPatterns: s.statementPatterns || state.statementPatterns,
+        accounts: mergeByID(state.accounts, s.accounts),
+        transactions: mergeByID(state.transactions, s.transactions),
+        scheduled: mergeByID(state.scheduled, s.scheduled),
+        categories: mergeByID(state.categories, s.categories, "id"),
+        assets: s.assets ? { ...state.assets, ...s.assets, crypto: mergeByID(state.assets.crypto, s.assets.crypto, "id"), realEstate: mergeByID(state.assets.realEstate, s.assets.realEstate, "id"), depreciating: mergeByID(state.assets.depreciating || [], s.assets.depreciating || [], "id") } : state.assets,
+        transferAliases: { ...state.transferAliases, ...(s.transferAliases || {}) },
+        categoryAliases: { ...state.categoryAliases, ...(s.categoryAliases || {}) },
+        statementPatterns: { ...state.statementPatterns, ...(s.statementPatterns || {}) },
       });
     }
 
@@ -379,8 +396,8 @@ const SYNC_KEY = "mis-finazas-sync-id";
 
 /** Partes del estado que viajan a la nube (precios/FX en vivo se quedan fuera). */
 function syncableSlice(state) {
-  const { settings, accounts, assets, transactions, scheduled, categories, transferAliases, categoryAliases, statementPatterns } = state;
-  return { settings, accounts, assets, transactions, scheduled, categories, transferAliases, categoryAliases, statementPatterns };
+  const { settings, accounts, assets, transactions, scheduled, categories, transferAliases, categoryAliases, statementPatterns, _syncVersion } = state;
+  return { settings, accounts, assets, transactions, scheduled, categories, transferAliases, categoryAliases, statementPatterns, _syncVersion };
 }
 
 export function StoreProvider({ children }) {
@@ -398,7 +415,7 @@ export function StoreProvider({ children }) {
   // "ayer guardé la tasa escalonada y hoy no estaba".
   const cloudReadyRef = useRef(!syncId);
   const syncable = useMemo(() => JSON.stringify(syncableSlice(state)), [
-    state.settings, state.accounts, state.assets, state.transactions, state.scheduled, state.categories, state.transferAliases, state.categoryAliases,
+    state.settings, state.accounts, state.assets, state.transactions, state.scheduled, state.categories, state.transferAliases, state.categoryAliases, state._syncVersion,
   ]);
   const syncableRef = useRef(syncable);
   syncableRef.current = syncable;
@@ -468,8 +485,8 @@ export function StoreProvider({ children }) {
             skipPushRef.current = true;
             cloudReadyRef.current = true; // pull OK → ya es seguro subir cambios.
             dispatch({
-              type: "hydrate",
-              state: migrate(accrueInterest({ ...SEED, ...data.state, fx: { ...BASE_FX, ...state.fx }, priceHistory: state.priceHistory })),
+              type: "restore",
+              state: migrate(accrueInterest(data.state)),
             });
             setSyncStatus("synced");
           } else {
@@ -523,23 +540,28 @@ export function StoreProvider({ children }) {
     },
   }), [syncId, syncStatus]);
 
-  // Persistencia local
+  // Persistencia local con debounce (1.5s), clave estable que excluye datos en vivo
+  const stableSave = useMemo(() => {
+    const { priceHistory, fx, goldPriceEUR, ...rest } = state;
+    return JSON.stringify(rest);
+  }, [state.settings, state.accounts, state.assets, state.transactions, state.scheduled, state.categories, state.transferAliases, state.categoryAliases, state.statementPatterns, state._syncVersion]);
+  const saveTimerRef = useRef(null);
   useEffect(() => {
-    const { priceHistory, ...rest } = state;
-    localStorage.setItem(KEY, JSON.stringify(rest));
-  }, [state]);
-
-  // Mercado "en tiempo real"
-  useEffect(() => {
-    const t = setInterval(() => dispatch({ type: "tick_prices" }), 4000);
-    return () => clearInterval(t);
-  }, []);
+    clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => localStorage.setItem(KEY, stableSave), 1500);
+    return () => clearTimeout(saveTimerRef.current);
+  }, [stableSave]);
 
   // Devengo de intereses también con la app abierta (detecta el cambio de día).
   useEffect(() => {
     const t = setInterval(() => dispatch({ type: "accrue" }), 60_000);
     return () => clearInterval(t);
   }, []);
+
+  // Tasas de cambio reales (cada 30 min) — reemplaza la simulación tick_prices
+  const fxRef = useRef(state.fx);
+  fxRef.current = state.fx;
+  useFX(dispatch, fxRef);
 
   const value = useMemo(() => ({ state, dispatch, sync }), [state, sync]);
   return <StoreCtx.Provider value={value}>{children}</StoreCtx.Provider>;
@@ -551,52 +573,4 @@ export function useStore() {
   return ctx;
 }
 
-// ---------- Selectores ----------
 
-export function netWorthEUR(state) {
-  const { accounts, assets, fx, goldPriceEUR } = state;
-  // Préstamo de auto: deuda que NO resta del patrimonio neto total; se reporta aparte.
-  const autoLoan = accounts
-    .filter((a) => a.type === "auto_loan")
-    .reduce((s, a) => s + a.balance * (fx[a.currency] ?? 1), 0); // negativo (deuda)
-  const cash = accounts
-    .filter((a) => a.type !== "auto_loan")
-    .reduce((s, a) => s + a.balance * (fx[a.currency] ?? 1), 0);
-  const crypto = assets.crypto.reduce((s, c) => s + c.qty * (fx[c.symbol] ?? 0), 0);
-  const gold = assets.gold.grams * goldPriceEUR;
-  const re = assets.realEstate.reduce((s, r) => s + r.valueEUR, 0);
-  const depreciating = (assets.depreciating || []).reduce((s, d) => s + d.valueEUR, 0);
-  return { cash, crypto, gold, realEstate: re, depreciating, autoLoan, total: cash + crypto + gold + re + depreciating };
-}
-
-export function monthSpend(state) {
-  const month = todayISO().slice(0, 7);
-  return state.transactions
-    .filter((t) => t.date.startsWith(month) && t.amount < 0 && t.category !== "Transferencia")
-    .reduce((s, t) => s + Math.abs(t.amount) * (state.fx[t.currency] ?? 1), 0);
-}
-
-// ---------- Tarjetas de crédito: ciclo y pago pendiente ----------
-
-/** Identificador del ciclo de pago actual (AAAA-MM del mes de la fecha de pago). */
-export function currentCycle(payDay, ref = new Date()) {
-  const d = new Date(ref);
-  // Si aún no llega el día de pago de este mes, el ciclo "vigente" es el de este mes.
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-}
-
-/** Devuelve cuentas de crédito con pago pendiente (vencido y no marcado pagado). */
-export function pendingCardPayments(state, ref = new Date()) {
-  const today = new Date(ref);
-  const dom = today.getDate();
-  return state.accounts
-    .filter((a) => a.type === "credit" && a.balance < 0 && a.payDay)
-    .map((a) => {
-      const cycle = currentCycle(a.payDay, today);
-      const paid = a.lastPaidCycle === cycle;
-      const due = dom >= a.payDay; // ya pasó (o es) el día límite este mes
-      const daysToDue = a.payDay - dom;
-      return { account: a, cycle, paid, due, daysToDue, debt: Math.abs(a.balance) };
-    })
-    .filter((p) => !p.paid && (p.due || p.daysToDue <= 5));
-}

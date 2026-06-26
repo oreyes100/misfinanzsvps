@@ -1,15 +1,35 @@
 import { get, put } from "@vercel/blob";
 
-// Sincronización de estado por código único (bearer-id): el código actúa como
-// credencial — solo quien lo conoce puede leer/escribir su copia.
 const ID_RE = /^[a-z0-9-]{16,64}$/i;
 const MAX_BYTES = 1_000_000;
 
+function allowedOrigin(req) {
+  const origin = req.headers.origin;
+  if (!origin) return "";
+  const allowed = (process.env.ALLOWED_ORIGINS || "https://mis-finazas-gold.vercel.app").split(",").map((s) => s.trim());
+  if (allowed.includes(origin)) return origin;
+  if (origin.startsWith("http://localhost:") || origin.startsWith("capacitor://localhost")) return origin;
+  return "";
+}
+
+function cors(res, origin) {
+  if (origin) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    res.setHeader("Vary", "Origin");
+  }
+}
+
 export default async function handler(req, res) {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  const origin = allowedOrigin(req);
+  cors(res, origin);
+
   if (req.method === "OPTIONS") return res.status(204).end();
+
+  if (!origin) {
+    return res.status(403).json({ error: "Origen no autorizado." });
+  }
 
   const id = String(req.query.id || "");
   if (!ID_RE.test(id)) {
@@ -19,10 +39,6 @@ export default async function handler(req, res) {
 
   if (req.method === "GET") {
     try {
-      // useCache:false evita lecturas obsoletas del CDN (incluidos 404 previos
-      // a la creación), que harían que un dispositivo pisara los datos buenos.
-      // get acepta el pathname directamente: no hace falta construir la URL del
-      // store (parsear el token era frágil y podía romper la lectura).
       const result = await get(key, { access: "private", useCache: false });
       if (!result) return res.status(200).json({ found: false });
       const data = JSON.parse(await new Response(result.stream).text());

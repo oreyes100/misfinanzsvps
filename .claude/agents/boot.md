@@ -70,5 +70,6 @@ RULES:
 - Si build falla: no proponer cambios al código hasta entender el error
 - Si CONTEXTO.md no existe: crearlo con estado inicial antes de continuar
 - Consultar vault solo cuando hay gap no cubierto por CLAUDE.md o .claude/rules/
+- Si la sesión anterior superó ~15 mensajes: sugerir checkpoint (resumir y reiniciar hilo)
 
 TERMINATION: Parar tras presentar Top Of Mind y pregunta de confirmación. No resumir el stack. No explicar qué hiciste en el boot.

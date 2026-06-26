@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { AnimatePresence } from "framer-motion";
-import { monthSpend, netWorthEUR, pendingCardPayments, useStore } from "../store.jsx";
+import { useStore } from "../store.jsx";
+import { monthSpend, netWorthEUR, pendingCardPayments } from "../selectors.js";
 import { ACCOUNT_TYPES, LIABILITY_ACCOUNT_TYPES, cardOn, catColor, convert, fmtMoney, fmtPct, groupedAccounts, sortedAccounts } from "../utils.js";
 import { BarChart, LineChart, PieChart } from "./Charts.jsx";
 import { TransactionModal, TransferModal } from "./Modals.jsx";
