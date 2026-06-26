@@ -5,8 +5,8 @@
 ---
 
 ## 📅 Última Actualización
-**Fecha**: 2026-06-12
-**Sesión**: Inicialización Fase 1 (fundación agentica)
+**Fecha**: 2026-06-25
+**Sesión**: Fase 2 — TypeScript, tests, seguridad, FX real
 
 ---
 
@@ -21,48 +21,57 @@
 ---
 
 ## ✅ Qué se Completó (Esta Sesión)
-1. Creado `CLAUDE.md` como BIOS del proyecto (invariantes, stack, restricciones, glosario)
-2. Creadas skills atómicas: `.claude/agents/boot.md` y `.claude/agents/close.md`
-3. Copiado y adaptado `scripts/vault_lint.py` — **pasa ✅** (3 notas Wiki + 1 MOC + 1 MCP-Config, 0 issues)
-4. Estructura PMF creada: `.claude/{rules,memory,agents}/`, `Wiki/`, `MOCs/`, `Sources/Inboxes/`, `Logs/`
-5. **Wiki atómica inicial (4 notas)**: `Arquitectura-Estado.md`, `Sync-Cloud.md`, `MCP-Config.md`, `MOC-Mis-Finanzas.md` — todas con frontmatter, ≥40 palabras, "Fuente:", enlaces bidireccionales
-6. **Build verificado** — `npm run build` ✅ (568ms)
+1. **TypeScript**: `reducer.ts`, `utils.ts`, `interest.ts`, `migrations.ts`, `types.ts` — strict mode, JS deleted
+2. **Vitest**: 103 tests (47 reducer + 39 utils + 17 interest), `npm test` ~130ms
+3. **Seguridad**: PBKDF2+salt (100k iter), setupAdmin en first boot, CORS restringido, API users sanitizada
+4. **FX real**: `useFX` hook (Frankfurter + Coingecko cada 30 min), `tick_prices` eliminado
+5. **Sync conflict resolution**: `mergeByID()` con `_updatedAt`, `_syncVersion` tracking
+6. **Perf**: localStorage debounce 1.5s, selectors extraídos (Fast Refresh), React.lazy(Assistant+Auditoria) ~32kB
+7. **Wiki actualizada**: Arquitectura-Estado.md, +4 nuevas notas (Cuentas-Tipos, Multi-Moneda, Portfolio-Multiactivo, Intereses-Automaticos)
+8. **Base conocimiento**: CLAUDE.md (TS/Vitest/FX/seguridad), cost-optimization.md, `/wiki` agent
+9. **Build + Deploy**: `npm run build` ✅ (958ms), Git push → Vercel prod aliased
 
 ---
 
 ## 🔄 Decisiones Técnicas Tomadas
 | Decisión | Razón | Alternativa Desestimada |
 |----------|-------|------------------------|
-| PMF 4 capas en `.claude/` | Memoria persistente filesystem, auditable, portable | Memoria solo en contexto (no persiste) |
-| Skills atómicas (ATOMS) para boot/close | ~100% deterministas, componibles | Skill compuesto monolítica |
-| Vault lint adaptado a estructura proyecto | Calidad knowledge base desde día 1 | Sin lint (deuda técnica) |
-| TERMINATION obligatorio en skills | Evita expansión output 3-4x | Sin límite (outputs verbosos) |
-| Wiki atómica + MOC desde día 1 | Contexto navegable, token-eficiente, lintable | Solo código + README (contexto opaco) |
-| MCP Config documentada (Filesystem, GitHub, Context7) | Capa 4 Stack lista para activar | Descubrir en caliente (pérdida tiempo) |
+| TypeScript en módulos puros (no JSX) | React 19 + Vite 6 manejan JSX nativamente | TSX en componentes (fricción build) |
+| `useFX` con APIs reales vs tick_prices | Random walk no aporta valor real | Simulación 4s (random walk sin señal) |
+| `mergeByID()` con `_updatedAt` | Resolución correcta de conflictos sync | Last-write-wins bruto (pierde datos) |
+| PBKDF2+salt en cliente (sin backend) | Única opción para app 100% frontend | Enviar hash a server (sin servidor propio) |
+| Vitest vs Jest | 10-20x más rápido, mismo API, ESM nativo | Jest (config compleja, lento) |
+| localStorage debounce + clave estable | Evita writes innecesarios (FX/priceHistory) | Escribir en cada cambio de estado |
+| `/wiki` agent skill | Distilación a demanda, token-eficiente | Wiki batch monolítica |
 
 ---
 
 ## ⏭️ Next Actions (Priorizadas, máx 3)
-1. **Crear skills moleculares** — `/review-code` (fetch-data + validate + reasoning-gate), `/research-and-summarize`
-2. **Completar Wiki pendiente** — `IA-Asistente.md`, `Multi-Moneda.md`, `Cuentas-Tipos.md`, `Portfolio-Multiactivo.md`
-3. **Activar MCP Filesystem + GitHub + Context7** — Probar en próxima sesión con `/boot`
+1. **API oro real** — reemplazar `goldPriceEUR` fijo (68.4 €/g) con API real (e.g. gold-api.com)
+2. **Tests de integración sync cloud** — pull/push/conflict en CI
+3. **Migrar categorización IA** — de reglas a embedding semántico + few-shot
 
 ---
 
 ## 🧠 Top Of Mind (para próxima sesión)
-1. **Optimizar `tick_prices` (4s)** — Evaluar Web Workers para no bloquear main thread
-2. **Migrar categorización IA** — De reglas (utils.js) a embedding semántico + few-shot
-3. **Tests unitarios reducer** — Cobertura: `accrueInterest`, `transfer` (FX conversion), `tick_prices`
+1. **API oro real** — goldPriceEUR fijo → API real
+2. **Test de sync cloud** — integración pull/push/conflict
+3. **Categorización IA semántica** — embedding/local LLM
 
 ---
 
 ## 📚 Referencias Rápidas
 - `CLAUDE.md` — BIOS completa (invariantas, stack, restricciones, glosario)
-- `src/store.jsx` — Estado global (548 líneas, 30+ action types)
-- `src/utils.js` — FX, categorización IA, parser NL, formato
-- `src/components/Assistant.jsx` — Chat agéntico human-in-the-loop + voz + OCR
-- `api/sync.js` — Vercel Function + Blob sync (GET/POST con UUID)
-- `Wiki/Arquitectura-Estado.md` — Estado global detallado + reducer actions
+- `src/store.jsx` — Provider con useFX, debounced localStorage, sync mergeByID
+- `src/reducer.ts` — 30+ action types, `_syncVersion` wrapper, mergeByID
+- `src/utils.ts` — FX, categorización IA, parser NL, formato
+- `src/useFX.js` — Tasas reales Frankfurter + Coingecko (reemplaza tick_prices)
+- `src/selectors.js` — netWorthEUR, monthSpend, currentCycle, pendingCardPayments
+- `src/auth.js` — PBKDF2+salt, setupAdmin, migrate SHA-256 legacy
+- `src/types.ts` — Interfaces del dominio
+- `api/sync.js` — CORS restringido, merge por ID, _syncVersion
+- `api/users.js` — CORS restringido, GET sanitizado
+- `Wiki/Arquitectura-Estado.md` — Estado global + reducer actions + useFX
 - `Wiki/Sync-Cloud.md` — Sync Vercel Blob + UUID + syncableSlice
-- `Wiki/MCP-Config.md` — Configuración MCP (Filesystem, GitHub, Context7, Playwright)
+- `Wiki/MCP-Config.md` — Configuración MCP
 - `MOCs/MOC-Mis-Finanzas.md` — Navegación temática Wiki ↔ src/
