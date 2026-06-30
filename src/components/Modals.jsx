@@ -43,6 +43,7 @@ export function TransferModal({ onClose, preset, tabs }) {
   const [toId, setToId] = useState(preset?.toId || state.accounts[1]?.id);
   const [amount, setAmount] = useState(preset?.amount || "");
   const [date, setDate] = useState(preset?.date || todayISO());
+  const [notes, setNotes] = useState(preset?.notes || "");
   const [step, setStep] = useState("form"); // form | confirm | done
   const [error, setError] = useState("");
   const [ocr, setOcr] = useState(null); // { busy, progress, fromHint, toHint, note }
@@ -103,7 +104,7 @@ export function TransferModal({ onClose, preset, tabs }) {
   };
 
   const execute = () => {
-    dispatch({ type: "transfer", fromId, toId, amount: amt, date });
+    dispatch({ type: "transfer", fromId, toId, amount: amt, date, notes: notes.trim() || undefined });
     // Aprender: asociar el texto OCR de origen/destino a las cuentas elegidas.
     const aliases = {};
     if (ocrHints.current.fromHint) aliases[aliasNorm(ocrHints.current.fromHint)] = fromId;
@@ -165,6 +166,14 @@ export function TransferModal({ onClose, preset, tabs }) {
           {from && to && from.currency !== to.currency && (
             <p className="text-xs text-ink-dim">Conversión en tiempo real: recibirás ≈ {fmtMoney(credited, to.currency)}</p>
           )}
+          <Field label="Notas (opcional — de qué o por qué)">
+            <textarea
+              className={`${inputCls} min-h-[52px] resize-y`}
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Ej: pago alquiler, devolución préstamo, regalo cumpleaños..."
+            />
+          </Field>
           {error && <p role="alert" className="text-sm text-loss">{error}</p>}
           <div className="flex justify-end gap-2 pt-1">
             <Btn variant="ghost" onClick={onClose}>Cancelar</Btn>
@@ -183,6 +192,7 @@ export function TransferModal({ onClose, preset, tabs }) {
               <div className="flex justify-between"><dt className="text-ink-dim">Envías</dt><dd className="font-semibold">{fmtMoney(amt, from.currency)}</dd></div>
               <div className="flex justify-between"><dt className="text-ink-dim">Destino recibe</dt><dd className="font-semibold">{fmtMoney(credited, to.currency)}</dd></div>
               <div className="flex justify-between"><dt className="text-ink-dim">Fecha</dt><dd>{date}</dd></div>
+              {notes.trim() && <div className="flex justify-between"><dt className="text-ink-dim">Notas</dt><dd className="max-w-[55%] text-right break-words">{notes.trim()}</dd></div>}
             </dl>
           </div>
           <p className="text-xs text-ink-dim">Esta acción se registra al instante y queda reflejada en ambas cuentas.</p>
@@ -218,6 +228,7 @@ export function TransactionModal({ onClose, preset, tx }) {
   const [accountId, setAccountId] = useState(tx?.accountId || state.accounts[0]?.id);
   const [catOverride, setCatOverride] = useState(tx?.category || "");
   const [subcat, setSubcat] = useState(tx?.subcategory || "");
+  const [notes, setNotes] = useState(tx?.notes || preset?.notes || "");
   const [ocr, setOcr] = useState(null); // { busy, progress, ai, note }
   const [receipt, setReceipt] = useState(null); // { merchant, total, date, items } tras escanear
   const [statement, setStatement] = useState(null); // { merchant, rows } captura bancaria con varios movimientos
@@ -404,6 +415,7 @@ export function TransactionModal({ onClose, preset, tx }) {
       category,
       subcategory: subcat || null,
       date,
+      notes: notes.trim() || undefined,
     };
     if (category === "Transferencia" && counterpartId) payload.counterpartId = counterpartId;
     if (isEdit) dispatch({ type: "update_transaction", id: tx.id, patch: payload });

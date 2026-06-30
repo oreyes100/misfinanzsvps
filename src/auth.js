@@ -71,7 +71,17 @@ export async function pushCloudUsers(users) {
 function mergeUsers(local, cloud) {
   const byName = new Map();
   for (const u of local) byName.set(u.username.toLowerCase().trim(), u);
-  for (const u of cloud) byName.set(u.username.toLowerCase().trim(), u);
+  for (const u of cloud) {
+    const key = u.username.toLowerCase().trim();
+    const existing = byName.get(key);
+    // Cloud responses are sanitized (no hash/salt) for security.
+    // Preserve credentials from local version if we have them.
+    if (existing && existing.hash && existing.salt) {
+      byName.set(key, { ...u, hash: existing.hash, salt: existing.salt });
+    } else {
+      byName.set(key, u);
+    }
+  }
   return [...byName.values()];
 }
 

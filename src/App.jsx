@@ -27,10 +27,19 @@ const VIEWS = {
 };
 
 function Shell({ session, onLogout }) {
-  const { state } = useStore();
+  const { state, sync } = useStore();
   const firstTab = Object.keys(VIEWS).find((id) => canAccess(session, id)) ?? "inicio";
   const [tab, setTab] = useState(firstTab);
   const View = canAccess(session, tab) ? VIEWS[tab] : null;
+
+  const syncIcon = !sync?.id ? '' :
+    sync.status === 'synced' ? '☁️' :
+    sync.status === 'pulling' ? '↓' :
+    sync.status === 'pushing' ? '↑' :
+    sync.status === 'error' ? '⚠' : '☁';
+
+  const syncColor = sync?.status === 'synced' ? 'text-gain' :
+    sync?.status === 'error' ? 'text-loss' : 'text-ink-dim';
 
   return (
     <div className="mx-auto max-w-5xl px-4 pb-28 pt-5">
@@ -47,6 +56,14 @@ function Shell({ session, onLogout }) {
         </h1>
         <div className="flex items-center gap-2">
           <SecurityBadge biometric={hasBiometricCredential()} />
+          {sync?.id && (
+            <span 
+              className={`text-[10px] px-1.5 py-0.5 rounded bg-white/10 ${syncColor} font-mono tabular-nums`}
+              title={`Sync: ${sync.status} • ${sync.id}`}
+            >
+              {syncIcon} {sync.status}
+            </span>
+          )}
           <button
             type="button"
             onClick={onLogout}

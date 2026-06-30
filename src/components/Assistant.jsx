@@ -137,7 +137,9 @@ export default function Assistant() {
           logAction(intent, "preflight_fail", "same account");
           return;
         }
-        dispatch({ type: "schedule_transfer", item: { fromId: from.id, toId: to.id, amount: intent.amount, when: "próximo día hábil", created: todayISO() } });
+        const item = { fromId: from.id, toId: to.id, amount: intent.amount, when: "próximo día hábil", created: todayISO() };
+        if (intent.description) item.notes = intent.description; // usar descripción como nota si viene del parser
+        dispatch({ type: "schedule_transfer", item });
         push({ role: "ai", text: `✓ Transferencia programada: ${fmtMoney(intent.amount)} de ${from.name} a ${to.name}. La verás en Ajustes → Programadas.`, ok: true });
         logAction(intent, "ok", `scheduled:${from.id}->${to.id}`);
         break;

@@ -137,7 +137,7 @@ function innerReducer(state, action) {
     }
 
     case "transfer": {
-      const { fromId, toId, amount } = action;
+      const { fromId, toId, amount, notes } = action;
       const from = state.accounts.find((a) => a.id === fromId);
       const to = state.accounts.find((a) => a.id === toId);
       if (!from || !to || amount <= 0) return state;
@@ -146,14 +146,15 @@ function innerReducer(state, action) {
         ? amount
         : (amount * state.fx[from.currency]) / state.fx[to.currency];
       const date = action.date || todayISO();
+      const n = notes ? String(notes).trim() : undefined;
       const accounts = state.accounts.map((a) => {
         if (a.id === fromId) return { ...a, balance: Math.round((a.balance - amount) * 100) / 100 };
         if (a.id === toId) return { ...a, balance: Math.round((a.balance + credited) * 100) / 100 };
         return a;
       });
       const txs = [
-        { id: uid(), date, description: `Transferencia a ${to.name}`, amount: -amount, currency: from.currency, category: "Transferencia", accountId: fromId, counterpartId: toId },
-        { id: uid(), date, description: `Transferencia desde ${from.name}`, amount: Math.round(credited * 100) / 100, currency: to.currency, category: "Transferencia", accountId: toId, counterpartId: fromId },
+        { id: uid(), date, description: `Transferencia a ${to.name}`, amount: -amount, currency: from.currency, category: "Transferencia", accountId: fromId, counterpartId: toId, ...(n ? { notes: n } : {}) },
+        { id: uid(), date, description: `Transferencia desde ${from.name}`, amount: Math.round(credited * 100) / 100, currency: to.currency, category: "Transferencia", accountId: toId, counterpartId: fromId, ...(n ? { notes: n } : {}) },
       ];
       return { ...state, accounts, transactions: [...txs, ...state.transactions] };
     }
@@ -409,6 +410,13 @@ export function StoreProvider({ children }) {
   const [syncRetry, setSyncRetry] = useState(0);
   const pullingRef = useRef(false);
   const skipPushRef = useRef(false);
+
+  const saveLocal = () => {
+    try {
+      const { priceHistory, fx, goldPriceEUR, ...rest } = state;
+      localStorage.setItem(KEY, JSON.stringify(rest));
+    } catch {}
+  };
   // Bloquea CUALQUIER push hasta que el primer pull se resuelva con éxito. Sin
   // esto, abrir la app con un localStorage viejo (p. ej. la APK del día anterior)
   // podía subir datos rancios y machacar la config buena de la nube — por eso
@@ -428,7 +436,7 @@ export function StoreProvider({ children }) {
     const r = await fetch(`${API_BASE}/api/sync?id=${encodeURIComponent(id)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: `{"state":${snapshot}}`,
+      body: JSON.stringify({ state: JSON.parse(snapshot) }),
     });
     if (!r.ok) throw new Error(`sync push ${r.status}`);
     lastPushedRef.current = snapshot;
@@ -442,16 +450,17 @@ export function StoreProvider({ children }) {
   useEffect(() => {
     if (!syncId) return;
     const flush = () => {
-      if (pullingRef.current || !cloudReadyRef.current) return;
+      if (pullingRef.current) return;
       if (syncableRef.current === lastPushedRef.current) return;
       try {
         fetch(`${API_BASE}/api/sync?id=${encodeURIComponent(syncId)}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: `{"state":${syncableRef.current}}`,
+          body: JSON.stringify({ state: JSON.parse(syncableRef.current) }),
           keepalive: true,
         });
         lastPushedRef.current = syncableRef.current;
+        saveLocal();
       } catch { /* best-effort */ }
     };
     const onHide = () => { if (document.visibilityState === "hidden") flush(); };
@@ -473,9 +482,11 @@ export function StoreProvider({ children }) {
         setSyncStatus("pulling");
         try {
           const controller = new AbortController();
-          const id = setTimeout(() => controller.abort(), 8000);
-          const r = await fetch(`${API_BASE}/api/sync?id=${encodeURIComponent(syncId)}`, {
+          const id = setTimeout(() => controller.abort(), 15000); // timeout más generoso
+          const url = `${API_BASE}/api/sync?id=${encodeURIComponent(syncId)}&t=${Date.now()}`;
+          const r = await fetch(url, {
             signal: controller.signal,
+            cache: 'no-store',
           });
           clearTimeout(id);
           if (!r.ok) throw new Error(`sync pull ${r.status}`);
@@ -495,8 +506,10 @@ export function StoreProvider({ children }) {
             await pushNow(syncId);
           }
         } catch (err) {
-          // Pull falló o timeout: NO habilitar push para no machacar la nube con datos locales viejos.
+          // Pull falló o timeout. Marcamos error pero habilitamos push de todos modos
+          // para que los datos locales nuevos se puedan subir (el pull puede reintentarse después).
           if (!cancelled) setSyncStatus("error");
+          cloudReadyRef.current = true;
           console.warn("Sync pull failed:", err);
         } finally {
           pullingRef.current = false;
@@ -515,6 +528,22 @@ export function StoreProvider({ children }) {
     }, 1500);
     return () => clearTimeout(t);
   }, [syncable, syncId, pushNow]);
+
+  // Auto-pull más agresivo: al volver a la app (visibilidad o foco) fuerza pull fresco de la nube
+  useEffect(() => {
+    if (!syncId) return;
+    const doPull = () => {
+      if (!pullingRef.current) setSyncRetry(n => n + 1);
+    };
+    const onVis = () => { if (document.visibilityState === 'visible') doPull(); };
+    const onFocus = () => doPull();
+    document.addEventListener('visibilitychange', onVis);
+    window.addEventListener('focus', onFocus);
+    return () => {
+      document.removeEventListener('visibilitychange', onVis);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [syncId]);
 
   const sync = useMemo(() => ({
     id: syncId,
@@ -538,9 +567,18 @@ export function StoreProvider({ children }) {
       setSyncId(null);
       setSyncStatus("off");
     },
-  }), [syncId, syncStatus]);
+    // Forzar subida inmediata de datos actuales a la nube (ignora guards para forzar push de datos frescos/importados)
+    forcePush: () => {
+      if (!syncId) return;
+      cloudReadyRef.current = true;
+      skipPushRef.current = false;
+      lastPushedRef.current = null; // forzar incluso si parece igual
+      pushNow(syncId).catch(() => setSyncStatus("error"));
+    },
+    retry: () => setSyncRetry(n => n + 1),
+  }), [syncId, syncStatus, pushNow]);
 
-  // Persistencia local con debounce (1.5s), clave estable que excluye datos en vivo
+  // Persistencia local más inmediata (100ms debounce + inmediato en unload)
   const stableSave = useMemo(() => {
     const { priceHistory, fx, goldPriceEUR, ...rest } = state;
     return JSON.stringify(rest);
@@ -548,9 +586,14 @@ export function StoreProvider({ children }) {
   const saveTimerRef = useRef(null);
   useEffect(() => {
     clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = setTimeout(() => localStorage.setItem(KEY, stableSave), 1500);
+    saveTimerRef.current = setTimeout(saveLocal, 100);
     return () => clearTimeout(saveTimerRef.current);
   }, [stableSave]);
+  useEffect(() => {
+    const handler = () => saveLocal();
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, []);
 
   // Devengo de intereses también con la app abierta (detecta el cambio de día).
   useEffect(() => {

@@ -131,6 +131,7 @@ describe("reducer · transfer", () => {
       fromId: "acc-eur",
       toId: "acc-ahorro",
       amount: 200,
+      notes: "pago mensual",
     });
     const from = next.accounts.find((a) => a.id === "acc-eur");
     const to = next.accounts.find((a) => a.id === "acc-ahorro");
@@ -139,6 +140,8 @@ describe("reducer · transfer", () => {
     // 2 transacciones (origen + destino)
     const txs = next.transactions.filter((t) => t.category === "Transferencia");
     expect(txs).toHaveLength(2);
+    expect(txs[0].notes).toBe("pago mensual");
+    expect(txs[1].notes).toBe("pago mensual");
   });
 
   it("convierte divisas en transferencia cruzada", () => {

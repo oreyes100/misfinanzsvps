@@ -68,9 +68,19 @@ function CloudSync() {
             <code className="flex-1 truncate rounded-xl border border-white/12 bg-white/6 px-3 py-2 text-xs">{sync.id}</code>
             <Btn variant="ghost" onClick={copy} className="shrink-0 !py-2 text-xs">{copied ? "✓ Copiado" : "Copiar"}</Btn>
           </div>
-          <Btn variant="danger" onClick={() => { if (confirm("¿Desactivar la sincronización en este dispositivo? Los datos en la nube no se borran.")) sync.disable(); }} className="text-xs">
-            Desactivar en este dispositivo
-          </Btn>
+          <div className="flex gap-2">
+            <Btn variant="danger" onClick={() => { if (confirm("¿Desactivar la sincronización en este dispositivo? Los datos en la nube no se borran.")) sync.disable(); }} className="text-xs">
+              Desactivar
+            </Btn>
+            <Btn onClick={() => sync.forcePush && sync.forcePush()} className="text-xs">
+              Subir ahora
+            </Btn>
+            {sync.status === 'error' && (
+              <Btn onClick={() => sync.retry && sync.retry()} className="text-xs">
+                Reintentar
+              </Btn>
+            )}
+          </div>
         </div>
       )}
     </Glass>
@@ -129,9 +139,12 @@ export default function Settings({ session }) {
               const from = state.accounts.find((a) => a.id === s.fromId)?.name;
               const to = state.accounts.find((a) => a.id === s.toId)?.name;
               return (
-                <li key={s.id} className="flex justify-between rounded-xl bg-white/5 px-3 py-2">
-                  <span>{from} → {to} · {s.when}</span>
-                  <span className="font-semibold tabular-nums">{fmtMoney(s.amount)}</span>
+                <li key={s.id} className="rounded-xl bg-white/5 px-3 py-2">
+                  <div className="flex justify-between">
+                    <span>{from} → {to} · {s.when}</span>
+                    <span className="font-semibold tabular-nums">{fmtMoney(s.amount)}</span>
+                  </div>
+                  {s.notes && <div className="mt-0.5 text-[11px] text-ink-dim/75">📝 {s.notes}</div>}
                 </li>
               );
             })}
@@ -287,7 +300,7 @@ function AIEngine() {
 }
 
 function DataTools() {
-  const { state, dispatch } = useStore();
+  const { state, dispatch, sync } = useStore();
   const [msg, setMsg] = useState(null); // { tone, text }
   const fileRef = useRef(null);
 
@@ -303,6 +316,13 @@ function DataTools() {
       if (!confirm(`Restaurar respaldo con ${restored.accounts.length} cuentas y ${n} movimientos? Se reemplazarán los datos actuales de este dispositivo.`)) return;
       dispatch({ type: "restore", state: restored });
       flash("gain", "✓ Respaldo restaurado correctamente.");
+      // Auto-subir a la nube si sync está activo (para que los datos del backup lleguen a otros dispositivos)
+      if (sync && sync.forcePush) {
+        setTimeout(() => {
+          sync.forcePush();
+          flash("gain", "✓ Respaldo restaurado y subido a la nube.");
+        }, 150);
+      }
     } catch (err) {
       flash("loss", `No se pudo restaurar: ${err.message}`);
     }

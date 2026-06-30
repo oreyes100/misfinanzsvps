@@ -47,7 +47,7 @@ export default function Transactions() {
         (t) =>
           (cat === "Todas" || t.category === cat) &&
           (acctId === "Todas" || t.accountId === acctId) &&
-          t.description.toLowerCase().includes(query.toLowerCase())
+          (t.description.toLowerCase().includes(query.toLowerCase()) || (t.notes || "").toLowerCase().includes(query.toLowerCase()))
       ),
     [sorted, query, cat, acctId]
   );
@@ -106,6 +106,7 @@ export default function Transactions() {
                 </span>
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium">{t.description}</p>
+                  {t.notes && <p className="mt-0.5 line-clamp-2 text-[11px] text-ink-dim/75">📝 {t.notes}</p>}
                   <p className="text-xs text-ink-dim">
                     {fmtDate(t.date)} · {t.category}{t.subcategory ? ` › ${t.subcategory}` : ""} · {accName(t.accountId)}
                     {t.category === "Transferencia" && t.counterpartId && (

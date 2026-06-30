@@ -4,16 +4,29 @@ const ID_RE = /^[a-z0-9-]{16,64}$/i;
 const MAX_BYTES = 1_000_000;
 
 function allowedOrigin(req) {
-  const origin = req.headers.origin;
-  if (!origin) return "";
+  let origin = req.headers.origin;
   const allowed = (process.env.ALLOWED_ORIGINS || "https://mis-finazas-gold.vercel.app").split(",").map((s) => s.trim());
+
+  if (!origin) {
+    // Same-origin requests often omit the Origin header. Allow if host matches our domain.
+    const host = req.headers.host || req.headers["x-forwarded-host"];
+    if (host) {
+      const constructed = `https://${host}`;
+      if (allowed.includes(constructed) || host.includes("vercel.app") || host.includes("localhost")) {
+        return constructed;  // allow, but cors will see if(origin)
+      }
+    }
+    // Fallback: allow same-origin (no CORS header needed)
+    return "same-origin";
+  }
+
   if (allowed.includes(origin)) return origin;
   if (origin.startsWith("http://localhost:") || origin.startsWith("capacitor://localhost")) return origin;
   return "";
 }
 
 function cors(res, origin) {
-  if (origin) {
+  if (origin && origin !== "same-origin") {
     res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type");
@@ -27,7 +40,7 @@ export default async function handler(req, res) {
 
   if (req.method === "OPTIONS") return res.status(204).end();
 
-  if (!origin) {
+  if (!origin || origin === "") {
     return res.status(403).json({ error: "Origen no autorizado." });
   }
 

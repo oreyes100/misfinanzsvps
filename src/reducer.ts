@@ -139,7 +139,7 @@ function innerReducer(state: AppState, action: Action): AppState {
     }
 
     case "transfer": {
-      const { fromId, toId, amount } = action;
+      const { fromId, toId, amount, notes } = action;
       const from = state.accounts.find((a) => a.id === fromId);
       const to = state.accounts.find((a) => a.id === toId);
       if (!from || !to || amount <= 0) return state;
@@ -147,14 +147,15 @@ function innerReducer(state: AppState, action: Action): AppState {
         ? amount
         : (amount * state.fx[from.currency]) / state.fx[to.currency];
       const date = action.date || todayISO();
+      const n = notes ? String(notes).trim() : undefined;
       const accounts = state.accounts.map((a) => {
         if (a.id === fromId) return { ...a, balance: Math.round((a.balance - amount) * 100) / 100 };
         if (a.id === toId) return { ...a, balance: Math.round((a.balance + credited) * 100) / 100 };
         return a;
       });
       const txs: Transaction[] = [
-        { id: uid(), date, description: `Transferencia a ${to.name}`, amount: -amount, currency: from.currency, category: "Transferencia", accountId: fromId, counterpartId: toId },
-        { id: uid(), date, description: `Transferencia desde ${from.name}`, amount: Math.round(credited * 100) / 100, currency: to.currency, category: "Transferencia", accountId: toId, counterpartId: fromId },
+        { id: uid(), date, description: `Transferencia a ${to.name}`, amount: -amount, currency: from.currency, category: "Transferencia", accountId: fromId, counterpartId: toId, ...(n ? { notes: n } : {}) },
+        { id: uid(), date, description: `Transferencia desde ${from.name}`, amount: Math.round(credited * 100) / 100, currency: to.currency, category: "Transferencia", accountId: toId, counterpartId: fromId, ...(n ? { notes: n } : {}) },
       ];
       return { ...state, accounts, transactions: [...txs, ...state.transactions] };
     }

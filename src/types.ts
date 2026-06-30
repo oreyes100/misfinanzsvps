@@ -69,6 +69,7 @@ export interface Transaction {
   accountId: string;
   auto?: boolean;
   counterpartId?: string;
+  notes?: string; // motivo o descripción adicional de la transferencia
   _updatedAt?: number;
 }
 
@@ -186,7 +187,7 @@ export type Action =
   | { type: "add_transaction"; tx: Partial<Transaction> & { description: string; amount: number; currency: Currency; accountId: string } }
   | { type: "update_transaction"; id: string; patch: Partial<Transaction> }
   | { type: "delete_transaction"; id: string }
-  | { type: "transfer"; fromId: string; toId: string; amount: number; date?: string }
+  | { type: "transfer"; fromId: string; toId: string; amount: number; date?: string; notes?: string }
   | { type: "schedule_transfer"; item: Partial<ScheduledTransfer> }
   | { type: "set_limit"; amount: number }
   | { type: "set_base_currency"; currency: Currency }

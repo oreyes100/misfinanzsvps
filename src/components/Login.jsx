@@ -143,9 +143,24 @@ export default function Login({ onLogin }) {
         )}
 
         {!setup && (
-          <p className="mt-4 text-center text-[10px] text-ink-dim/70">
-            🔒 Cifrado AES-256 · Acceso por usuario y permisos
-          </p>
+          <>
+            <button
+              type="button"
+              onClick={() => {
+                localStorage.removeItem('mis-finazas-users');
+                sessionStorage.removeItem('mis-finazas-session');
+                localStorage.removeItem('mis-finazas-session');
+                location.reload();
+              }}
+              className="mt-3 w-full text-center text-[10px] text-ink-dim/60 underline hover:text-ink-dim"
+            >
+              ¿Olvidaste la contraseña? Resetear acceso
+            </button>
+
+            <p className="mt-4 text-center text-[10px] text-ink-dim/70">
+              🔒 Cifrado AES-256 · Acceso por usuario y permisos
+            </p>
+          </>
         )}
       </motion.div>
     </div>
