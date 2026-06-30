@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { useStore } from "../store.jsx";
 import { catColor, convert, fmtMoney, fmtPct, downloadReportCSV, downloadReportPDF } from "../utils.js";
-import { Glass, Btn } from "./UI.jsx";
+import { Glass, Btn, inputCls } from "./UI.jsx";
 
 const PERIODS = [
   { id: 3, label: "3 meses" },
@@ -132,13 +132,15 @@ export default function Reports() {
 
   // Reporte comprensivo por granularidad (día/semana/mes/trimestre/etc)
   const comprehensiveReport = useMemo(() => {
+    const txs = Array.isArray(state.transactions) ? state.transactions : [];
+    const fx = state.fx || {};
     const groups = {};
-    for (const t of state.transactions) {
-      if (t.category === 'Transferencia') continue;
+    for (const t of txs) {
+      if (!t || t.category === 'Transferencia' || !t.date) continue;
       const key = getGroupKey(t.date, gran);
       if (!groups[key]) groups[key] = { period: key, income: 0, expense: 0, count: 0, byCat: {} };
-      const eur = toBase(Math.abs(t.amount), t.currency);
-      if (t.amount > 0) {
+      const eur = toBase(Math.abs(t.amount || 0), t.currency || base);
+      if ((t.amount || 0) > 0) {
         groups[key].income += eur;
       } else {
         groups[key].expense += eur;

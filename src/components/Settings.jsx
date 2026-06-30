@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { useStore } from "../store.jsx";
 import { hasBiometricCredential, isBiometricAvailable, registerBiometric, removeBiometric } from "../auth.js";
-import { CURRENCIES, DASHBOARD_CARDS, cardOn, downloadBackup, downloadCSV, fmtMoney, parseBackup } from "../utils.js";
+import { CURRENCIES, DASHBOARD_CARDS, cardOn, downloadBackup, downloadCSV, fmtMoney, parseBackup, findPotentialDuplicateGroups, analyzeDuplicateValidity } from "../utils.js";
 import { Btn, Field, Glass, inputCls } from "./UI.jsx";
 import Users from "./Users.jsx";
 
@@ -311,16 +311,23 @@ function DataTools() {
   const analyzeDuplicates = async () => {
     setAnalyzingDups(true);
     try {
-      const groups = findPotentialDuplicateGroups(state.transactions);
+      const txs = Array.isArray(state.transactions) ? state.transactions : [];
+      if (txs.length === 0) {
+        flash('loss', 'No hay transacciones');
+        setAnalyzingDups(false);
+        return;
+      }
+      const groups = findPotentialDuplicateGroups(txs);
       const analyzed = [];
       for (const g of groups) {
-        const analysis = await analyzeDuplicateValidity(g, state.settings.geminiKey);
+        const analysis = await analyzeDuplicateValidity(g, state.settings?.geminiKey);
         analyzed.push({ txs: g, ...analysis });
       }
       setDupGroups(analyzed);
       flash('gain', `Análisis completado: ${analyzed.length} grupos de duplicados potenciales.`);
     } catch (err) {
-      flash('loss', 'Error analizando duplicados');
+      console.error('Error analizando duplicados:', err);
+      flash('loss', 'Error analizando duplicados: ' + (err?.message || 'desconocido'));
     }
     setAnalyzingDups(false);
   };
