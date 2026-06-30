@@ -1,14 +1,46 @@
 import { useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { useStore } from "../store.jsx";
-import { catColor, convert, fmtMoney, fmtPct } from "../utils.js";
-import { Glass } from "./UI.jsx";
+import { catColor, convert, fmtMoney, fmtPct, downloadReportCSV, downloadReportPDF } from "../utils.js";
+import { Glass, Btn } from "./UI.jsx";
 
 const PERIODS = [
   { id: 3, label: "3 meses" },
   { id: 6, label: "6 meses" },
   { id: 12, label: "1 año" },
 ];
+
+const GRANULARITIES = [
+  { id: 'dia', label: 'Día' },
+  { id: 'semana', label: 'Semana' },
+  { id: 'mes', label: 'Mes' },
+  { id: 'trimestre', label: 'Trimestre' },
+  { id: 'semestre', label: 'Semestre' },
+  { id: 'ano', label: 'Año' },
+];
+
+function getGroupKey(dateStr, gran) {
+  const d = new Date(dateStr);
+  const y = d.getFullYear();
+  const m = d.getMonth() + 1;
+  const day = d.getDate();
+  if (gran === 'dia') return dateStr.slice(0, 10);
+  if (gran === 'semana') {
+    const firstDay = new Date(y, 0, 1).getDay();
+    const week = Math.ceil(((d.getTime() - new Date(y, 0, 1).getTime()) / 86400000 + firstDay) / 7);
+    return `${y}-W${String(week).padStart(2, '0')}`;
+  }
+  if (gran === 'mes') return `${y}-${String(m).padStart(2, '0')}`;
+  if (gran === 'trimestre') {
+    const q = Math.ceil(m / 3);
+    return `${y}-Q${q}`;
+  }
+  if (gran === 'semestre') {
+    const s = Math.ceil(m / 6);
+    return `${y}-S${s}`;
+  }
+  return String(y);
+}
 
 function monthKey(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
@@ -18,6 +50,7 @@ function monthKey(d) {
 export default function Reports() {
   const { state } = useStore();
   const [period, setPeriod] = useState(6);
+  const [gran, setGran] = useState('mes');
   const base = state.settings.baseCurrency;
   const toBase = (amount, currency) => convert(amount, currency, base, state.fx);
 
@@ -96,6 +129,32 @@ export default function Reports() {
 
     return { months, totalIncome, totalExpense, net, savingsRate, avgExpense, avgIncome, categories, emergencyMonths, cash, recs };
   }, [state.transactions, state.accounts, state.fx, period, base]);
+
+  // Reporte comprensivo por granularidad (día/semana/mes/trimestre/etc)
+  const comprehensiveReport = useMemo(() => {
+    const groups = {};
+    for (const t of state.transactions) {
+      if (t.category === 'Transferencia') continue;
+      const key = getGroupKey(t.date, gran);
+      if (!groups[key]) groups[key] = { period: key, income: 0, expense: 0, count: 0, byCat: {} };
+      const eur = toBase(Math.abs(t.amount), t.currency);
+      if (t.amount > 0) {
+        groups[key].income += eur;
+      } else {
+        groups[key].expense += eur;
+        groups[key].byCat[t.category] = (groups[key].byCat[t.category] || 0) + eur;
+      }
+      groups[key].count++;
+    }
+    const list = Object.values(groups).sort((a, b) => a.period.localeCompare(b.period));
+    const totalIncome = list.reduce((s, g) => s + g.income, 0);
+    const totalExpense = list.reduce((s, g) => s + g.expense, 0);
+    return { groups: list, totalIncome, totalExpense, net: totalIncome - totalExpense };
+  }, [state.transactions, state.fx, gran, base]);
+
+  // Descargas
+  const handleDownloadCSV = () => downloadReportCSV(comprehensiveReport.groups, `reporte-${gran}-ingresos-gastos.csv`);
+  const handleDownloadPDF = () => downloadReportPDF(comprehensiveReport.groups, gran);
 
   const maxBar = Math.max(1, ...data.months.map((m) => Math.max(m.income, m.expense)));
 
@@ -215,6 +274,62 @@ export default function Reports() {
             </li>
           ))}
         </ul>
+      </Glass>
+
+      {/* Reporte comprensivo */}
+      <Glass aria-label="Reporte comprensivo de ingresos y gastos">
+        <div className="mb-2 flex items-center justify-between">
+          <h2 className="text-base font-semibold">Reporte Comprensivo de Ingresos y Gastos</h2>
+          <select className={inputCls + " !w-36"} value={gran} onChange={e => setGran(e.target.value)}>
+            {GRANULARITIES.map(g => <option key={g.id} value={g.id}>{g.label}</option>)}
+          </select>
+        </div>
+        <p className="mb-2 text-xs text-ink-dim">Agrupado por la granularidad elegida. Excluye transferencias internas.</p>
+
+        <div className="max-h-64 overflow-auto border border-white/10 rounded">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="bg-white/5">
+                <th className="text-left p-1">Periodo</th>
+                <th className="text-right p-1">Ingresos</th>
+                <th className="text-right p-1">Gastos</th>
+                <th className="text-right p-1">Neto</th>
+                <th className="text-right p-1"># Tx</th>
+              </tr>
+            </thead>
+            <tbody>
+              {comprehensiveReport.groups.map((g) => (
+                <tr key={g.period} className="border-t border-white/5">
+                  <td className="p-1 font-medium">{g.period}</td>
+                  <td className="p-1 text-right text-gain">{fmtMoney(g.income, base)}</td>
+                  <td className="p-1 text-right text-loss">{fmtMoney(g.expense, base)}</td>
+                  <td className={`p-1 text-right ${g.income - g.expense >= 0 ? 'text-gain' : 'text-loss'}`}>
+                    {fmtMoney(g.income - g.expense, base)}
+                  </td>
+                  <td className="p-1 text-right">{g.count}</td>
+                </tr>
+              ))}
+              {comprehensiveReport.groups.length === 0 && (
+                <tr><td colSpan={5} className="p-2 text-center text-ink-dim">Sin datos para agrupar.</td></tr>
+              )}
+            </tbody>
+            <tfoot>
+              <tr className="border-t bg-white/5 font-semibold">
+                <td className="p-1">TOTAL</td>
+                <td className="p-1 text-right text-gain">{fmtMoney(comprehensiveReport.totalIncome, base)}</td>
+                <td className="p-1 text-right text-loss">{fmtMoney(comprehensiveReport.totalExpense, base)}</td>
+                <td className={`p-1 text-right ${comprehensiveReport.net >= 0 ? 'text-gain' : 'text-loss'}`}>{fmtMoney(comprehensiveReport.net, base)}</td>
+                <td className="p-1 text-right">{comprehensiveReport.groups.reduce((s, g) => s + g.count, 0)}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Btn variant="ghost" onClick={handleDownloadCSV}>⬇️ CSV (abre en Excel)</Btn>
+          <Btn variant="ghost" onClick={handleDownloadPDF}>⬇️ PDF (imprimir → Guardar como PDF)</Btn>
+          <span className="text-[10px] text-ink-dim self-center">Excel: abre el CSV en Excel / Google Sheets</span>
+        </div>
       </Glass>
     </div>
   );

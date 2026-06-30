@@ -303,8 +303,39 @@ function DataTools() {
   const { state, dispatch, sync } = useStore();
   const [msg, setMsg] = useState(null); // { tone, text }
   const fileRef = useRef(null);
+  const [dupGroups, setDupGroups] = useState([]);
+  const [analyzingDups, setAnalyzingDups] = useState(false);
 
   const flash = (tone, text) => { setMsg({ tone, text }); setTimeout(() => setMsg(null), 4000); };
+
+  const analyzeDuplicates = async () => {
+    setAnalyzingDups(true);
+    try {
+      const groups = findPotentialDuplicateGroups(state.transactions);
+      const analyzed = [];
+      for (const g of groups) {
+        const analysis = await analyzeDuplicateValidity(g, state.settings.geminiKey);
+        analyzed.push({ txs: g, ...analysis });
+      }
+      setDupGroups(analyzed);
+      flash('gain', `Análisis completado: ${analyzed.length} grupos de duplicados potenciales.`);
+    } catch (err) {
+      flash('loss', 'Error analizando duplicados');
+    }
+    setAnalyzingDups(false);
+  };
+
+  const removeDuplicateGroup = (group) => {
+    if (!confirm(`¿Eliminar los duplicados de este grupo (mantener 1 transacción)?`)) return;
+    // keep the first (by id)
+    const sorted = [...group.txs].sort((a, b) => a.id.localeCompare(b.id));
+    const keepId = sorted[0].id;
+    const toDelete = sorted.slice(1).map((t) => t.id);
+    toDelete.forEach((id) => dispatch({ type: 'delete_transaction', id }));
+    flash('gain', `Eliminados ${toDelete.length} duplicados.`);
+    // refresh groups
+    setDupGroups(prev => prev.filter((g) => g !== group));
+  };
 
   const onFile = async (e) => {
     const file = e.target.files?.[0];
@@ -314,9 +345,25 @@ function DataTools() {
       const restored = parseBackup(await file.text());
       const n = restored.transactions?.length ?? 0;
       if (!confirm(`Restaurar respaldo con ${restored.accounts.length} cuentas y ${n} movimientos? Se reemplazarán los datos actuales de este dispositivo.`)) return;
-      dispatch({ type: "restore", state: restored });
-      flash("gain", "✓ Respaldo restaurado correctamente.");
-      // Auto-subir a la nube si sync está activo (para que los datos del backup lleguen a otros dispositivos)
+      // FULL REPLACE (not merge) for backup restore: override persistent lists from backup,
+      // keep volatile runtime fields (fx, priceHistory, etc.) from current state.
+      // This prevents duplicating transactions from old local + backup (which caused inflated totals and erroneous txs).
+      const replaced = {
+        ...state,
+        settings: restored.settings || state.settings,
+        accounts: restored.accounts || state.accounts,
+        assets: restored.assets || state.assets,
+        transactions: restored.transactions || state.transactions,
+        scheduled: restored.scheduled || state.scheduled,
+        categories: restored.categories || state.categories,
+        transferAliases: restored.transferAliases || state.transferAliases,
+        categoryAliases: restored.categoryAliases || state.categoryAliases,
+        statementPatterns: restored.statementPatterns || state.statementPatterns,
+        _syncVersion: (restored._syncVersion || state._syncVersion || 0),
+      };
+      dispatch({ type: "hydrate", state: replaced });
+      flash("gain", "✓ Respaldo restaurado correctamente (reemplazo completo).");
+      // Auto-subir a la nube si sync está activo
       if (sync && sync.forcePush) {
         setTimeout(() => {
           sync.forcePush();
@@ -341,6 +388,35 @@ function DataTools() {
         <Btn variant="ghost" onClick={() => downloadCSV(state)}>📊 Exportar CSV</Btn>
         <input ref={fileRef} type="file" accept="application/json,.json" className="sr-only" aria-hidden="true" tabIndex={-1} onChange={onFile} />
       </div>
+
+      <hr className="my-4 border-white/8" />
+      <h3 className="mb-1 text-sm font-semibold">Limpiador inteligente de duplicados</h3>
+      <p className="mb-2 text-xs text-ink-dim">Detecta transacciones con misma descripción + fecha + monto + cuenta. Usa IA (si configuras Gemini) para decidir si es válida (ej. intereses de fin de semana registrados el lunes) o error. Elimina solo los duplicados erróneos.</p>
+      <Btn onClick={analyzeDuplicates} disabled={analyzingDups}>
+        {analyzingDups ? 'Analizando con IA...' : 'Analizar duplicados potenciales'}
+      </Btn>
+
+      {dupGroups.length > 0 && (
+        <div className="mt-3 space-y-2 text-xs">
+          {dupGroups.map((g, i) => (
+            <div key={i} className="rounded border border-white/10 p-2 bg-white/5">
+              <div className="font-medium">Grupo {i+1}: {g.txs.length} transacciones idénticas</div>
+              <ul className="ml-2 list-disc">
+                {g.txs.slice(0,3).map((t) => <li key={t.id}>{t.date} — {t.description.slice(0,30)} — {fmtMoney(t.amount, t.currency)}</li>)}
+                {g.txs.length > 3 && <li>... y {g.txs.length-3} más</li>}
+              </ul>
+              <div className={`mt-1 ${g.isValid ? 'text-gain' : 'text-loss'}`}>
+                IA: {g.isValid ? '✅ Válida (repetida legítima)' : '❌ Duplicado erróneo'} — {g.reason} (confianza {Math.round((g.confidence||0)*100)}%)
+              </div>
+              {!g.isValid && (
+                <Btn variant="danger" className="mt-1 text-xs" onClick={() => removeDuplicateGroup(g)}>
+                  Eliminar duplicados (mantener 1)
+                </Btn>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
 
       {msg && (
         <p role="status" className={`mt-3 text-sm ${msg.tone === "gain" ? "text-gain" : "text-loss"}`}>{msg.text}</p>

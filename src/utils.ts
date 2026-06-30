@@ -340,6 +340,97 @@ export function downloadBackup(state: AppState): void {
   downloadBlob(JSON.stringify(backupPayload(state), null, 2), `mis-finazas-respaldo-${stamp()}.json`, "application/json");
 }
 
+export function findPotentialDuplicateGroups(transactions: any[]) {
+  const map: Record<string, any[]> = {};
+  for (const t of transactions) {
+    const key = [
+      (t.description || '').toLowerCase().trim(),
+      t.date || '',
+      t.amount,
+      t.accountId || ''
+    ].join('|');
+    if (!map[key]) map[key] = [];
+    map[key].push(t);
+  }
+  return Object.values(map).filter((g: any[]) => g.length > 1);
+}
+
+async function callGeminiForDuplicateAnalysis(prompt: string, key: string) {
+  const body = {
+    contents: [{ parts: [{ text: prompt }] }],
+    generationConfig: { response_mime_type: "application/json", temperature: 0 }
+  };
+  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(key)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  const out = await res.json();
+  const text = out.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
+  return JSON.parse(text);
+}
+
+export async function analyzeDuplicateValidity(txs: any[], geminiKey: string | null | undefined) {
+  if (!geminiKey) {
+    const cat = txs[0]?.category || '';
+    const isInterestLike = cat === 'Intereses' || cat === 'Impuestos';
+    return {
+      isValid: isInterestLike,
+      reason: isInterestLike ? 'Coincide con patrón de intereses o impuestos (análisis por reglas locales)' : 'No es un patrón típico de repetición válida',
+      confidence: isInterestLike ? 0.75 : 0.5
+    };
+  }
+  const prompt = `Eres un experto en finanzas personales y contabilidad. Estas transacciones tienen exactamente la misma descripción, fecha, monto y cuenta. Determina si es una transacción legítima que ocurre más de una vez el mismo día (por ejemplo, intereses generados durante el fin de semana que se registran el lunes con el mismo monto) o si es un duplicado erróneo causado por un bug de sincronización o respaldo.
+
+Transacciones:
+${txs.map((t, i) => `${i+1}. Desc: ${t.description} | Fecha: ${t.date} | Monto: ${t.amount} ${t.currency} | Categoría: ${t.category} | Cuenta: ${t.accountId}`).join('\n')}
+
+Responde SOLO con un objeto JSON válido (sin texto extra):
+{"isValid": true o false, "reason": "explicación breve en español", "confidence": número entre 0 y 1}`;
+  try {
+    return await callGeminiForDuplicateAnalysis(prompt, geminiKey);
+  } catch (e) {
+    const cat = txs[0]?.category || '';
+    const isInterestLike = cat === 'Intereses' || cat === 'Impuestos';
+    return {
+      isValid: isInterestLike,
+      reason: 'Error llamando a la IA. Usando regla local: ' + (isInterestLike ? 'parece válido' : 'posible error'),
+      confidence: 0.5
+    };
+  }
+}
+
+export function downloadReportCSV(groups: any[], filename: string) {
+  let csv = 'Periodo,Ingresos,Gastos,Neto,Num Transacciones\n';
+  groups.forEach((g: any) => {
+    csv += `${g.period},${g.income.toFixed(2)},${g.expense.toFixed(2)},${(g.income - g.expense).toFixed(2)},${g.count}\n`;
+  });
+  downloadBlob(csv, filename, 'text/csv;charset=utf-8;');
+}
+
+export function downloadReportPDF(groups: any[], granularity: string) {
+  const title = `Reporte de Ingresos y Gastos por ${granularity}`;
+  let tableRows = groups.map((g: any) => 
+    `<tr><td>${g.period}</td><td>${g.income.toFixed(2)}</td><td>${g.expense.toFixed(2)}</td><td>${(g.income-g.expense).toFixed(2)}</td><td>${g.count}</td></tr>`
+  ).join('');
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title>
+<style>body{font-family:Arial,sans-serif;padding:20px} table{border-collapse:collapse;width:100%;margin-top:10px} th,td{border:1px solid #666;padding:6px;text-align:right} th{background:#eee;text-align:left}</style>
+</head><body>
+<h1>${title}</h1>
+<p>Generado: ${new Date().toLocaleString()}</p>
+<table>
+<tr><th>Periodo</th><th>Ingresos</th><th>Gastos</th><th>Neto</th><th># Tx</th></tr>
+${tableRows}
+</table>
+</body></html>`;
+  const w = window.open('', '_blank');
+  if (w) {
+    w.document.write(html);
+    w.document.close();
+    setTimeout(() => w.print(), 400);
+  }
+}
+
 // ---- CSV ----
 
 function csvCell(v: unknown): string {
