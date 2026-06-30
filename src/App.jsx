@@ -57,12 +57,22 @@ function Shell({ session, onLogout }) {
         <div className="flex items-center gap-2">
           <SecurityBadge biometric={hasBiometricCredential()} />
           {sync?.id && (
-            <span 
-              className={`text-[10px] px-1.5 py-0.5 rounded bg-white/10 ${syncColor} font-mono tabular-nums`}
-              title={`Sync: ${sync.status} • ${sync.id}`}
+            <button 
+              onClick={() => {
+                if (!sync) return;
+                if (sync.status === 'error') {
+                  sync.retry?.();
+                }
+                if (sync.status !== 'synced' && sync.status !== 'pushing' && sync.status !== 'pulling') {
+                  sync.forcePush?.();
+                }
+              }}
+              disabled={sync.status === 'pushing' || sync.status === 'pulling'}
+              className={`text-[10px] px-1.5 py-0.5 rounded bg-white/10 ${syncColor} font-mono tabular-nums hover:bg-white/20 active:bg-white/30 transition-colors cursor-pointer disabled:opacity-70 disabled:cursor-not-allowed`}
+              title={`Sync: ${sync.status} • ${sync.id} (clic para sincronizar si no está sincronizado)`}
             >
               {syncIcon} {sync.status}
-            </span>
+            </button>
           )}
           <button
             type="button"
