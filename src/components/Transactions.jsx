@@ -52,7 +52,10 @@ export default function Transactions() {
     [sorted, query, cat, acctId]
   );
 
-  const accName = (id) => state.accounts.find((a) => a.id === id)?.name || "—";
+  const accName = (id) => {
+    const a = state.accounts.find((x) => x.id === id);
+    return a ? a.name : (id ? "— (huérfana)" : "—");
+  };
 
   return (
     <Glass aria-label="Historial de movimientos">

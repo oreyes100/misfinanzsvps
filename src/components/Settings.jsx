@@ -305,6 +305,7 @@ function DataTools() {
   const fileRef = useRef(null);
   const [dupGroups, setDupGroups] = useState([]);
   const [analyzingDups, setAnalyzingDups] = useState(false);
+  const [orphanTxs, setOrphanTxs] = useState([]);
 
   const flash = (tone, text) => { setMsg({ tone, text }); setTimeout(() => setMsg(null), 4000); };
 
@@ -342,6 +343,26 @@ function DataTools() {
     flash('gain', `Eliminados ${toDelete.length} duplicados.`);
     // refresh groups
     setDupGroups(prev => prev.filter((g) => g !== group));
+  };
+
+  const findOrphans = () => {
+    const txs = Array.isArray(state.transactions) ? state.transactions : [];
+    const accIds = new Set((state.accounts || []).map((a) => a.id));
+    const orphans = txs.filter((t) => t && t.accountId && !accIds.has(t.accountId));
+    setOrphanTxs(orphans);
+    flash(orphans.length ? 'gain' : 'loss', orphans.length ? `${orphans.length} transacciones huérfanas detectadas (de cuentas eliminadas).` : 'Sin transacciones huérfanas.');
+  };
+
+  const removeOrphans = () => {
+    if (!orphanTxs.length) return;
+    if (!confirm(`¿Eliminar las ${orphanTxs.length} transacciones huérfanas? Esta acción no se puede deshacer.`)) return;
+    orphanTxs.forEach((t) => dispatch({ type: 'delete_transaction', id: t.id }));
+    flash('gain', `Eliminadas ${orphanTxs.length} transacciones huérfanas.`);
+    setOrphanTxs([]);
+    // Force sync push so cloud is updated and future pulls don't restore orphans
+    if (sync && typeof sync.forcePush === "function") {
+      setTimeout(() => { try { sync.forcePush(); } catch {} }, 80);
+    }
   };
 
   const onFile = async (e) => {
@@ -422,6 +443,22 @@ function DataTools() {
               )}
             </div>
           ))}
+        </div>
+      )}
+
+      <hr className="my-4 border-white/8" />
+      <h3 className="mb-1 text-sm font-semibold">Limpiar transacciones huérfanas</h3>
+      <p className="mb-2 text-xs text-ink-dim">Transacciones que quedaron después de borrar cuentas. Se pueden eliminar sin afectar saldos (cuentas ya no existen).</p>
+      <div className="flex flex-wrap gap-2">
+        <Btn onClick={findOrphans}>Detectar huérfanas</Btn>
+        {orphanTxs.length > 0 && (
+          <Btn variant="danger" onClick={removeOrphans}>Eliminar {orphanTxs.length} huérfanas</Btn>
+        )}
+      </div>
+      {orphanTxs.length > 0 && (
+        <div className="mt-2 text-xs text-ink-dim">
+          {orphanTxs.slice(0, 3).map((t, i) => <div key={i}>{t.date} · {t.description} · {fmtMoney(Math.abs(t.amount), t.currency)}</div>)}
+          {orphanTxs.length > 3 && <div>... +{orphanTxs.length-3} más</div>}
         </div>
       )}
 

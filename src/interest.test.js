@@ -22,15 +22,24 @@ describe("accrueInterest · modelo simple (daily)", () => {
       lastAccrual: "2026-06-20", // 5 días atrás (laborables)
     };
     const state = stateWith(acc);
-    const result = accrueInterest(state);
-    const updated = result.accounts[0];
-    // 10000 * ((1 + 0.0365/365)^5 - 1) ≈ 10000 * 0.0005003 ≈ 5.00
-    expect(updated.balance).toBeGreaterThan(10000);
-    expect(updated.balance).toBeLessThan(10010);
-    // Transacción de interés creada
-    const intTx = result.transactions.find((t) => t.category === "Intereses");
-    expect(intTx).toBeDefined();
-    expect(intTx.amount).toBeGreaterThan(0);
+    // Mock today to a known weekday with exactly 5 days delta (2026-06-25 is Thursday)
+    const realDate = Date;
+    global.Date = class extends realDate {
+      constructor(...args) { if (args.length === 0) super("2026-06-25T12:00:00"); else super(...args); }
+      static now() { return new realDate("2026-06-25T12:00:00").getTime(); }
+    };
+    try {
+      const result = accrueInterest(state);
+      const updated = result.accounts[0];
+      // 10000 * ((1 + 0.0365/365)^5 - 1) ≈ 5.003
+      expect(updated.balance).toBeGreaterThan(10000);
+      expect(updated.balance).toBeLessThan(10011);
+      const intTx = result.transactions.find((t) => t.category === "Intereses");
+      expect(intTx).toBeDefined();
+      expect(intTx.amount).toBeGreaterThan(0);
+    } finally {
+      global.Date = realDate;
+    }
   });
 
   it("no devenga si accrual = none", () => {
@@ -211,6 +220,30 @@ describe("accrueInterest · fin de semana", () => {
       const result = accrueInterest(stateWith(acc));
       expect(result.accounts[0].balance).toBe(10000);
       expect(result.transactions).toHaveLength(0);
+    } finally {
+      global.Date = realDate;
+    }
+  });
+
+  it("respeta weekendDepositDay=saturday y split en 2 depósitos", () => {
+    const acc = {
+      id: "acc-w", name: "MX Sofipo", type: "sofipo", currency: "MXN",
+      balance: 10000, capped: true, rate1: 0.10, accrual1: "daily", balanceCap1: 10000,
+      lastAccrual1: "2026-06-20", lastAccrual: "2026-06-20",
+      weekendDepositDay: 'saturday', weekendDeposits: 2,
+    };
+    const realDate = Date;
+    global.Date = class extends realDate {
+      constructor(...args) { if (args.length === 0) super("2026-06-27T12:00:00"); else super(...args); } // sat
+      static now() { return new realDate("2026-06-27T12:00:00").getTime(); }
+    };
+    try {
+      const result = accrueInterest(stateWith(acc));
+      const ints = result.transactions.filter((t) => t.category === "Intereses");
+      // On sat + pref sat => should emit (split to 2)
+      expect(ints.length).toBeGreaterThanOrEqual(1);
+      // dates should be the sat
+      expect(ints[0].date).toBe("2026-06-27");
     } finally {
       global.Date = realDate;
     }

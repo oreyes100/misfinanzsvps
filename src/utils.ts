@@ -67,6 +67,14 @@ export function fmtPct(x: number, digits: number = 2): string {
   return `${sign}${(x * 100).toFixed(digits)} %`;
 }
 
+/** Remove transactions that reference accounts no longer present in the list.
+ * Prevents reappearance of orphaned txs after account deletion (from load/merge/restore/cloud). */
+export function cleanOrphanTransactions(accounts: any[], transactions: any[]): any[] {
+  if (!Array.isArray(accounts) || accounts.length === 0) return [];
+  const accIds = new Set(accounts.map((a: any) => a.id));
+  return (Array.isArray(transactions) ? transactions : []).filter((t: any) => t && accIds.has(t.accountId));
+}
+
 // ---------- Categorías ----------
 
 export const DEFAULT_CATEGORIES: Category[] = [
@@ -400,34 +408,249 @@ Responde SOLO con un objeto JSON válido (sin texto extra):
   }
 }
 
-export function downloadReportCSV(groups: any[], filename: string) {
-  let csv = 'Periodo,Ingresos,Gastos,Neto,Num Transacciones\n';
-  groups.forEach((g: any) => {
+export function downloadReportCSV(report: any, filename: string, gran: string, startDate: string, endDate: string, health: any) {
+  let csv = `# MIS FINAZAS — REPORTE FINANCIERO PERSONAL\n`;
+  csv += `# Generado: ${new Date().toISOString()}\n`;
+  csv += `# Período: ${startDate || '—'} — ${endDate || '—'} | Agrupación: ${gran}\n`;
+  csv += `# (Excluye transferencias internas. Valores convertidos a divisa base.)\n`;
+  csv += `# Para gráficas y presentación ejecutiva usa el PDF.\n\n`;
+
+  csv += `## RESUMEN EJECUTIVO\n`;
+  csv += `Total Ingresos,${report.totalIncome.toFixed(2)}\n`;
+  csv += `Total Gastos,${report.totalExpense.toFixed(2)}\n`;
+  csv += `Flujo Neto,${report.net.toFixed(2)}\n`;
+  csv += `Tasa de Ahorro,${health ? (health.savingsRate * 100).toFixed(1) + '%' : ''}\n\n`;
+
+  csv += `## POR PERÍODO\n`;
+  csv += `Periodo,Ingresos,Gastos,Neto,# Tx\n`;
+  report.groups.forEach((g: any) => {
     csv += `${g.period},${g.income.toFixed(2)},${g.expense.toFixed(2)},${(g.income - g.expense).toFixed(2)},${g.count}\n`;
   });
+  csv += `\n`;
+
+  csv += `## DESGLOSE INGRESOS POR CATEGORÍA\n`;
+  csv += `Categoría,Subtotal,% del Total Ingresos\n`;
+  const incTotal = report.totalIncome || 1;
+  Object.entries(report.incomeByCat || {}).sort((a: any, b: any) => b[1] - a[1]).forEach(([cat, sub]: any) => {
+    csv += `${cat},${sub.toFixed(2)},${((sub / incTotal) * 100).toFixed(1)}%\n`;
+  });
+  csv += `\n`;
+
+  csv += `## DESGLOSE GASTOS POR CATEGORÍA\n`;
+  csv += `Categoría,Subtotal,% del Total Gastos\n`;
+  const expTotal = report.totalExpense || 1;
+  Object.entries(report.expenseByCat || {}).sort((a: any, b: any) => b[1] - a[1]).forEach(([cat, sub]: any) => {
+    csv += `${cat},${sub.toFixed(2)},${((sub / expTotal) * 100).toFixed(1)}%\n`;
+  });
+  csv += `\n`;
+
+  if (health) {
+    csv += `## INDICADORES DE SALUD FINANCIERA\n`;
+    csv += `Tasa de Ahorro,${(health.savingsRate * 100).toFixed(1)}%\n`;
+    csv += `Fondo de Emergencia (meses),${health.emergencyMonths.toFixed(1)}\n`;
+    csv += `Gasto Promedio Mensual,${health.avgExpense.toFixed(2)}\n`;
+    csv += `Ingreso Promedio Mensual,${health.avgIncome.toFixed(2)}\n\n`;
+    csv += `## RECOMENDACIONES\n`;
+    (health.recs || []).forEach((r: any, i: number) => {
+      csv += `${i+1}. ${r.text}\n`;
+    });
+  }
+
+  csv += `\n# NOTA: Este CSV es datos tabulares. Abre el PDF para gráficas visuales, KPIs ejecutivos y formato profesional de reporte financiero.\n`;
+
   downloadBlob(csv, filename, 'text/csv;charset=utf-8;');
 }
 
-export function downloadReportPDF(groups: any[], granularity: string) {
-  const title = `Reporte de Ingresos y Gastos por ${granularity}`;
-  let tableRows = groups.map((g: any) => 
-    `<tr><td>${g.period}</td><td>${g.income.toFixed(2)}</td><td>${g.expense.toFixed(2)}</td><td>${(g.income-g.expense).toFixed(2)}</td><td>${g.count}</td></tr>`
+export function downloadReportPDF(report: any, granularity: string, startDate: string, endDate: string, health: any) {
+  const title = `MIS FINANZAS — Reporte Financiero Personal`;
+  const subtitle = `Estado de Resultados y Análisis por Categorías · ${granularity}`;
+  const range = `${startDate || '—'} a ${endDate || '—'}`;
+  const gen = new Date().toLocaleString('es-ES');
+
+  const fmt = (n: number) => (n || 0).toFixed(2);
+  const pct = (n: number, tot: number) => tot > 0 ? ((n / tot) * 100).toFixed(1) + '%' : '0%';
+
+  const incCats = Object.entries(report.incomeByCat || {}).sort((a: any, b: any) => b[1] - a[1]);
+  const expCats = Object.entries(report.expenseByCat || {}).sort((a: any, b: any) => b[1] - a[1]);
+
+  let periodRows = report.groups.map((g: any) =>
+    `<tr><td>${g.period}</td><td class="num gain">${fmt(g.income)}</td><td class="num loss">${fmt(g.expense)}</td><td class="num ${g.income - g.expense >= 0 ? 'gain' : 'loss'}">${fmt(g.income - g.expense)}</td><td class="num">${g.count}</td></tr>`
   ).join('');
+
+  let incRows = incCats.map(([cat, sub]: any) =>
+    `<tr><td>${cat}</td><td class="num gain">${fmt(sub as number)}</td><td class="num">${pct(sub as number, report.totalIncome)}</td></tr>`
+  ).join('') || '<tr><td colspan="3" class="muted">Sin ingresos en el rango</td></tr>';
+
+  let expRows = expCats.map(([cat, sub]: any) =>
+    `<tr><td>${cat}</td><td class="num loss">${fmt(sub as number)}</td><td class="num">${pct(sub as number, report.totalExpense)}</td></tr>`
+  ).join('') || '<tr><td colspan="3" class="muted">Sin gastos en el rango</td></tr>';
+
+  const recsHtml = (health?.recs || []).map((r: any) => `<li>${r.icon || '•'} ${r.text}</li>`).join('');
+
+  // Inline SVG generators for professional embedded charts (print-safe)
+  function makePieSVG(slices: [string, number][], title: string, total: number): string {
+    if (!slices.length || total <= 0) return `<div class="muted">Sin datos para ${title}</div>`;
+    const R = 58, CX = 68, CY = 68, C = 2 * Math.PI * R;
+    let off = 0;
+    const colors = ['#0a7d2e', '#2ee6a8', '#5b8cff', '#f5c451', '#ff7ad9', '#8f63ff', '#4dd6e8', '#ff5c7a', '#9be15d', '#c0566e'];
+    let paths = '';
+    slices.forEach(([, val], i) => {
+      const frac = (val as number) / total;
+      const dash = `${frac * C} ${C}`;
+      const col = colors[i % colors.length];
+      paths += `<circle cx="${CX}" cy="${CY}" r="${R}" fill="none" stroke="${col}" stroke-width="22" stroke-dasharray="${dash}" stroke-dashoffset="${-off * C}" transform="rotate(-90 ${CX} ${CY})" />`;
+      off += frac;
+    });
+    const legend = slices.slice(0, 6).map(([lab, val], i) =>
+      `<div style="font-size:9px; display:flex; align-items:center; gap:4px; margin:1px 0;">
+        <span style="display:inline-block;width:9px;height:9px;background:${colors[i%colors.length]};border-radius:2px;"></span>
+        <span>${lab}</span><span style="margin-left:auto; font-family:monospace;">${fmt(val as number)} (${pct(val as number, total)})</span>
+      </div>`
+    ).join('');
+    return `<div style="display:flex; align-items:flex-start; gap:12px;">
+      <svg width="136" height="136" viewBox="0 0 136 136">${paths}</svg>
+      <div style="min-width:160px;">${legend}</div>
+    </div>`;
+  }
+
+  function makePeriodBarsSVG(groups: any[]): string {
+    if (!groups || !groups.length) return '<div class="muted">Sin periodos</div>';
+    const max = Math.max(1, ...groups.map((g: any) => Math.max(g.income, g.expense)));
+    const W = 520, H = 92, pad = 6, bw = Math.max(4, (W - pad * 2) / groups.length * 0.42);
+    let bars = '';
+    groups.forEach((g: any, i: number) => {
+      const x = pad + i * ((W - pad * 2) / groups.length);
+      const hi = (g.income / max) * (H - 18);
+      const he = (g.expense / max) * (H - 18);
+      bars += `<rect x="${x}" y="${H - 10 - hi}" width="${bw}" height="${hi}" fill="#0a7d2e" rx="1" />`;
+      bars += `<rect x="${x + bw + 1}" y="${H - 10 - he}" width="${bw}" height="${he}" fill="#c41e3a" rx="1" />`;
+    });
+    return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="max-width:100%;height:auto;">${bars}</svg>
+    <div style="font-size:8px;color:#555;margin-top:2px;">Verde = Ingresos · Rojo = Gastos (barras lado a lado por período)</div>`;
+  }
+
+  const pieIncome = makePieSVG(incCats as any, 'Ingresos', report.totalIncome);
+  const pieExpense = makePieSVG(expCats as any, 'Gastos', report.totalExpense);
+  const barsSVG = makePeriodBarsSVG(report.groups);
+
+  const totalTx = report.groups.reduce((s: number, g: any) => s + (g.count || 0), 0);
+
   const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title>
-<style>body{font-family:Arial,sans-serif;padding:20px} table{border-collapse:collapse;width:100%;margin-top:10px} th,td{border:1px solid #666;padding:6px;text-align:right} th{background:#eee;text-align:left}</style>
+<style>
+  @page { size: A4; margin: 12mm; }
+  @media print { body { margin:0; -webkit-print-color-adjust: exact; print-color-adjust: exact; } .no-print{display:none;} }
+  body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; font-size: 10.5px; color:#111; background:#fff; padding:12px 18px; line-height:1.35; }
+  .brand { color:#1a3c6e; font-weight:700; letter-spacing:.5px; }
+  .header { border-bottom:3px solid #1a3c6e; padding-bottom:8px; margin-bottom:10px; }
+  h1 { font-size:17px; margin:0; color:#1a3c6e; }
+  h2 { font-size:12px; margin:10px 0 4px; color:#1a3c6e; border-bottom:1px solid #d1d5db; padding-bottom:2px; text-transform:uppercase; letter-spacing:0.5px; }
+  .kpi-grid { display:grid; grid-template-columns: repeat(4, 1fr); gap:6px; margin:8px 0; }
+  .kpi { border:1px solid #d1d5db; background:#f8fafc; padding:6px 8px; border-radius:4px; }
+  .kpi .lab { font-size:8px; color:#475569; text-transform:uppercase; }
+  .kpi .val { font-size:13px; font-weight:700; font-family: ui-monospace, monospace; }
+  .gain { color:#0a7d2e; font-weight:600; }
+  .loss { color:#c41e3a; font-weight:600; }
+  table { width:100%; border-collapse:collapse; margin:4px 0 10px; font-size:9.5px; }
+  th, td { border:1px solid #64748b; padding:3px 5px; text-align:left; }
+  th { background:#e0e7ff; font-weight:600; color:#1e3a5f; }
+  .num { text-align:right; font-family:ui-monospace, monospace; }
+  .section { margin-bottom:8px; }
+  .charts { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin:8px 0; }
+  .chartbox { border:1px solid #cbd5e1; padding:6px; background:#fff; }
+  .muted { color:#64748b; font-style:italic; }
+  .footer { margin-top:14px; font-size:8px; color:#475569; border-top:1px solid #cbd5e1; padding-top:6px; }
+  .disclaimer { font-size:7.5px; color:#64748b; }
+  .meta { font-size:9px; color:#334155; }
+</style>
 </head><body>
-<h1>${title}</h1>
-<p>Generado: ${new Date().toLocaleString()}</p>
+<div class="header">
+  <div style="display:flex; justify-content:space-between; align-items:flex-end;">
+    <div>
+      <h1><span class="brand">MIS FINANZAS</span></h1>
+      <div class="meta">${subtitle}</div>
+    </div>
+    <div style="text-align:right; font-size:9px;">
+      <div><strong>Período:</strong> ${range}</div>
+      <div>Generado: ${gen}</div>
+      <div class="disclaimer">Uso personal · Confidencial</div>
+    </div>
+  </div>
+</div>
+
+<h2>Resumen Ejecutivo (KPIs)</h2>
+<div class="kpi-grid">
+  <div class="kpi"><div class="lab">Ingresos Totales</div><div class="val gain">${fmt(report.totalIncome)}</div></div>
+  <div class="kpi"><div class="lab">Gastos Totales</div><div class="val loss">${fmt(report.totalExpense)}</div></div>
+  <div class="kpi"><div class="lab">Flujo Neto</div><div class="val ${report.net >= 0 ? 'gain' : 'loss'}">${fmt(report.net)}</div></div>
+  <div class="kpi"><div class="lab"># Transacciones</div><div class="val">${totalTx}</div></div>
+</div>
+
+${health ? `<div class="kpi-grid" style="grid-template-columns:repeat(4,1fr);">
+  <div class="kpi"><div class="lab">Tasa de Ahorro</div><div class="val ${health.savingsRate >= 0.2 ? 'gain' : ''}">${(health.savingsRate * 100).toFixed(1)}%</div></div>
+  <div class="kpi"><div class="lab">Fondo Emergencia</div><div class="val">${Number.isFinite(health.emergencyMonths) ? health.emergencyMonths.toFixed(1) + ' meses' : '—'}</div></div>
+  <div class="kpi"><div class="lab">Gasto Prom. / Período</div><div class="val">${fmt(health.avgExpense)}</div></div>
+  <div class="kpi"><div class="lab">Ingreso Prom. / Período</div><div class="val">${fmt(health.avgIncome)}</div></div>
+</div>` : ''}
+
+<h2>Estado de Resultados — Por Período</h2>
 <table>
-<tr><th>Periodo</th><th>Ingresos</th><th>Gastos</th><th>Neto</th><th># Tx</th></tr>
-${tableRows}
+<thead><tr><th>Período</th><th class="num">Ingresos</th><th class="num">Gastos</th><th class="num">Neto</th><th class="num"># Tx</th></tr></thead>
+<tbody>${periodRows}</tbody>
+<tfoot><tr style="font-weight:700;background:#f1f5f9;">
+  <td>TOTAL</td>
+  <td class="num gain">${fmt(report.totalIncome)}</td>
+  <td class="num loss">${fmt(report.totalExpense)}</td>
+  <td class="num ${report.net >= 0 ? 'gain' : 'loss'}">${fmt(report.net)}</td>
+  <td class="num">${totalTx}</td>
+</tr></tfoot>
 </table>
+
+<div class="section">
+  <h2>Distribución por Categorías (Subtotales)</h2>
+  <div class="charts">
+    <div class="chartbox">
+      <strong style="font-size:10px;">Ingresos por Categoría</strong>
+      ${pieIncome}
+    </div>
+    <div class="chartbox">
+      <strong style="font-size:10px;">Gastos por Categoría</strong>
+      ${pieExpense}
+    </div>
+  </div>
+
+  <table style="margin-top:4px;">
+    <thead><tr><th>Ingresos por Categoría</th><th class="num">Subtotal</th><th class="num">%</th></tr></thead>
+    <tbody>${incRows}</tbody>
+  </table>
+  <table>
+    <thead><tr><th>Gastos por Categoría</th><th class="num">Subtotal</th><th class="num">%</th></tr></thead>
+    <tbody>${expRows}</tbody>
+  </table>
+</div>
+
+<h2>Tendencia por Período (Gráfica de Barras)</h2>
+<div class="chartbox" style="padding:8px 4px;">${barsSVG}</div>
+
+${health ? `<div class="section">
+  <h2>Salud Financiera y Recomendaciones</h2>
+  <div style="background:#f8fafc;border:1px solid #cbd5e1;padding:6px 8px;font-size:9.5px;">
+    Tasa de ahorro: <strong>${(health.savingsRate * 100).toFixed(1)}%</strong> (objetivo ≥20%) &nbsp;|&nbsp;
+    Fondo emergencia: <strong>${Number.isFinite(health.emergencyMonths) ? health.emergencyMonths.toFixed(1) : '∞'} meses</strong> (meta 3–6)
+  </div>
+  <ul style="margin:6px 0 2px 16px;padding:0;font-size:9.5px;">${recsHtml}</ul>
+</div>` : ''}
+
+<div class="footer">
+  <div>Mis Finanzas • Reporte generado automáticamente desde datos locales/sincronizados • Valores en divisa base • Excluye transferencias internas.</div>
+  <div class="disclaimer">Este documento es solo para uso personal y no constituye asesoría financiera, fiscal o de inversión.</div>
+</div>
 </body></html>`;
+
   const w = window.open('', '_blank');
   if (w) {
     w.document.write(html);
     w.document.close();
-    setTimeout(() => w.print(), 400);
+    setTimeout(() => { w.print(); w.focus(); }, 260);
   }
 }
 

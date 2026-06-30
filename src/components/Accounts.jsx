@@ -18,6 +18,8 @@ function AccountModal({ account, onClose }) {
           rate1: account.rate1 || 0, balanceCap1: account.balanceCap1 || "", gainCap1: account.gainCap1 || "", accrual1: account.accrual1 || "monthly",
           rate2: account.rate2 || 0, balanceCap2: account.balanceCap2 || "", gainCap2: account.gainCap2 || "", accrual2: account.accrual2 || "monthly",
           isrRate: account.isrRate || 0,
+          weekendDepositDay: account.weekendDepositDay || 'monday',
+          weekendDeposits: account.weekendDeposits || 1,
         }
       : {
           name: "", type: "checking", currency: state.settings.baseCurrency, balance: "", rate: 0, accrual: "none",
@@ -25,6 +27,8 @@ function AccountModal({ account, onClose }) {
           rate1: 0, balanceCap1: "", gainCap1: "", accrual1: "monthly",
           rate2: 0, balanceCap2: "", gainCap2: "", accrual2: "monthly",
           isrRate: 0,
+          weekendDepositDay: 'monday',
+          weekendDeposits: 1,
         }
   );
   const [error, setError] = useState("");
@@ -66,6 +70,10 @@ function AccountModal({ account, onClose }) {
     } else if (isCappable) {
       payload.capped = false;
       payload.isrRate = form.isrRate;
+    }
+    if (hasInterest || isCappable) {
+      payload.weekendDepositDay = form.weekendDepositDay || 'monday';
+      payload.weekendDeposits = parseInt(form.weekendDeposits, 10) || 1;
     }
     if (form.type === "credit") {
       payload.cutDay = Math.min(31, Math.max(1, parseInt(form.cutDay, 10) || 0)) || null;
@@ -181,6 +189,21 @@ function AccountModal({ account, onClose }) {
                 value={(form.isrRate * 100).toFixed(4)}
                 onChange={(e) => set("isrRate", (parseFloat(e.target.value) || 0) / 100)} />
             </Field>
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              <Field label="Día depósito int. fin de semana" hint="Algunos bancos abonan sábado, otros lunes.">
+                <select className={inputCls} value={form.weekendDepositDay} onChange={(e) => set("weekendDepositDay", e.target.value)}>
+                  <option value="monday">Lunes</option>
+                  <option value="saturday">Sábado</option>
+                </select>
+              </Field>
+              <Field label="Depósitos fin de semana" hint="¿Junto (1) o en 2-3 depósitos separados el mismo día?">
+                <select className={inputCls} value={form.weekendDeposits} onChange={(e) => set("weekendDeposits", parseInt(e.target.value, 10))}>
+                  <option value={1}>1 (junto)</option>
+                  <option value={2}>2</option>
+                  <option value={3}>3</option>
+                </select>
+              </Field>
+            </div>
           </fieldset>
         )}
 
@@ -219,6 +242,23 @@ function AccountModal({ account, onClose }) {
                   value={(form.isrRate * 100).toFixed(4)}
                   onChange={(e) => set("isrRate", (parseFloat(e.target.value) || 0) / 100)} />
               </Field>
+            )}
+            {(hasInterest || isCappable) && (
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                <Field label="Día depósito int. fin de semana" hint="Algunos bancos abonan sábado, otros lunes.">
+                  <select className={inputCls} value={form.weekendDepositDay} onChange={(e) => set("weekendDepositDay", e.target.value)}>
+                    <option value="monday">Lunes</option>
+                    <option value="saturday">Sábado</option>
+                  </select>
+                </Field>
+                <Field label="Depósitos fin de semana" hint="¿Junto (1) o en 2-3 depósitos separados el mismo día?">
+                  <select className={inputCls} value={form.weekendDeposits} onChange={(e) => set("weekendDeposits", parseInt(e.target.value, 10))}>
+                    <option value={1}>1 (junto)</option>
+                    <option value={2}>2</option>
+                    <option value={3}>3</option>
+                  </select>
+                </Field>
+              </div>
             )}
           </fieldset>
         )}

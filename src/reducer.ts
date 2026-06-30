@@ -1,6 +1,6 @@
 // reducer.ts — Reductor puro con tipos completos
 import type { AppState, Action, NetWorth, PendingCardPayment, Account, Transaction } from "./types.ts";
-import { BASE_FX, DEFAULT_CATEGORIES, DAY_MS, categorize, todayISO, uid } from "./utils.ts";
+import { BASE_FX, DEFAULT_CATEGORIES, DAY_MS, categorize, cleanOrphanTransactions, todayISO, uid } from "./utils.ts";
 import type { Currency, Category } from "./types.ts";
 import { accrueInterest } from "./interest.ts";
 import { migrate } from "./migrations.ts";
@@ -72,8 +72,16 @@ function mergeByID<T extends { id: string; _updatedAt?: number }>(local: T[], cl
   if (!Array.isArray(local)) return cloud;
   const map = new Map(local.map((x) => [x[key] as string, x]));
   let changed = false;
+
+  // Demo accounts from SEED (base model). Once deleted locally by user, don't bring them back from cloud.
+  const DEMO_ACCOUNT_IDS = ["acc-corriente", "acc-ahorro", "acc-deposito", "acc-usd"];
+
   for (const item of cloud) {
     const existing = map.get(item[key] as string);
+    // Skip re-adding deleted demo accounts
+    if (key === "id" && DEMO_ACCOUNT_IDS.includes(item[key] as string) && !existing) {
+      continue;
+    }
     if (!existing || (item._updatedAt || 0) > (existing._updatedAt || 0)) {
       map.set(item[key] as string, item);
       changed = true;
@@ -84,8 +92,16 @@ function mergeByID<T extends { id: string; _updatedAt?: number }>(local: T[], cl
 
 function innerReducer(state: AppState, action: Action): AppState {
   switch (action.type) {
-    case "hydrate":
-      return action.state;
+    case "hydrate": {
+      const h = action.state || state;
+      let cleaned = h && Array.isArray(h.accounts) && Array.isArray(h.transactions)
+        ? { ...h, transactions: cleanOrphanTransactions(h.accounts, h.transactions) }
+        : h;
+      if (cleaned && cleaned.deletedTransactions && Array.isArray(cleaned.transactions)) {
+        cleaned = { ...cleaned, transactions: cleaned.transactions.filter((t: any) => !cleaned.deletedTransactions[t.id]) };
+      }
+      return cleaned;
+    }
 
     case "update_fx": {
       const { fx, priceHistory } = action;
@@ -135,7 +151,9 @@ function innerReducer(state: AppState, action: Action): AppState {
       const accounts = state.accounts.map((a) =>
         a.id === old.accountId ? { ...a, balance: Math.round((a.balance - old.amount) * 100) / 100 } : a
       );
-      return { ...state, accounts, transactions: state.transactions.filter((t) => t.id !== action.id) };
+      const txs = state.transactions.filter((t) => t.id !== action.id);
+      const dels = { ...(state.deletedTransactions || {}), [action.id]: Date.now() };
+      return { ...state, accounts, transactions: txs, deletedTransactions: dels };
     }
 
     case "transfer": {
@@ -212,7 +230,12 @@ function innerReducer(state: AppState, action: Action): AppState {
     }
 
     case "delete_account":
-      return { ...state, accounts: state.accounts.filter((a) => a.id !== action.accountId) };
+      const aid = action.accountId;
+      return {
+        ...state,
+        accounts: state.accounts.filter((a) => a.id !== aid),
+        transactions: state.transactions.filter((t) => t.accountId !== aid),
+      };
 
     case "add_category":
       return { ...state, categories: [...state.categories, { id: uid(), ...action.category }] };
@@ -331,13 +354,23 @@ function innerReducer(state: AppState, action: Action): AppState {
 
     case "restore": {
       const s = action.state || {};
+      const mergedAccounts = mergeByID(state.accounts, s.accounts);
+      let mergedTxs = mergeByID(state.transactions, s.transactions);
+      mergedTxs = cleanOrphanTransactions(mergedAccounts, mergedTxs);
+      const mergedDeleted = { ...(state.deletedTransactions || {}), ...(s.deletedTransactions || {}) };
+      mergedTxs = mergedTxs.filter((t: any) => {
+        const dts = mergedDeleted[t.id];
+        return !dts || dts <= (t._updatedAt || 0);
+      });
+      const mergedScheduled = mergeByID(state.scheduled, s.scheduled);
       return accrueInterest({
         ...state,
         _syncVersion: Math.max(state._syncVersion, s._syncVersion || 0),
         settings: { ...state.settings, ...(s.settings || {}) },
-        accounts: mergeByID(state.accounts, s.accounts),
-        transactions: mergeByID(state.transactions, s.transactions),
-        scheduled: mergeByID(state.scheduled, s.scheduled),
+        accounts: mergedAccounts,
+        transactions: mergedTxs,
+        scheduled: mergedScheduled,
+        deletedTransactions: mergedDeleted,
         categories: mergeByID(state.categories, s.categories),
         assets: s.assets ? {
           ...state.assets, ...s.assets,

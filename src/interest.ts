@@ -8,10 +8,11 @@ export function addDaysISO(iso: string, n: number): string {
   return new Date(new Date(iso).getTime() + n * DAY_MS).toISOString().slice(0, 10);
 }
 
-function depositDate(iso: string): string {
+function getDepositDate(iso: string, acc?: Account): string {
   const dow = new Date(iso + "T12:00:00").getDay();
-  if (dow === 6) return addDaysISO(iso, 2);
-  if (dow === 0) return addDaysISO(iso, 1);
+  const pref = (acc && acc.weekendDepositDay) || 'monday';
+  if (dow === 6) return pref === 'saturday' ? iso : addDaysISO(iso, 2);
+  if (dow === 0) return pref === 'saturday' ? iso : addDaysISO(iso, 1);
   return iso;
 }
 
@@ -74,22 +75,52 @@ function accrueCapped(acc: Account, now: string): AccrueCappedResult {
     const taxDivisor = t.accrual === "daily" ? DAYS_PER_YEAR : 12;
     const tax = r2(isrRate > 0 ? t.base * (isrRate / taxDivisor) * periods : 0);
 
-    const date = depositDate(now);
+    const postDate = getDepositDate(now, acc);
+    // Solo emitir si el día de depósito ya llegó (evita fechas futuras cuando pref lunes y hoy sábado)
+    if (postDate > now) {
+      // defer: no postear todavía; last no se actualiza para que el próximo día atrape el acumulado
+      out[`lastAccrual${t.n}`] = t.last; // mantener
+      continue;
+    }
+    const nDeposits = (acc.weekendDeposits || 1) as 1 | 2 | 3;
+    const isWeekendRelated = postDate !== now || [6, 0].includes(new Date(now + "T12:00:00").getDay());
     if (gain > 0.005) {
-      txs.push({
-        id: uid(), date,
-        description: `Intereses ${acc.name} · ${t.label} (${(t.rate * 100).toFixed(2)} % TAE)`,
-        amount: gain, currency: acc.currency, category: "Intereses", accountId: acc.id, auto: true,
-      });
+      if (nDeposits > 1 && isWeekendRelated) {
+        const part = r2(gain / nDeposits);
+        for (let k = 1; k <= nDeposits; k++) {
+          txs.push({
+            id: uid(), date: postDate,
+            description: `Intereses ${acc.name} · ${t.label} (${(t.rate * 100).toFixed(2)} % TAE) (depósito ${k}/${nDeposits})`,
+            amount: part, currency: acc.currency, category: "Intereses", accountId: acc.id, auto: true,
+          });
+        }
+      } else {
+        txs.push({
+          id: uid(), date: postDate,
+          description: `Intereses ${acc.name} · ${t.label} (${(t.rate * 100).toFixed(2)} % TAE)`,
+          amount: gain, currency: acc.currency, category: "Intereses", accountId: acc.id, auto: true,
+        });
+      }
       balance = r2(balance + gain);
       out[`gainAccrued${t.n}`] = r2(t.gainAcc + gain);
     }
     if (isrRate > 0 && tax > 0.005) {
-      txs.push({
-        id: uid(), date,
-        description: `Impuesto intereses ${acc.name} · ${t.label} (${(isrRate * 100).toFixed(4)} % anual)`,
-        amount: -tax, currency: acc.currency, category: "Impuestos", accountId: acc.id, auto: true,
-      });
+      if (nDeposits > 1 && isWeekendRelated) {
+        const partTax = r2(tax / nDeposits);
+        for (let k = 1; k <= nDeposits; k++) {
+          txs.push({
+            id: uid(), date: postDate,
+            description: `Impuesto intereses ${acc.name} · ${t.label} (${(isrRate * 100).toFixed(4)} % anual) (depósito ${k}/${nDeposits})`,
+            amount: -partTax, currency: acc.currency, category: "Impuestos", accountId: acc.id, auto: true,
+          });
+        }
+      } else {
+        txs.push({
+          id: uid(), date: postDate,
+          description: `Impuesto intereses ${acc.name} · ${t.label} (${(isrRate * 100).toFixed(4)} % anual)`,
+          amount: -tax, currency: acc.currency, category: "Impuestos", accountId: acc.id, auto: true,
+        });
+      }
       balance = r2(balance - tax);
     }
     out[`lastAccrual${t.n}`] = newLast;
@@ -104,9 +135,8 @@ export const isCappedAccount = (a: Account): boolean =>
 export function accrueInterest(state: AppState): AppState {
   const now = todayISO();
 
-  const dow = new Date(now + "T12:00:00").getDay();
-  if (dow === 6 || dow === 0) return state;
-
+  // No skip global de fines de semana: cada cuenta decide el día de depósito vía weekendDepositDay
+  // y si se pospone (si pref 'monday' en sábado, se emite el lunes).
   const accounts: Account[] = [];
   const newTx: Transaction[] = [];
 
@@ -142,26 +172,53 @@ export function accrueInterest(state: AppState): AppState {
     }
 
     if (gained > 0.005) {
-      const date = depositDate(now);
-      newTx.push({
-        id: uid(), date,
-        description: `Intereses ${acc.name} (${(acc.rate * 100).toFixed(2)} % TAE)`,
-        amount: r2(gained), currency: acc.currency, category: "Intereses", accountId: acc.id, auto: true,
-      });
+      const postDate = getDepositDate(now, acc);
+      if (postDate > now) {
+        // diferir (ej. sábado con pref lunes): no emitir, mantener last para que el lunes acumule
+        accounts.push(acc);
+        continue;
+      }
+      const nDeposits = (acc.weekendDeposits || 1) as 1 | 2 | 3;
+      const dowNow = new Date(now + "T12:00:00").getDay();
+      const isWeekendRelated = (postDate !== now) || (dowNow === 6 || dowNow === 0);
       let finalBalance = r2(balance);
       const isrRate = acc.isrRate || 0;
-      if (isrRate > 0) {
-        const taxDivisor = acc.accrual === "daily" ? 365 : 12;
-        const tax = r2(startBalance * (isrRate / taxDivisor) * periods);
-        if (tax > 0.005) {
+      const taxDivisor = acc.accrual === "daily" ? 365 : 12;
+      const tax = r2(isrRate > 0 ? startBalance * (isrRate / taxDivisor) * periods : 0);
+      if (nDeposits > 1 && isWeekendRelated) {
+        const partGain = r2(gained / nDeposits);
+        for (let k = 1; k <= nDeposits; k++) {
           newTx.push({
-            id: uid(), date,
+            id: uid(), date: postDate,
+            description: `Intereses ${acc.name} (${(acc.rate * 100).toFixed(2)} % TAE) (depósito ${k}/${nDeposits})`,
+            amount: partGain, currency: acc.currency, category: "Intereses", accountId: acc.id, auto: true,
+          });
+        }
+        if (isrRate > 0 && tax > 0.005) {
+          const partTax = r2(tax / nDeposits);
+          for (let k = 1; k <= nDeposits; k++) {
+            newTx.push({
+              id: uid(), date: postDate,
+              description: `Impuesto intereses ${acc.name} (${(isrRate * 100).toFixed(4)} % anual) (depósito ${k}/${nDeposits})`,
+              amount: -partTax, currency: acc.currency, category: "Impuestos", accountId: acc.id, auto: true,
+            });
+          }
+        }
+      } else {
+        newTx.push({
+          id: uid(), date: postDate,
+          description: `Intereses ${acc.name} (${(acc.rate * 100).toFixed(2)} % TAE)`,
+          amount: r2(gained), currency: acc.currency, category: "Intereses", accountId: acc.id, auto: true,
+        });
+        if (isrRate > 0 && tax > 0.005) {
+          newTx.push({
+            id: uid(), date: postDate,
             description: `Impuesto intereses ${acc.name} (${(isrRate * 100).toFixed(4)} % anual)`,
             amount: -tax, currency: acc.currency, category: "Impuestos", accountId: acc.id, auto: true,
           });
-          finalBalance = r2(finalBalance - tax);
         }
       }
+      if (tax > 0.005) finalBalance = r2(finalBalance - tax);
       accounts.push({ ...acc, balance: finalBalance, lastAccrual: now });
     } else {
       accounts.push(acc);

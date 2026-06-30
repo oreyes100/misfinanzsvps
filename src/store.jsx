@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState } from "react";
-import { API_BASE, BASE_FX, DAY_MS, DEFAULT_CATEGORIES, categorize, todayISO, uid } from "./utils.js";
+import { API_BASE, BASE_FX, DAY_MS, DEFAULT_CATEGORIES, categorize, cleanOrphanTransactions, todayISO, uid } from "./utils.js";
 import { accrueInterest } from "./interest.js";
 import { migrate } from "./migrations.js";
 import useFX from "./useFX.js";
@@ -80,8 +80,16 @@ function reducer(state, action) {
 
 function innerReducer(state, action) {
   switch (action.type) {
-    case "hydrate":
-      return action.state;
+    case "hydrate": {
+      const h = action.state || state;
+      let cleaned = h && Array.isArray(h.accounts) && Array.isArray(h.transactions)
+        ? { ...h, transactions: cleanOrphanTransactions(h.accounts, h.transactions) }
+        : h;
+      if (cleaned && cleaned.deletedTransactions && Array.isArray(cleaned.transactions)) {
+        cleaned = { ...cleaned, transactions: cleaned.transactions.filter((t) => !cleaned.deletedTransactions[t.id]) };
+      }
+      return cleaned;
+    }
 
     case "update_fx": {
       const { fx, priceHistory } = action;
@@ -133,7 +141,9 @@ function innerReducer(state, action) {
       const accounts = state.accounts.map((a) =>
         a.id === old.accountId ? { ...a, balance: Math.round((a.balance - old.amount) * 100) / 100 } : a
       );
-      return { ...state, accounts, transactions: state.transactions.filter((t) => t.id !== action.id) };
+      const txs = state.transactions.filter((t) => t.id !== action.id);
+      const dels = { ...(state.deletedTransactions || {}), [action.id]: Date.now() };
+      return { ...state, accounts, transactions: txs, deletedTransactions: dels };
     }
 
     case "transfer": {
@@ -215,7 +225,12 @@ function innerReducer(state, action) {
     }
 
     case "delete_account":
-      return { ...state, accounts: state.accounts.filter((a) => a.id !== action.accountId) };
+      const aid = action.accountId;
+      return {
+        ...state,
+        accounts: state.accounts.filter((a) => a.id !== aid),
+        transactions: state.transactions.filter((t) => t.accountId !== aid),
+      };
 
     case "add_category":
       return { ...state, categories: [...state.categories, { id: uid(), _updatedAt: Date.now(), ...action.category }] };
@@ -344,8 +359,17 @@ function innerReducer(state, action) {
         if (!Array.isArray(local)) return cloud;
         const map = new Map(local.map((x) => [x[key], x]));
         let changed = false;
+
+        // Demo accounts from SEED (base model). Once deleted locally by user, don't bring them back from cloud.
+        const DEMO_ACCOUNT_IDS = ["acc-corriente", "acc-ahorro", "acc-deposito", "acc-usd"];
+
         for (const item of cloud) {
           const existing = map.get(item[key]);
+          // Skip re-adding deleted demo accounts
+          const itemId = item[key];
+          if (key === "id" && DEMO_ACCOUNT_IDS.includes(itemId) && !existing) {
+            continue;
+          }
           if (!existing || (item._updatedAt || 0) > (existing._updatedAt || 0)) {
             map.set(item[key], item);
             changed = true;
@@ -353,13 +377,23 @@ function innerReducer(state, action) {
         }
         return changed ? [...map.values()] : local;
       }
+      const mergedAccounts = mergeByID(state.accounts, s.accounts);
+      let mergedTxs = mergeByID(state.transactions, s.transactions);
+      mergedTxs = cleanOrphanTransactions(mergedAccounts, mergedTxs);
+      const mergedDeleted = { ...(state.deletedTransactions || {}), ...(s.deletedTransactions || {}) };
+      mergedTxs = mergedTxs.filter((t) => {
+        const dts = mergedDeleted[t.id];
+        return !dts || dts <= ((t._updatedAt || 0));
+      });
+      const mergedScheduled = mergeByID(state.scheduled, s.scheduled);
       return accrueInterest({
         ...state,
         _syncVersion: Math.max(state._syncVersion, s._syncVersion || 0),
         settings: { ...state.settings, ...(s.settings || {}) },
-        accounts: mergeByID(state.accounts, s.accounts),
-        transactions: mergeByID(state.transactions, s.transactions),
-        scheduled: mergeByID(state.scheduled, s.scheduled),
+        accounts: mergedAccounts,
+        transactions: mergedTxs,
+        scheduled: mergedScheduled,
+        deletedTransactions: mergedDeleted,
         categories: mergeByID(state.categories, s.categories, "id"),
         assets: s.assets ? { ...state.assets, ...s.assets, crypto: mergeByID(state.assets.crypto, s.assets.crypto, "id"), realEstate: mergeByID(state.assets.realEstate, s.assets.realEstate, "id"), depreciating: mergeByID(state.assets.depreciating || [], s.assets.depreciating || [], "id") } : state.assets,
         transferAliases: { ...state.transferAliases, ...(s.transferAliases || {}) },
@@ -387,6 +421,10 @@ function load() {
     if (!raw) return accrueInterest(SEED);
     const saved = JSON.parse(raw);
     const merged = { ...SEED, ...saved, fx: { ...BASE_FX, ...saved.fx } };
+    merged.transactions = cleanOrphanTransactions(merged.accounts, merged.transactions);
+    if (merged.deletedTransactions) {
+      merged.transactions = (merged.transactions || []).filter((t) => !merged.deletedTransactions[t.id]);
+    }
     return migrate(accrueInterest(merged));
   } catch {
     return accrueInterest(SEED);
@@ -397,8 +435,8 @@ const SYNC_KEY = "mis-finazas-sync-id";
 
 /** Partes del estado que viajan a la nube (precios/FX en vivo se quedan fuera). */
 function syncableSlice(state) {
-  const { settings, accounts, assets, transactions, scheduled, categories, transferAliases, categoryAliases, statementPatterns, _syncVersion } = state;
-  return { settings, accounts, assets, transactions, scheduled, categories, transferAliases, categoryAliases, statementPatterns, _syncVersion };
+  const { settings, accounts, assets, transactions, scheduled, categories, transferAliases, categoryAliases, statementPatterns, _syncVersion, deletedTransactions } = state;
+  return { settings, accounts, assets, transactions, scheduled, categories, transferAliases, categoryAliases, statementPatterns, _syncVersion, deletedTransactions };
 }
 
 export function StoreProvider({ children }) {
@@ -423,7 +461,7 @@ export function StoreProvider({ children }) {
   // "ayer guardé la tasa escalonada y hoy no estaba".
   const cloudReadyRef = useRef(!syncId);
   const syncable = useMemo(() => JSON.stringify(syncableSlice(state)), [
-    state.settings, state.accounts, state.assets, state.transactions, state.scheduled, state.categories, state.transferAliases, state.categoryAliases, state._syncVersion,
+    state.settings, state.accounts, state.assets, state.transactions, state.scheduled, state.categories, state.transferAliases, state.categoryAliases, state._syncVersion, state.deletedTransactions,
   ]);
   const syncableRef = useRef(syncable);
   syncableRef.current = syncable;

@@ -50,6 +50,9 @@ export interface Account {
   lastAccrual2?: string;
   // ISR configurable por cuenta
   isrRate?: number;
+  // Reglas de depósito de intereses de fin de semana (configurable por banco/cuenta)
+  weekendDepositDay?: 'saturday' | 'monday';
+  weekendDeposits?: 1 | 2 | 3; // 1 = junto, 2 o 3 = depósitos separados el mismo día
   // Tarjetas de crédito
   payDay?: number;
   lastPaidCycle?: string;
@@ -177,6 +180,8 @@ export interface AppState {
   priceHistory: PriceHistory;
   goldPriceEUR: number;
   _syncVersion: number;
+  // Para que los deletes de transacciones no reaparezcan por merge de nube
+  deletedTransactions?: Record<string, number>; // txId -> delete timestamp (ms)
 }
 
 // ---------- Acciones del reducer (discriminated union) ----------

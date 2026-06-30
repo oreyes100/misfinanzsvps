@@ -174,9 +174,15 @@ export default function Reports() {
     };
   }, [state.transactions, state.fx, gran, startDate, endDate, base]);
 
-  // Descargas
-  const handleDownloadCSV = () => downloadReportCSV(comprehensiveReport.groups, `reporte-${gran}-ingresos-gastos.csv`);
-  const handleDownloadPDF = () => downloadReportPDF(comprehensiveReport.groups, gran);
+  // Descargas profesionales completas (con desgloses, salud financiera y simulación de gráficas)
+  const handleDownloadCSV = () => {
+    const health = { savingsRate: data.savingsRate, emergencyMonths: data.emergencyMonths, avgExpense: data.avgExpense, avgIncome: data.avgIncome, recs: data.recs };
+    downloadReportCSV(comprehensiveReport, `reporte-${gran}-completo.csv`, gran, startDate, endDate, health);
+  };
+  const handleDownloadPDF = () => {
+    const health = { savingsRate: data.savingsRate, emergencyMonths: data.emergencyMonths, avgExpense: data.avgExpense, avgIncome: data.avgIncome, recs: data.recs };
+    downloadReportPDF(comprehensiveReport, gran, startDate, endDate, health);
+  };
 
   const maxBar = Math.max(1, ...data.months.map((m) => Math.max(m.income, m.expense)));
 
@@ -379,17 +385,30 @@ export default function Reports() {
           </div>
         </div>
 
-        {/* Gráfica de subtotales por categoría (Gastos) */}
-        <div className="mt-3">
-          <h4 className="font-semibold text-sm mb-1">Gráfica de Gastos por Categoría</h4>
-          <PieChart 
-            slices={Object.entries(comprehensiveReport.expenseByCat || {}).map(([label, value]) => ({
-              label,
-              value,
-              color: catColor(label, state.categories)
-            }))} 
-            size={160} 
-          />
+        {/* Gráficas de subtotales por categoría */}
+        <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <h4 className="font-semibold text-sm mb-1">Gráfica de Ingresos por Categoría</h4>
+            <PieChart 
+              slices={Object.entries(comprehensiveReport.incomeByCat || {}).map(([label, value]) => ({
+                label,
+                value,
+                color: catColor(label, state.categories)
+              }))} 
+              size={140} 
+            />
+          </div>
+          <div>
+            <h4 className="font-semibold text-sm mb-1">Gráfica de Gastos por Categoría</h4>
+            <PieChart 
+              slices={Object.entries(comprehensiveReport.expenseByCat || {}).map(([label, value]) => ({
+                label,
+                value,
+                color: catColor(label, state.categories)
+              }))} 
+              size={140} 
+            />
+          </div>
         </div>
 
         {/* Controles en la parte inferior */}

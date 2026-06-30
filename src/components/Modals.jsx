@@ -219,13 +219,18 @@ export function TransferModal({ onClose, preset, tabs }) {
 
 /** Alta y edición de gasto/ingreso con categorización IA y OCR de recibos (demo). `tx` → editar. */
 export function TransactionModal({ onClose, preset, tx }) {
-  const { state, dispatch } = useStore();
+  const { state, dispatch, sync } = useStore();
   const isEdit = !!tx;
   const [desc, setDesc] = useState(tx?.description || preset?.description || "");
   const [amount, setAmount] = useState(tx ? Math.abs(tx.amount).toString() : preset?.amount?.toString() || "");
   const [sign, setSign] = useState(tx ? (tx.amount < 0 ? "expense" : "income") : preset?.sign || "expense");
   const [date, setDate] = useState(tx?.date || todayISO());
-  const [accountId, setAccountId] = useState(tx?.accountId || state.accounts[0]?.id);
+  const initialAccount = (tx?.accountId && state.accounts.some((a) => a.id === tx.accountId))
+    ? tx.accountId
+    : (state.accounts[0]?.id || tx?.accountId || '');
+  const [accountId, setAccountId] = useState(initialAccount);
+  const accountExists = !!state.accounts.find((a) => a.id === accountId);
+  const isOrphanTx = !!tx && !state.accounts.some((a) => a.id === tx.accountId);
   const [catOverride, setCatOverride] = useState(tx?.category || "");
   const [subcat, setSubcat] = useState(tx?.subcategory || "");
   const [notes, setNotes] = useState(tx?.notes || preset?.notes || "");
@@ -242,7 +247,7 @@ export function TransactionModal({ onClose, preset, tx }) {
   const activeCat = state.categories.find((c) => c.name === category);
   const subcatOptions = activeCat?.subcategories || [];
 
-  const acctCurrency = state.accounts.find((a) => a.id === accountId)?.currency || "EUR";
+  const acctCurrency = state.accounts.find((a) => a.id === accountId)?.currency || tx?.currency || "EUR";
 
   // Aplica el resultado simple (un solo gasto) al formulario.
   const applySingle = (merchant, total, when) => {
@@ -407,11 +412,12 @@ export function TransactionModal({ onClose, preset, tx }) {
     const amt = parseFloat(amount);
     if (!desc || !amt) return;
     const acc = state.accounts.find((a) => a.id === accountId);
+    const useCurrency = acc?.currency || tx?.currency || "EUR";
     const payload = {
       description: desc,
       amount: sign === "expense" ? -Math.abs(amt) : Math.abs(amt),
-      currency: acc.currency,
-      accountId,
+      currency: useCurrency,
+      accountId: accountId || (tx?.accountId || ''),
       category,
       subcategory: subcat || null,
       date,
@@ -424,8 +430,15 @@ export function TransactionModal({ onClose, preset, tx }) {
   };
 
   const remove = () => {
-    if (confirm(`¿Eliminar «${tx.description}»? El saldo de la cuenta se reajustará.`)) {
+    const msg = isOrphanTx
+      ? `¿Eliminar «${tx.description}»? (transacción huérfana de cuenta borrada)`
+      : `¿Eliminar «${tx.description}»? El saldo de la cuenta se reajustará.`;
+    if (confirm(msg)) {
       dispatch({ type: "delete_transaction", id: tx.id });
+      // Force immediate cloud push so aggressive pulls don't restore the deleted tx
+      if (sync && typeof sync.forcePush === "function" && sync.id) {
+        setTimeout(() => { try { sync.forcePush(); } catch (e) {} }, 60);
+      }
       onClose();
     }
   };
@@ -677,6 +690,12 @@ export function TransactionModal({ onClose, preset, tx }) {
           </div>
         ) : (
           <TypeTabs value={sign} onChange={handleType} />
+        )}
+
+        {isOrphanTx && (
+          <div className="rounded-lg border border-loss/50 bg-loss/10 px-3 py-2 text-xs text-loss" role="alert">
+            ⚠️ Transacción huérfana: la cuenta original fue eliminada. Puedes eliminarla o reasignarla a una cuenta existente al guardar.
+          </div>
         )}
 
         <Field label="Descripción">
