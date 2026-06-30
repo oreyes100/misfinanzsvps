@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 import { useStore } from "../store.jsx";
 import { catColor, convert, fmtMoney, fmtPct, downloadReportCSV, downloadReportPDF } from "../utils.js";
 import { Glass, Btn, inputCls } from "./UI.jsx";
+import { PieChart } from "./Charts.jsx";
 
 const PERIODS = [
   { id: 3, label: "3 meses" },
@@ -51,6 +52,8 @@ export default function Reports() {
   const { state } = useStore();
   const [period, setPeriod] = useState(6);
   const [gran, setGran] = useState('mes');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
   const base = state.settings.baseCurrency;
   const toBase = (amount, currency) => convert(amount, currency, base, state.fx);
 
@@ -130,29 +133,46 @@ export default function Reports() {
     return { months, totalIncome, totalExpense, net, savingsRate, avgExpense, avgIncome, categories, emergencyMonths, cash, recs };
   }, [state.transactions, state.accounts, state.fx, period, base]);
 
-  // Reporte comprensivo por granularidad (día/semana/mes/trimestre/etc)
+  // Reporte comprensivo por granularidad (día/semana/mes/trimestre/etc) con filtro de fechas
   const comprehensiveReport = useMemo(() => {
     const txs = Array.isArray(state.transactions) ? state.transactions : [];
     const fx = state.fx || {};
+    const filtered = txs.filter(t => {
+      if (!t || !t.date || t.category === 'Transferencia') return false;
+      if (startDate && t.date < startDate) return false;
+      if (endDate && t.date > endDate) return false;
+      return true;
+    });
     const groups = {};
-    for (const t of txs) {
-      if (!t || t.category === 'Transferencia' || !t.date) continue;
+    const incomeByCat = {};
+    const expenseByCat = {};
+    let incomeTotal = 0;
+    let expenseTotal = 0;
+    for (const t of filtered) {
       const key = getGroupKey(t.date, gran);
-      if (!groups[key]) groups[key] = { period: key, income: 0, expense: 0, count: 0, byCat: {} };
+      if (!groups[key]) groups[key] = { period: key, income: 0, expense: 0, count: 0 };
       const eur = toBase(Math.abs(t.amount || 0), t.currency || base);
       if ((t.amount || 0) > 0) {
         groups[key].income += eur;
+        incomeTotal += eur;
+        incomeByCat[t.category] = (incomeByCat[t.category] || 0) + eur;
       } else {
         groups[key].expense += eur;
-        groups[key].byCat[t.category] = (groups[key].byCat[t.category] || 0) + eur;
+        expenseTotal += eur;
+        expenseByCat[t.category] = (expenseByCat[t.category] || 0) + eur;
       }
       groups[key].count++;
     }
     const list = Object.values(groups).sort((a, b) => a.period.localeCompare(b.period));
-    const totalIncome = list.reduce((s, g) => s + g.income, 0);
-    const totalExpense = list.reduce((s, g) => s + g.expense, 0);
-    return { groups: list, totalIncome, totalExpense, net: totalIncome - totalExpense };
-  }, [state.transactions, state.fx, gran, base]);
+    return { 
+      groups: list, 
+      totalIncome: incomeTotal, 
+      totalExpense: expenseTotal, 
+      net: incomeTotal - expenseTotal,
+      incomeByCat,
+      expenseByCat
+    };
+  }, [state.transactions, state.fx, gran, startDate, endDate, base]);
 
   // Descargas
   const handleDownloadCSV = () => downloadReportCSV(comprehensiveReport.groups, `reporte-${gran}-ingresos-gastos.csv`);
@@ -325,6 +345,82 @@ export default function Reports() {
               </tr>
             </tfoot>
           </table>
+        </div>
+
+        {/* Desglose por categorías con subtotales */}
+        <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <h4 className="font-semibold text-sm mb-1">Ingresos Total: {fmtMoney(comprehensiveReport.totalIncome, base)}</h4>
+            <ul className="text-xs space-y-0.5">
+              {Object.entries(comprehensiveReport.incomeByCat || {})
+                .sort((a, b) => b[1] - a[1])
+                .map(([cat, sub]) => (
+                  <li key={cat} className="flex justify-between">
+                    <span>{cat}</span>
+                    <span className="text-gain">{fmtMoney(sub, base)}</span>
+                  </li>
+                ))}
+              {Object.keys(comprehensiveReport.incomeByCat || {}).length === 0 && <li className="text-ink-dim">Sin ingresos en el rango.</li>}
+            </ul>
+          </div>
+          <div>
+            <h4 className="font-semibold text-sm mb-1">Gastos Total: {fmtMoney(comprehensiveReport.totalExpense, base)}</h4>
+            <ul className="text-xs space-y-0.5">
+              {Object.entries(comprehensiveReport.expenseByCat || {})
+                .sort((a, b) => b[1] - a[1])
+                .map(([cat, sub]) => (
+                  <li key={cat} className="flex justify-between">
+                    <span>{cat}</span>
+                    <span className="text-loss">{fmtMoney(sub, base)}</span>
+                  </li>
+                ))}
+              {Object.keys(comprehensiveReport.expenseByCat || {}).length === 0 && <li className="text-ink-dim">Sin gastos en el rango.</li>}
+            </ul>
+          </div>
+        </div>
+
+        {/* Gráfica de subtotales por categoría (Gastos) */}
+        <div className="mt-3">
+          <h4 className="font-semibold text-sm mb-1">Gráfica de Gastos por Categoría</h4>
+          <PieChart 
+            slices={Object.entries(comprehensiveReport.expenseByCat || {}).map(([label, value]) => ({
+              label,
+              value,
+              color: catColor(label, state.categories)
+            }))} 
+            size={160} 
+          />
+        </div>
+
+        {/* Controles en la parte inferior */}
+        <div className="mt-4 border-t border-white/10 pt-3">
+          <p className="text-xs text-ink-dim mb-2">Controles del reporte:</p>
+          <div className="flex flex-wrap gap-2 items-end">
+            <div>
+              <label className="block text-[10px] text-ink-dim">Granularidad (longitud)</label>
+              <select className={inputCls + " !w-32"} value={gran} onChange={e => setGran(e.target.value)}>
+                {GRANULARITIES.map(g => <option key={g.id} value={g.id}>{g.label}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-[10px] text-ink-dim">Fecha inicial</label>
+              <input 
+                type="date" 
+                value={startDate} 
+                onChange={e => setStartDate(e.target.value)} 
+                className={inputCls + " !w-32"} 
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] text-ink-dim">Fecha final</label>
+              <input 
+                type="date" 
+                value={endDate} 
+                onChange={e => setEndDate(e.target.value)} 
+                className={inputCls + " !w-32"} 
+              />
+            </div>
+          </div>
         </div>
 
         <div className="mt-3 flex flex-wrap gap-2">
