@@ -6,6 +6,7 @@ import { Btn, inputCls } from "./UI.jsx";
 const BG_VIDEO = "/finance-bg.mp4";
 
 function SetupForm({ onDone }) {
+  const [user, setUser] = useState("jr");
   const [pass, setPass] = useState("");
   const [confirm, setConfirm] = useState("");
   const [error, setError] = useState("");
@@ -14,12 +15,14 @@ function SetupForm({ onDone }) {
   const submit = async (e) => {
     e.preventDefault();
     setError("");
+    const uname = user.trim();
+    if (!uname) { setError("Escribe un nombre de usuario."); return; }
     if (pass.length < 6) { setError("Mínimo 6 caracteres."); return; }
     if (pass !== confirm) { setError("Las contraseñas no coinciden."); return; }
     setBusy(true);
     try {
-      await setupAdmin(pass);
-      const session = await login("admin", pass);
+      await setupAdmin(pass, uname);
+      const session = await login(uname, pass);
       if (session) onDone(session);
       else setError("Error al iniciar sesión.");
     } catch (err) {
@@ -30,10 +33,14 @@ function SetupForm({ onDone }) {
 
   return (
     <form onSubmit={submit} className="space-y-3">
-      <p className="text-sm text-ink-dim">Configura la contraseña de administrador para proteger tus datos.</p>
+      <p className="text-sm text-ink-dim">Crea el usuario administrador para proteger tus datos.</p>
       <div>
-        <label htmlFor="setup-pass" className="mb-1 block text-xs font-medium text-ink-dim">Contraseña de administrador</label>
-        <input id="setup-pass" className={inputCls} type="password" value={pass} onChange={(e) => setPass(e.target.value)} autoFocus required minLength={6} />
+        <label htmlFor="setup-user" className="mb-1 block text-xs font-medium text-ink-dim">Usuario administrador</label>
+        <input id="setup-user" className={inputCls} value={user} onChange={(e) => setUser(e.target.value)} autoComplete="username" autoFocus required />
+      </div>
+      <div>
+        <label htmlFor="setup-pass" className="mb-1 block text-xs font-medium text-ink-dim">Contraseña</label>
+        <input id="setup-pass" className={inputCls} type="password" value={pass} onChange={(e) => setPass(e.target.value)} required minLength={6} />
       </div>
       <div>
         <label htmlFor="setup-confirm" className="mb-1 block text-xs font-medium text-ink-dim">Confirmar contraseña</label>
@@ -147,9 +154,11 @@ export default function Login({ onLogin }) {
             <button
               type="button"
               onClick={() => {
+                if (!confirm("Esto borra los usuarios de este dispositivo y la biometría. Crearás un usuario nuevo. ¿Continuar?")) return;
                 localStorage.removeItem('mis-finazas-users');
                 sessionStorage.removeItem('mis-finazas-session');
                 localStorage.removeItem('mis-finazas-session');
+                localStorage.removeItem('mis-finazas-webauthn-cred'); // limpia Face ID/huella del acceso anterior
                 location.reload();
               }}
               className="mt-3 w-full text-center text-[10px] text-ink-dim/60 underline hover:text-ink-dim"
