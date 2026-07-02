@@ -274,7 +274,7 @@ function AccountModal({ account, onClose }) {
 }
 
 export default function Accounts() {
-  const { state, dispatch } = useStore();
+  const { state, dispatch, sync } = useStore();
   const [modal, setModal] = useState(null); // "new" | account
   const base = state.settings.baseCurrency;
   const inBase = (eur) => convert(eur, "EUR", base, state.fx);
@@ -288,6 +288,10 @@ export default function Accounts() {
   const remove = (a) => {
     if (confirm(`¿Eliminar la cuenta «${a.name}»? Sus movimientos se conservan en el historial.`)) {
       dispatch({ type: "delete_account", accountId: a.id });
+      // Force push immediately so cloud and future loads/pulls don't bring the demo account back
+      if (sync && typeof sync.forcePush === "function" && sync.id) {
+        setTimeout(() => { try { sync.forcePush(); } catch {} }, 60);
+      }
     }
   };
 

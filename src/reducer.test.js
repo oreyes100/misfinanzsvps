@@ -222,6 +222,23 @@ describe("reducer · add/update/delete_account", () => {
     expect(next.accounts).toHaveLength(2);
     expect(next.accounts.find((a) => a.id === "acc-usd")).toBeUndefined();
   });
+
+  it("no re-agrega cuentas demo borradas en restore desde nube", () => {
+    // Borramos una demo
+    let next = reducer(state, { type: "delete_account", accountId: "acc-ahorro" });
+    expect(next.accounts.find((a) => a.id === "acc-ahorro")).toBeUndefined();
+
+    // Simulamos pull de nube que trae la cuenta demo
+    const cloudWithDemo = {
+      ...state,
+      accounts: [...state.accounts, { id: "acc-ahorro", name: "Ahorro", type: "savings", currency: "EUR", balance: 9300, rate: 0.031, accrual: "daily", lastAccrual: "2026-06-25" }],
+      _syncVersion: 99,
+    };
+    next = reducer(next, { type: "restore", state: cloudWithDemo });
+    expect(next.accounts.find((a) => a.id === "acc-ahorro")).toBeUndefined();
+    // otras cuentas siguen
+    expect(next.accounts.length).toBeGreaterThan(0);
+  });
 });
 
 // ---------- Categorías ----------

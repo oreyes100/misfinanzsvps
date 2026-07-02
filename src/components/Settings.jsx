@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { useStore } from "../store.jsx";
 import { hasBiometricCredential, isBiometricAvailable, registerBiometric, removeBiometric } from "../auth.js";
-import { CURRENCIES, DASHBOARD_CARDS, cardOn, downloadBackup, downloadCSV, fmtMoney, parseBackup, findPotentialDuplicateGroups, analyzeDuplicateValidity } from "../utils.js";
+import { CURRENCIES, DASHBOARD_CARDS, cardOn, downloadBackup, downloadCSV, fmtMoney, parseBackup, findPotentialDuplicateGroups, analyzeDuplicateValidity, DEMO_ACCOUNT_IDS } from "../utils.js";
 import { Btn, Field, Glass, inputCls } from "./UI.jsx";
 import Users from "./Users.jsx";
 
@@ -365,6 +365,20 @@ function DataTools() {
     }
   };
 
+  const purgeDemoAccounts = () => {
+    const demos = (state.accounts || []).filter((a) => DEMO_ACCOUNT_IDS.includes(a.id));
+    if (!demos.length) {
+      flash('loss', 'No hay cuentas de demostración presentes.');
+      return;
+    }
+    if (!confirm(`¿Eliminar permanentemente las ${demos.length} cuentas base (Ahorro, Corriente, Depósito, USD)? No se regenerarán.`)) return;
+    demos.forEach((a) => dispatch({ type: 'delete_account', accountId: a.id }));
+    flash('gain', `Cuentas demo eliminadas (${demos.length}).`);
+    if (sync && typeof sync.forcePush === "function" && sync.id) {
+      setTimeout(() => { try { sync.forcePush(); } catch {} }, 80);
+    }
+  };
+
   const onFile = async (e) => {
     const file = e.target.files?.[0];
     e.target.value = ""; // permitir re-subir el mismo archivo
@@ -461,6 +475,11 @@ function DataTools() {
           {orphanTxs.length > 3 && <div>... +{orphanTxs.length-3} más</div>}
         </div>
       )}
+
+      <hr className="my-4 border-white/8" />
+      <h3 className="mb-1 text-sm font-semibold">Eliminar cuentas de demostración base</h3>
+      <p className="mb-2 text-xs text-ink-dim">Quita las cuentas semilla (Corriente, Ahorro, Depósito 12m, Cuenta USD) que se regeneraban por el modelo inicial. Una vez eliminadas no volverán gracias a la limpieza en carga y sincronización.</p>
+      <Btn variant="danger" onClick={purgeDemoAccounts}>🗑 Eliminar cuentas demo base</Btn>
 
       {msg && (
         <p role="status" className={`mt-3 text-sm ${msg.tone === "gain" ? "text-gain" : "text-loss"}`}>{msg.text}</p>

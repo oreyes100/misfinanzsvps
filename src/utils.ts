@@ -75,6 +75,15 @@ export function cleanOrphanTransactions(accounts: any[], transactions: any[]): a
   return (Array.isArray(transactions) ? transactions : []).filter((t: any) => t && accIds.has(t.accountId));
 }
 
+// Demo base accounts that user can delete to remove the seed model.
+// Once deleted, we strip them on load/restore/merge so they don't regenerate from SEED or cloud.
+export const DEMO_ACCOUNT_IDS: string[] = ["acc-corriente", "acc-ahorro", "acc-deposito", "acc-usd"];
+
+export function stripDemoAccounts(accounts: any[]): any[] {
+  if (!Array.isArray(accounts)) return [];
+  return accounts.filter((a: any) => !DEMO_ACCOUNT_IDS.includes(a.id));
+}
+
 // ---------- Categorías ----------
 
 export const DEFAULT_CATEGORIES: Category[] = [
