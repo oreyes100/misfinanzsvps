@@ -58,14 +58,52 @@ async function pullCloudUsers() {
   }
 }
 
+/** Actor autenticado actual: {username, hash} del usuario en sesión (firma escrituras a la nube). */
+function currentActor() {
+  try {
+    const sess = JSON.parse(sessionStorage.getItem(SESSION_KEY) || "null");
+    if (!sess) return null;
+    const u = loadUsers().find((x) => x.username.toLowerCase() === String(sess.username).toLowerCase());
+    if (u && u.hash) return { username: u.username, hash: u.hash };
+  } catch {}
+  return null;
+}
+
 export async function pushCloudUsers(users) {
   try {
     await fetch(`${API_BASE}/api/users`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ users }),
+      body: JSON.stringify({ users, actor: currentActor() }),
     });
   } catch {}
+}
+
+/** Verifica la contraseña contra la nube (el hash nunca sale del servidor). Devuelve el usuario saneado (con salt) o null. */
+async function cloudVerify(username, password) {
+  try {
+    const r = await fetch(`${API_BASE}/api/users`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "verify", username, password }),
+    });
+    if (!r.ok) return null;
+    const data = await r.json();
+    return data.ok && data.user ? data.user : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Crea el admin inicial en la nube. Lanza si ya existe alguno (409). */
+async function cloudSetup(user) {
+  const r = await fetch(`${API_BASE}/api/users`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "setup", user }),
+  });
+  if (r.status === 409) throw new Error("Ya existe una cuenta en la nube. Inicia sesión con tu contraseña.");
+  return r.ok;
 }
 
 function mergeUsers(local, cloud) {
@@ -97,8 +135,21 @@ export async function ensureSeed() {
   return users;
 }
 
+/** Chequeo síncrono (solo local) — retrocompatible. Usar needsSetupCloud para la decisión real. */
 export function needsSetup() {
   return loadUsers().length === 0;
+}
+
+/**
+ * ¿Hay que mostrar el setup inicial? Solo si NO hay usuarios ni en local NI en
+ * la nube. Si la nube ya tiene cuentas, se exige login (no setup libre): así un
+ * dispositivo nuevo no puede crear un admin con cualquier contraseña.
+ */
+export async function needsSetupCloud() {
+  if (loadUsers().length > 0) return false;
+  const cloud = await pullCloudUsers();
+  if (cloud === null) return loadUsers().length === 0; // sin red: decidir por local
+  return cloud.length === 0;
 }
 
 export async function setupAdmin(password, username = "admin") {
@@ -115,8 +166,9 @@ export async function setupAdmin(password, username = "admin") {
     accounts: "all",
     created: new Date().toISOString(),
   };
+  // La nube es autoritativa: crea solo si está vacía (lanza 409 si ya hay cuentas).
+  await cloudSetup(admin);
   saveUsers([admin]);
-  await pushCloudUsers([admin]);
   return admin;
 }
 
@@ -124,23 +176,56 @@ export async function login(username, password) {
   await ensureSeed();
   const users = loadUsers();
   const user = users.find((u) => u.username.toLowerCase() === username.toLowerCase().trim());
-  if (!user) return null;
-  let valid = false;
-  if (user.salt) {
-    valid = (await hashPassword(password, user.salt)) === user.hash;
-  } else {
-    valid = (await sha256(password)) === user.hash;
-    if (valid) {
-      user.salt = generateSalt();
-      user.hash = await hashPassword(password, user.salt);
-      saveUsers(users);
-      pushCloudUsers(users);
+
+  // 1) Verificación local si tenemos la credencial completa.
+  if (user && user.hash) {
+    let valid = false;
+    if (user.salt) {
+      valid = (await hashPassword(password, user.salt)) === user.hash;
+    } else {
+      valid = (await sha256(password)) === user.hash; // legado sin salt
+      if (valid) {
+        user.salt = generateSalt();
+        user.hash = await hashPassword(password, user.salt);
+        saveUsers(users);
+        pushCloudUsers(users);
+      }
     }
+    if (valid) return startSession(user);
   }
-  if (!valid) return null;
+
+  // 2) Sin credencial local válida → verificar contra la nube (el hash vive
+  //    en el servidor). Al validar, cacheamos la credencial localmente.
+  const cloudUser = await cloudVerify(username, password);
+  if (cloudUser && cloudUser.salt) {
+    const cached = { ...cloudUser, hash: await hashPassword(password, cloudUser.salt) };
+    const rest = loadUsers().filter((u) => u.username.toLowerCase() !== cached.username.toLowerCase());
+    saveUsers([...rest, cached]);
+    return startSession(cached);
+  }
+
+  return null;
+}
+
+function startSession(user) {
   const session = { username: user.username, role: user.role, sections: user.sections, accounts: user.accounts, ts: Date.now() };
   sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
   return session;
+}
+
+/**
+ * Sesión por biometría: WebAuthn ya probó la identidad en el dispositivo. Solo
+ * concede acceso si el usuario enrolado AÚN existe (local o nube) y con SUS
+ * permisos reales — no admin fijo. Si fue eliminado, deniega.
+ */
+export async function biometricSession(username) {
+  let u = loadUsers().find((x) => x.username.toLowerCase() === String(username).toLowerCase());
+  if (!u) {
+    const cloud = await pullCloudUsers();
+    u = (cloud || []).find((x) => x.username.toLowerCase() === String(username).toLowerCase());
+  }
+  if (!u) return null;
+  return startSession(u);
 }
 
 export function logout() {

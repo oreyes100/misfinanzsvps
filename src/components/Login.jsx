@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { hasBiometricCredential, isBiometricAvailable, login, needsSetup, setupAdmin, verifyBiometric } from "../auth.js";
+import { biometricSession, hasBiometricCredential, isBiometricAvailable, login, needsSetupCloud, setupAdmin, verifyBiometric } from "../auth.js";
 import { Btn, inputCls } from "./UI.jsx";
 
 const BG_VIDEO = "/finance-bg.mp4";
@@ -60,30 +60,36 @@ export default function Login({ onLogin }) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [setup, setSetup] = useState(false);
+  const [checking, setChecking] = useState(true);
   const canBio = isBiometricAvailable() && hasBiometricCredential();
 
   useEffect(() => {
-    if (needsSetup()) setSetup(true);
+    let alive = true;
+    (async () => {
+      const needs = await needsSetupCloud();
+      if (alive) { setSetup(needs); setChecking(false); }
+    })();
+    return () => { alive = false; };
   }, []);
 
   useEffect(() => {
-    if (canBio && !setup) bioLogin();
-  }, [canBio, setup]);
+    if (!checking && canBio && !setup) bioLogin();
+  }, [checking, canBio, setup]);
 
   const bioLogin = async () => {
     setBusy(true);
     setError("");
     try {
       const user = await verifyBiometric();
-      const session = await login(user, "__biometric__");
-      if (!session) {
-        const directSession = { username: user, role: "admin", sections: "all", accounts: "all", ts: Date.now(), biometric: true };
-        sessionStorage.setItem("mis-finazas-session", JSON.stringify(directSession));
-        onLogin(directSession);
-      } else {
+      // WebAuthn ya validó la identidad en el dispositivo; concede la sesión con
+      // los permisos REALES del usuario (o deniega si ya no existe). Sin admin fijo.
+      const session = await biometricSession(user);
+      if (session) {
         session.biometric = true;
         sessionStorage.setItem("mis-finazas-session", JSON.stringify(session));
         onLogin(session);
+      } else {
+        setError("Ese usuario ya no existe. Entra con usuario y contraseña.");
       }
     } catch {
       setError("Biometría cancelada. Usa usuario y contraseña.");
