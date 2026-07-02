@@ -101,12 +101,14 @@ export function needsSetup() {
   return loadUsers().length === 0;
 }
 
-export async function setupAdmin(password) {
+export async function setupAdmin(password, username = "admin") {
   if (loadUsers().length > 0) throw new Error("Ya existe un administrador.");
+  const uname = (username || "admin").trim();
+  if (!uname) throw new Error("Usuario requerido.");
   const salt = generateSalt();
   const hash = await hashPassword(password, salt);
   const admin = {
-    username: "admin",
+    username: uname,
     hash, salt,
     role: "admin",
     sections: "all",
