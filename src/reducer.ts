@@ -1,6 +1,6 @@
 // reducer.ts — Reductor puro con tipos completos
 import type { AppState, Action, NetWorth, PendingCardPayment, Account, Transaction } from "./types.ts";
-import { BASE_FX, DEFAULT_CATEGORIES, DAY_MS, categorize, cleanOrphanTransactions, todayISO, uid } from "./utils.ts";
+import { BASE_FX, DEFAULT_CATEGORIES, DAY_MS, categorize, cleanOrphanTransactions, stripDemoAccounts, todayISO, uid } from "./utils.ts";
 import type { Currency, Category } from "./types.ts";
 import { accrueInterest } from "./interest.ts";
 import { migrate } from "./migrations.ts";
@@ -94,8 +94,9 @@ function innerReducer(state: AppState, action: Action): AppState {
   switch (action.type) {
     case "hydrate": {
       const h = action.state || state;
+      const strippedAccounts = h && Array.isArray(h.accounts) ? stripDemoAccounts(h.accounts) : (h ? h.accounts : []);
       let cleaned = h && Array.isArray(h.accounts) && Array.isArray(h.transactions)
-        ? { ...h, transactions: cleanOrphanTransactions(h.accounts, h.transactions) }
+        ? { ...h, accounts: strippedAccounts, transactions: cleanOrphanTransactions(strippedAccounts, h.transactions) }
         : h;
       if (cleaned && cleaned.deletedTransactions && Array.isArray(cleaned.transactions)) {
         cleaned = { ...cleaned, transactions: cleaned.transactions.filter((t: any) => !cleaned.deletedTransactions[t.id]) };
@@ -354,7 +355,8 @@ function innerReducer(state: AppState, action: Action): AppState {
 
     case "restore": {
       const s = action.state || {};
-      const mergedAccounts = mergeByID(state.accounts, s.accounts);
+      let mergedAccounts = mergeByID(state.accounts, s.accounts);
+      mergedAccounts = stripDemoAccounts(mergedAccounts);
       let mergedTxs = mergeByID(state.transactions, s.transactions);
       mergedTxs = cleanOrphanTransactions(mergedAccounts, mergedTxs);
       const mergedDeleted = { ...(state.deletedTransactions || {}), ...(s.deletedTransactions || {}) };

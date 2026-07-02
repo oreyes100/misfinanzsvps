@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState } from "react";
-import { API_BASE, BASE_FX, DAY_MS, DEFAULT_CATEGORIES, categorize, cleanOrphanTransactions, todayISO, uid } from "./utils.js";
+import { API_BASE, BASE_FX, DAY_MS, DEFAULT_CATEGORIES, categorize, cleanOrphanTransactions, stripDemoAccounts, todayISO, uid } from "./utils.js";
 import { accrueInterest } from "./interest.js";
 import { migrate } from "./migrations.js";
 import useFX from "./useFX.js";
@@ -82,8 +82,9 @@ function innerReducer(state, action) {
   switch (action.type) {
     case "hydrate": {
       const h = action.state || state;
+      const strippedAccounts = h && Array.isArray(h.accounts) ? stripDemoAccounts(h.accounts) : (h ? h.accounts : []);
       let cleaned = h && Array.isArray(h.accounts) && Array.isArray(h.transactions)
-        ? { ...h, transactions: cleanOrphanTransactions(h.accounts, h.transactions) }
+        ? { ...h, accounts: strippedAccounts, transactions: cleanOrphanTransactions(strippedAccounts, h.transactions) }
         : h;
       if (cleaned && cleaned.deletedTransactions && Array.isArray(cleaned.transactions)) {
         cleaned = { ...cleaned, transactions: cleaned.transactions.filter((t) => !cleaned.deletedTransactions[t.id]) };
@@ -377,7 +378,8 @@ function innerReducer(state, action) {
         }
         return changed ? [...map.values()] : local;
       }
-      const mergedAccounts = mergeByID(state.accounts, s.accounts);
+      let mergedAccounts = mergeByID(state.accounts, s.accounts);
+      mergedAccounts = stripDemoAccounts(mergedAccounts);
       let mergedTxs = mergeByID(state.transactions, s.transactions);
       mergedTxs = cleanOrphanTransactions(mergedAccounts, mergedTxs);
       const mergedDeleted = { ...(state.deletedTransactions || {}), ...(s.deletedTransactions || {}) };
@@ -421,6 +423,7 @@ function load() {
     if (!raw) return accrueInterest(SEED);
     const saved = JSON.parse(raw);
     const merged = { ...SEED, ...saved, fx: { ...BASE_FX, ...saved.fx } };
+    merged.accounts = stripDemoAccounts(merged.accounts);
     merged.transactions = cleanOrphanTransactions(merged.accounts, merged.transactions);
     if (merged.deletedTransactions) {
       merged.transactions = (merged.transactions || []).filter((t) => !merged.deletedTransactions[t.id]);
