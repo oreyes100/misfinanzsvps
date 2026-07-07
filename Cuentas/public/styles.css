@@ -93,6 +93,28 @@ header {
 .cong-info input:focus { outline: none; border-color: rgba(255,255,255,.6); }
 .btn-xs { padding: .25rem .5rem; font-size: .7rem; border-radius: 5px; border: none; background: rgba(255,255,255,.2); color: #fff; cursor: pointer; }
 
+.sync-btn {
+  display: flex; align-items: center; gap: .35rem;
+  padding: .3rem .6rem;
+  border: 1px solid rgba(255,255,255,.3);
+  border-radius: 8px;
+  background: rgba(255,255,255,.1);
+  color: #fff;
+  cursor: pointer;
+  font-size: .72rem;
+  font-family: inherit;
+  transition: all .18s;
+  white-space: nowrap;
+}
+.sync-btn:hover { background: rgba(255,255,255,.2); transform: translateY(-1px); }
+.sync-btn.syncing { pointer-events: none; opacity: .6; }
+.sync-btn.syncing .sync-icon { animation: syncSpin .8s linear infinite; }
+@keyframes syncSpin { to { transform: rotate(360deg); } }
+.sync-btn.error { border-color: #e74c3c; background: rgba(231,76,60,.25); }
+.sync-btn.error .sync-icon { color: #e74c3c; }
+.sync-btn.ok { border-color: rgba(255,255,255,.3); }
+.sync-btn.ok .sync-icon { color: #2ecc71; }
+
 /* SECTIONS */
 .section { display: none; padding: 1.25rem 1.5rem; max-width: 1100px; margin: 0 auto; }
 .section.active { display: block; animation: sectionIn .35s cubic-bezier(.2,.8,.3,1) both; }
@@ -762,6 +784,31 @@ tr:hover td { background: #eaf2f8; }
 }
 
 /* Modal OCR */
+/* === LOGIN OVERLAY (bloquea toda la app) === */
+.login-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  background: linear-gradient(135deg, #e8f0fe 0%, #f5f7fa 100%);
+  align-items: center;
+  justify-content: center;
+}
+.login-overlay-box {
+  background: #fff;
+  border-radius: 16px;
+  padding: 2.5rem 2rem;
+  width: min(92vw, 380px);
+  box-shadow: 0 8px 40px rgba(0,0,0,.15);
+  text-align: center;
+}
+.login-overlay-box h2 { margin: 0; font-size: 1.1rem; color: var(--primary-dark); }
+.login-form { margin-top: .5rem; text-align: left; }
+.login-form .form-group { margin-bottom: .75rem; }
+.login-form label { display: block; font-size: .75rem; font-weight: 600; color: var(--text-light); margin-bottom: .2rem; }
+.login-form input { width: 100%; padding: .5rem .6rem; border: 1px solid #d5d8dc; border-radius: 6px; font-size: .9rem; box-sizing: border-box; }
+.login-form input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 2px rgba(26,82,118,.15); }
+
 .ocr-modal {
   border: none;
   border-radius: 14px;

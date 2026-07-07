@@ -5,8 +5,8 @@
 ---
 
 ## 📅 Última Actualización
-**Fecha**: 2026-06-25
-**Sesión**: Fase 2 — TypeScript, tests, seguridad, FX real
+**Fecha**: 2026-07-06
+**Sesión**: Fase 2.5b — Migración auth Cuentas a HMAC stateless
 
 ---
 
@@ -21,15 +21,9 @@
 ---
 
 ## ✅ Qué se Completó (Esta Sesión)
-1. **TypeScript**: `reducer.ts`, `utils.ts`, `interest.ts`, `migrations.ts`, `types.ts` — strict mode, JS deleted
-2. **Vitest**: 103 tests (47 reducer + 39 utils + 17 interest), `npm test` ~130ms
-3. **Seguridad**: PBKDF2+salt (100k iter), setupAdmin en first boot, CORS restringido, API users sanitizada
-4. **FX real**: `useFX` hook (Frankfurter + Coingecko cada 30 min), `tick_prices` eliminado
-5. **Sync conflict resolution**: `mergeByID()` con `_updatedAt`, `_syncVersion` tracking
-6. **Perf**: localStorage debounce 1.5s, selectors extraídos (Fast Refresh), React.lazy(Assistant+Auditoria) ~32kB
-7. **Wiki actualizada**: Arquitectura-Estado.md, +4 nuevas notas (Cuentas-Tipos, Multi-Moneda, Portfolio-Multiactivo, Intereses-Automaticos)
-8. **Base conocimiento**: CLAUDE.md (TS/Vitest/FX/seguridad), cost-optimization.md, `/wiki` agent
-9. **Build + Deploy**: `npm run build` ✅ (958ms), Git push → Vercel prod aliased
+1. **Cuentas Congregación — auth HMAC**: Migrado de tokens UUID en tabla `sessions` a tokens autónomos HMAC-sha256 firmados con `auth_secret` persistido en `config` DB
+2. **Cuentas Congregación — fix códigos CT**: Cargaban antes de login (401), ahora se recargan tras `doLogin()` exitoso
+3. **Cuentas Congregación — deploy**: Smoke test en producción: login, verify, codes, config, s26-data, PDF — todo OK sin "Sesión inválida"
 
 ---
 
@@ -43,6 +37,7 @@
 | Vitest vs Jest | 10-20x más rápido, mismo API, ESM nativo | Jest (config compleja, lento) |
 | localStorage debounce + clave estable | Evita writes innecesarios (FX/priceHistory) | Escribir en cada cambio de estado |
 | `/wiki` agent skill | Distilación a demanda, token-eficiente | Wiki batch monolítica |
+| Stack metodológico: Session Efficiency + Plan First + Engineering Excellence + Learning Evolution | Optimización tokens, calidad código, persistencia | Sin metodología formal (amnesia, refactors costosos) |
 
 ---
 
@@ -50,6 +45,7 @@
 1. **API oro real** — reemplazar `goldPriceEUR` fijo (68.4 €/g) con API real (e.g. gold-api.com)
 2. **Tests de integración sync cloud** — pull/push/conflict en CI
 3. **Migrar categorización IA** — de reglas a embedding semántico + few-shot
+4. **Cuentas — resolver conflicto contable** (s27 columnas Income/Expenses swapped por 13-month average) y desplegar fix
 
 ---
 
@@ -57,6 +53,7 @@
 1. **API oro real** — goldPriceEUR fijo → API real
 2. **Test de sync cloud** — integración pull/push/conflict
 3. **Categorización IA semántica** — embedding/local LLM
+4. **Evolution event** — cuando sessions.jsonl acumule ~10 entradas, ejecutar /evolution para graduar reglas
 
 ---
 

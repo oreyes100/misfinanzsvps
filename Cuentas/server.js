@@ -2,7 +2,7 @@ const express = require('express');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-const { initDB, query, get, run, transaction, saveDB, flushToBlob, IS_VERCEL } = require('./database');
+const { initDB, query, get, run, transaction, saveDB, flushToBlob, IS_VERCEL, verifyPassword, hashPassword } = require('./database');
 const { parseDate, detectCategory, suggestFromOCR, extractAmountCandidates } = require('./receipt-parser');
 
 const app = express();
@@ -10,6 +10,43 @@ const PORT = process.env.PORT || 3002;
 
 let dbReady = false;
 let bootPromise = null;
+
+/**
+ * Busca el override más reciente (mes ≤ ym) y devuelve el delta a aplicar.
+ * delta = override_value - calculated_total_en_el_mes_del_override
+ */
+function getOverrideDelta(ym) {
+  const overrides = query(
+    "SELECT key, value FROM config WHERE key LIKE 'saldo_inicial_override_%' ORDER BY key DESC"
+  );
+  for (const o of overrides) {
+    const overrideMonth = o.key.replace('saldo_inicial_override_', '');
+    if (overrideMonth <= ym) {
+      const overrideTotal = parseFloat(o.value) || 0;
+      // Calcula el total del mes del override sin ningún delta
+      let calcTotal = 0;
+      for (const a of query('SELECT id FROM accounts')) {
+        const inc = get("SELECT COALESCE(SUM(amount),0) as t FROM transactions WHERE strftime('%Y-%m',date)<? AND account=? AND type IN ('income','transfer_in')", [overrideMonth, a.id]);
+        const exp = get("SELECT COALESCE(SUM(amount),0) as t FROM transactions WHERE strftime('%Y-%m',date)<? AND account=? AND type IN ('expense','transfer')", [overrideMonth, a.id]);
+        calcTotal += (inc?.t || 0) - (exp?.t || 0);
+      }
+      return overrideTotal - calcTotal;
+    }
+  }
+  return 0;
+}
+
+/** Aplica el delta del override más reciente a prevBalances, distribuyendo en la cuenta principal. */
+function applySaldoOverride(ym, prevBalances, accounts) {
+  const delta = getOverrideDelta(ym);
+  if (Math.abs(delta) < 0.01) return;
+  for (const a of accounts) {
+    if (a.id === 'corriente') {
+      prevBalances[a.id] = (prevBalances[a.id] || 0) + delta;
+      break;
+    }
+  }
+}
 
 /** Inicializa BD + siembra. Idempotente y cacheado (clave en serverless). */
 function boot() {
@@ -87,6 +124,128 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 // En local los recibos se sirven del disco; en Vercel viven en Vercel Blob (URL propia).
 if (!IS_VERCEL) app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+// === STATELESS AUTH (HMAC-signed tokens, sin DB) ===
+const crypto = require('crypto');
+
+function getAuthSecret() {
+  let row = get("SELECT value FROM config WHERE key='auth_secret'");
+  if (!row) {
+    const secret = crypto.randomBytes(32).toString('hex');
+    run("INSERT OR IGNORE INTO config (key, value) VALUES ('auth_secret', ?)", [secret]);
+    saveDB();
+    return secret;
+  }
+  return row.value;
+}
+
+function createToken(username, role) {
+  const payload = Buffer.from(JSON.stringify({ username, role })).toString('base64url');
+  const sig = crypto.createHmac('sha256', getAuthSecret()).update(payload).digest('base64url');
+  return payload + '.' + sig;
+}
+
+function verifyToken(token) {
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 2) return null;
+    const [payload, sig] = parts;
+    const expected = crypto.createHmac('sha256', getAuthSecret()).update(payload).digest('base64url');
+    if (sig !== expected) return null;
+    return JSON.parse(Buffer.from(payload, 'base64url').toString());
+  } catch (_) { return null; }
+}
+
+function requireAuth(req, res, next) {
+  const raw = req.headers['authorization']?.replace('Bearer ', '') || req.query.token;
+  if (!raw) return res.status(401).json({ error: 'Se requiere autenticación' });
+  const user = verifyToken(raw);
+  if (!user) return res.status(401).json({ error: 'Sesión inválida o expirada' });
+  req.user = user;
+  next();
+}
+
+function requireAdmin(req, res, next) {
+  requireAuth(req, res, () => {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Se requiere rol de administrador' });
+    next();
+  });
+}
+
+// === AUTH ENDPOINTS ===
+app.post('/api/auth/login', (req, res) => {
+  const { username, password } = req.body;
+  if (!username || !password) return res.status(400).json({ error: 'Usuario y contraseña requeridos' });
+  const user = get("SELECT username, role, password_hash FROM users WHERE username = ?", [username]);
+  if (!user || !verifyPassword(password, user.password_hash)) return res.status(401).json({ error: 'Usuario o contraseña incorrectos' });
+  const token = createToken(user.username, user.role);
+  res.json({ token, username: user.username, role: user.role });
+});
+
+app.post('/api/auth/logout', (_req, res) => {
+  // Stateless: el cliente descarta el token, no hay estado que limpiar
+  res.json({ success: true });
+});
+
+app.get('/api/auth/verify', (req, res) => {
+  const raw = req.headers['authorization']?.replace('Bearer ', '') || req.query.token;
+  const user = raw ? verifyToken(raw) : null;
+  if (!user) return res.json({ authenticated: false });
+  res.json({ authenticated: true, username: user.username, role: user.role });
+});
+
+// === ADMIN: USER MANAGEMENT ===
+app.get('/api/users', requireAdmin, (req, res) => {
+  const users = query("SELECT id, username, role, created_at FROM users ORDER BY id");
+  res.json({ users });
+});
+
+app.post('/api/users', requireAdmin, (req, res) => {
+  const { username, password, role } = req.body;
+  if (!username || !password) return res.status(400).json({ error: 'Usuario y contraseña requeridos' });
+  if (password.length < 4) return res.status(400).json({ error: 'La contraseña debe tener al menos 4 caracteres' });
+  const existing = get("SELECT id FROM users WHERE username = ?", [username]);
+  if (existing) return res.status(409).json({ error: 'El usuario ya existe' });
+  const { hash } = hashPassword(password);
+  run("INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)", [username, hash, role || 'user']);
+  saveDB();
+  const id = get("SELECT id FROM users WHERE username = ?", [username]);
+  res.json({ success: true, id: id.id });
+});
+
+app.post('/api/users/reset-password', requireAdmin, (req, res) => {
+  const { username, newPassword } = req.body;
+  if (!username || !newPassword) return res.status(400).json({ error: 'Usuario y nueva contraseña requeridos' });
+  if (newPassword.length < 4) return res.status(400).json({ error: 'La contraseña debe tener al menos 4 caracteres' });
+  const user = get("SELECT id FROM users WHERE username = ?", [username]);
+  if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
+  const { hash } = hashPassword(newPassword);
+  run("UPDATE users SET password_hash = ? WHERE id = ?", [hash, user.id]);
+  saveDB();
+  res.json({ success: true });
+});
+
+app.delete('/api/users/:id', requireAdmin, (req, res) => {
+  const userId = parseInt(req.params.id);
+  if (!userId) return res.status(400).json({ error: 'ID inválido' });
+  const user = get("SELECT id, role FROM users WHERE id = ?", [userId]);
+  if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
+  if (user.role === 'admin') {
+    const adminCount = get("SELECT COUNT(*) as c FROM users WHERE role = 'admin'");
+    if (adminCount.c <= 1) return res.status(400).json({ error: 'No puedes eliminar al último administrador' });
+  }
+  run("DELETE FROM users WHERE id = ?", [userId]);
+  saveDB();
+  res.json({ success: true });
+});
+
+// Bloquea todas las rutas /api/* excepto /api/auth/* (login, logout, verify)
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api/') && !req.path.startsWith('/api/auth/')) {
+    return requireAuth(req, res, next);
+  }
+  next();
+});
 
 // En Vercel el filesystem es de solo lectura → guardar el archivo en memoria y subirlo a Blob.
 // En local se mantiene el disco para no romper el flujo de OCR existente.
@@ -258,7 +417,6 @@ app.delete('/api/transactions/:id', (req, res) => {
 // Get free API key at https://platform.mindee.com
 const MINDEE_API_KEY = process.env.MINDEE_API_KEY || null;
 const sharp = require('sharp');
-const crypto = require('crypto');
 
 // === INTERPRETACIÓN CON IA (visión) ===
 // El OCR tradicional no puede leer cantidades manuscritas. Si hay una
@@ -729,17 +887,62 @@ app.get('/api/s26-data', (req, res) => {
   if (!year || !month) return res.status(400).json({ error: 'Se requiere año y mes' });
   const ym = `${year}-${String(month).padStart(2, '0')}`;
   const accounts = query('SELECT id FROM accounts');
+
   let saldoInicial = 0;
   for (const a of accounts) {
     const inc = get("SELECT COALESCE(SUM(amount),0) as t FROM transactions WHERE strftime('%Y-%m',date)<? AND account=? AND type IN ('income','transfer_in')", [ym, a.id]);
     const exp = get("SELECT COALESCE(SUM(amount),0) as t FROM transactions WHERE strftime('%Y-%m',date)<? AND account=? AND type IN ('expense','transfer')", [ym, a.id]);
     saldoInicial += (inc?.t || 0) - (exp?.t || 0);
   }
+  const delta = getOverrideDelta(ym);
+  saldoInicial += delta;
+
+  const monthOverride = get("SELECT 1 FROM config WHERE key = ?", ['saldo_inicial_override_' + ym]);
+
   const transactions = query(
     "SELECT * FROM transactions WHERE strftime('%Y-%m',date)=? AND type!='transfer_in' ORDER BY date ASC, id ASC",
     [ym]
   );
-  res.json({ saldoInicial, transactions });
+  res.json({ saldoInicial, hasOverride: !!monthOverride, transactions });
+});
+
+// === SALDO INICIAL OVERRIDE ===
+app.post('/api/saldo-inicial', (req, res) => {
+  const { year, month, amount } = req.body;
+  if (!year || !month) return res.status(400).json({ error: 'Se requiere año y mes' });
+  const ym = `${year}-${String(month).padStart(2, '0')}`;
+  const key = `saldo_inicial_override_${ym}`;
+  if (amount === null || amount === undefined || amount === '') {
+    run("DELETE FROM config WHERE key=?", [key]);
+  } else {
+    const val = parseFloat(amount);
+    if (isNaN(val)) return res.status(400).json({ error: 'Monto inválido' });
+    run("INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)", [key, String(val)]);
+  }
+  saveDB();
+  res.json({ success: true });
+});
+
+// === SYNC STATUS & FORCE SYNC ===
+app.get('/api/sync-status', (req, res) => {
+  const dirty = global._dbDirty || false;
+  res.json({
+    dirty,
+    vercel: !!IS_VERCEL,
+    lastSync: global._lastSyncTime || null
+  });
+});
+
+app.post('/api/sync-now', async (req, res) => {
+  try {
+    saveDB();
+    await flushToBlob();
+    global._lastSyncTime = new Date().toISOString();
+    global._dbDirty = false;
+    res.json({ success: true, syncedAt: global._lastSyncTime });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // === CODES ===
@@ -824,8 +1027,9 @@ app.get('/api/monthly-report', (req, res) => {
     const prev = get(`SELECT COALESCE(SUM(amount),0) as t FROM transactions WHERE strftime('%Y-%m',date)<? AND account=? AND type IN ('income','transfer_in')`, [ym, a.id]);
     const prevExp = get(`SELECT COALESCE(SUM(amount),0) as t FROM transactions WHERE strftime('%Y-%m',date)<? AND account=? AND type IN ('expense','transfer')`, [ym, a.id]);
     prevBalances[a.id] = (prev ? prev.t : 0) - (prevExp ? prevExp.t : 0);
-    fundsStartMonth += prevBalances[a.id];
   }
+  applySaldoOverride(ym, prevBalances, accounts);
+  fundsStartMonth = Object.values(prevBalances).reduce((s, v) => s + (v || 0), 0);
 
   // (b) Recibido por la congregación — desglosado por código de ingreso
   const incomeByCode = query(`SELECT code, COALESCE(SUM(amount),0) as total FROM transactions WHERE strftime('%Y-%m',date)=? AND type='income' GROUP BY code ORDER BY total DESC`, p);
@@ -986,6 +1190,7 @@ app.get('/api/forms/s26', (req, res) => {
     const pe = get(`SELECT COALESCE(SUM(amount),0) as t FROM transactions WHERE strftime('%Y-%m',date)<? AND account=? AND type IN ('expense','transfer')`, [ym, a.id]);
     prevBalances[a.id] = (p ? p.t : 0) - (pe ? pe.t : 0);
   }
+  applySaldoOverride(ym, prevBalances, accounts);
   const incomeMap = {}; for (const r of query(`SELECT account, COALESCE(SUM(amount),0) as t FROM transactions WHERE strftime('%Y-%m',date)=? AND type IN ('income','transfer_in') GROUP BY account`, [ym])) incomeMap[r.account] = r.t;
   const expenseMap = {}; for (const r of query(`SELECT account, COALESCE(SUM(amount),0) as t FROM transactions WHERE strftime('%Y-%m',date)=? AND type IN ('expense','transfer') GROUP BY account`, [ym])) expenseMap[r.account] = r.t;
   const running = {};
@@ -1015,8 +1220,9 @@ app.get('/api/forms/s30', (req, res) => {
     const pr = get(`SELECT COALESCE(SUM(amount),0) as t FROM transactions WHERE strftime('%Y-%m',date)<? AND account=? AND type IN ('income','transfer_in')`, [ym, a.id]);
     const pe = get(`SELECT COALESCE(SUM(amount),0) as t FROM transactions WHERE strftime('%Y-%m',date)<? AND account=? AND type IN ('expense','transfer')`, [ym, a.id]);
     prevBalances[a.id] = (pr ? pr.t : 0) - (pe ? pe.t : 0);
-    fundsStartMonth += prevBalances[a.id];
   }
+  applySaldoOverride(ym, prevBalances, accounts);
+  fundsStartMonth = Object.values(prevBalances).reduce((s, v) => s + (v || 0), 0);
 
   const incomeByCode = query(`SELECT code, COALESCE(SUM(amount),0) as total FROM transactions WHERE strftime('%Y-%m',date)=? AND type='income' GROUP BY code ORDER BY total DESC`, p);
   const totalReceived = incomeByCode.reduce((s, r) => s + r.total, 0);
@@ -1071,12 +1277,15 @@ app.get('/api/forms/s30/pdf', async (req, res) => {
     const cfg = {}; for (const r of cfgRows) cfg[r.key] = r.value;
 
     // (a) Fondos al comienzo del mes (saldo de todas las cuentas)
-    let fundsStart = 0;
-    for (const a of query('SELECT id FROM accounts')) {
+    const pdfAccounts = query('SELECT * FROM accounts');
+    const pdfPrev = {};
+    for (const a of pdfAccounts) {
       const pi = get(`SELECT COALESCE(SUM(amount),0) as t FROM transactions WHERE strftime('%Y-%m',date)<? AND account=? AND type IN ('income','transfer_in')`, [ym, a.id]);
       const pe = get(`SELECT COALESCE(SUM(amount),0) as t FROM transactions WHERE strftime('%Y-%m',date)<? AND account=? AND type IN ('expense','transfer')`, [ym, a.id]);
-      fundsStart += (pi ? pi.t : 0) - (pe ? pe.t : 0);
+      pdfPrev[a.id] = (pi ? pi.t : 0) - (pe ? pe.t : 0);
     }
+    applySaldoOverride(ym, pdfPrev, pdfAccounts);
+    let fundsStart = Object.values(pdfPrev).reduce((s, v) => s + (v || 0), 0);
 
     const codeDesc = {}; for (const c of query('SELECT * FROM codes')) codeDesc[c.code] = c.description;
     const incRows = query(`SELECT code, COALESCE(SUM(amount),0) as total FROM transactions WHERE strftime('%Y-%m',date)=? AND type='income' GROUP BY code`, [ym]);

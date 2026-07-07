@@ -20,6 +20,14 @@
     <a href="https://donate.jw.org" target="_blank" title="DONATE.JW.ORG" class="donate-link">DONAR</a>
   </div>
   <div class="header-right">
+    <button class="sync-btn" id="syncBtn" title="Estado de sincronización con la nube">
+      <span class="sync-icon" id="syncIcon">☁️</span>
+      <span class="sync-label" id="syncLabel">Sincronizado</span>
+    </button>
+    <div id="authHeader">
+      <button class="btn btn-xs" id="loginBtn" onclick="showLogin()">🔐 Iniciar Sesión</button>
+      <span id="userBadge" style="display:none;font-size:.7rem;color:var(--primary);font-weight:600;padding:0 .3rem"></span>
+    </div>
     <div class="cong-info" id="congInfo">
       <input id="cfgCong" placeholder="Congregación">
       <input id="cfgCity" placeholder="Ciudad">
@@ -114,6 +122,7 @@
     <div class="menu-card" onclick="showSection('relacion')">📈 RELACIÓN I/E</div>
     <div class="menu-card" onclick="showSection('analisis')">🔍 ANÁLISIS CONTABLES</div>
     <div class="menu-card" onclick="showSection('codigos')">📖 CÓDIGOS CT</div>
+    <div class="menu-card" id="adminMenuCard" style="display:none" onclick="showSection('admin')">🔐 ADMIN<br><small>Usuarios</small></div>
   </div>
 
 </section>
@@ -316,6 +325,60 @@
   </div>
   <div id="codesTable"></div>
 </section>
+
+<!-- ADMIN: USER MANAGEMENT -->
+<section id="admin" class="section">
+  <div class="section-header">
+    <h2>🔐 ADMINISTRACIÓN DE ACCESOS</h2>
+    <div class="section-nav">
+      <button class="btn btn-secondary" onclick="showSection('menu')">← Menú</button>
+    </div>
+  </div>
+  <div class="form-section">
+    <div class="form-row">
+      <div class="form-group"><label>Nuevo Usuario</label><input type="text" id="newUsername" placeholder="Nombre de usuario"></div>
+      <div class="form-group"><label>Contraseña</label><input type="password" id="newPassword" placeholder="Contraseña"></div>
+      <div class="form-group"><label>Rol</label>
+        <select id="newRole"><option value="user">Usuario</option><option value="admin">Administrador</option></select>
+      </div>
+      <div class="form-group"><label>&nbsp;</label><button class="btn btn-primary" onclick="adminAddUser()">➕ Agregar</button></div>
+    </div>
+  </div>
+  <div class="table-section">
+    <h3>USUARIOS REGISTRADOS</h3>
+    <div class="table-wrapper">
+      <table>
+        <thead><tr><th>ID</th><th>Usuario</th><th>Rol</th><th>Creado</th><th>Acciones</th></tr></thead>
+        <tbody id="adminUsersBody"></tbody>
+      </table>
+    </div>
+    <div id="adminResetSection" style="margin-top:1rem;display:none;background:#fef9e7;border:1px solid #f5cba7;border-radius:8px;padding:1rem">
+      <h4 style="margin:0 0 .5rem">🔄 Restablecer Contraseña</h4>
+      <div class="form-row">
+        <div class="form-group"><label>Usuario</label><input type="text" id="resetUsername" readonly style="font-weight:600"></div>
+        <div class="form-group"><label>Nueva Contraseña</label><input type="password" id="resetPassword" placeholder="Nueva contraseña"></div>
+        <div class="form-group"><label>&nbsp;</label>
+          <button class="btn btn-primary" onclick="adminResetPassword()">💾 Guardar</button>
+          <button class="btn btn-secondary" onclick="adminCancelReset()">Cancelar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- LOGIN OVERLAY (bloquea toda la app si no hay sesión) -->
+<div id="loginOverlay" class="login-overlay">
+  <div class="login-overlay-box">
+    <h2>🔐 Programa de Contabilidad</h2>
+    <p style="font-size:.85rem;color:#666;margin:.25rem 0 1.25rem">Testigos de Jehová — Inicie sesión para continuar</p>
+    <div class="login-form">
+      <div class="form-group"><label>Usuario</label><input type="text" id="loginUsername" placeholder="Nombre de usuario" autocomplete="username"></div>
+      <div class="form-group"><label>Contraseña</label><input type="password" id="loginPassword" placeholder="Contraseña" autocomplete="current-password"></div>
+      <div id="loginError" style="color:var(--expense);font-size:.8rem;margin:.3rem 0;display:none"></div>
+      <button class="btn btn-primary" id="loginSubmitBtn" onclick="doLogin()" style="width:100%;justify-content:center;margin-top:.5rem">Ingresar</button>
+    </div>
+  </div>
+</div>
 
 <!-- MODAL OCR — Captura Automática de Recibos -->
 <dialog id="ocrModal" class="ocr-modal">

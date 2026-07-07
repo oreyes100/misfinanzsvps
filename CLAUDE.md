@@ -40,6 +40,16 @@ Producción: https://mis-finazas-gold.vercel.app (Vercel Hobby). Redeploy: `verc
 - NO commitear sin `npm test` exitoso
 - NO asumir contexto: **Context-First** — leer Wiki/ + CLAUDE.md + CONTEXTO.md antes de proponer cambios
 - NO expansiones de output: **TERMINATION** — parar cuando se cumple la condición, no resumir
+- NO re-debatir decisiones cerradas en `DECISIONS.md` sin aprobación explícita
+- NO hacer cambios en >3 archivos sin `implementation_plan.md` (Plan First)
+
+## Engineering Excellence (Karpathy Principles)
+- **Comprensión desde byte level**: No abstraer lo que no se entiende. Construir desde fundamentos.
+- **Sin atajos**: La calidad requiere inversión en contenido denso y fundamentos matemáticos.
+- **LLM como sistema de memoria**: La calidad del output es directamente proporcional a la densidad y estructura del contexto proporcionado.
+- **Pensamiento generativo vs evaluativo**: Separar creación de validación.
+- **Simplicidad**: Evitar dependencias de terceros si el problema se resuelve con lógica pura.
+- **Zero Hallucination**: No inventar wikilinks, APIs, ni bibliotecas que no existan en el proyecto.
 
 ## Glosario del Proyecto
 | Término | Significado en este contexto |
@@ -71,26 +81,52 @@ Producción: https://mis-finazas-gold.vercel.app (Vercel Hobby). Redeploy: `verc
 
 | Driver | Activación | Propósito |
 |--------|-----------|-----------|
-| **Session Efficiency** | Siempre | JIT Context Loading, prompts densos, reinicio cada ~15 mensajes, TERMINATION |
-| **Persistent Context** | Siempre (via /boot → /close) | boot/close ciclo, learned-rules, CONTEXTO.md, corrections.jsonl |
-| **Plan First** | >3 archivos o ambigüedad | Explorar antes de editar; ≤3 archivos → ejecutar directo |
-| **Learning Evolution** | Cada ~10 sesiones | Graduar reglas: corrections.jsonl → verified-patterns → CLAUDE.md |
+| **Session Efficiency** | Siempre | JIT Context Loading, prompts densos, checkpoint ≤12 mensajes, TERMINATION |
+| **Persistent Context** | Siempre (via /boot → /close) | boot/close ciclo, DECISIONS.md, learned-rules, CONTEXTO.md, corrections.jsonl |
+| **Plan First** | >3 archivos o ambigüedad | Exploration phase + `implementation_plan.md` obligatorio; ≤3 archivos → ejecutar directo |
+| **Learning Evolution** | Cada ~10 sesiones | Graduar reglas: corrections.jsonl → learned-rules → verified-patterns → CLAUDE.md |
+| **Engineering Excellence** | Siempre | Karpathy principles: byte-level, sin atajos, simplicidad, zero hallucination |
 | **Knowledge Distillation** | Al crear Wiki nueva | Pipeline código → nota atómica → MOC (ver `/wiki`) |
-| **Cost Optimization** | Siempre (implícito) | RTK filter, model selection (Haiku > Sonnet > Opus), wiki JIT |
+| **Cost Optimization** | Siempre (implícito) | RTK filter, model selection, wiki JIT |
+
+### Model Selection para Sesiones de Desarrollo
+
+| Tarea | Modelo | Razón |
+|-------|--------|-------|
+| Análisis / Arquitectura | Sonnet / 4o | Razonamiento profundo |
+| Edición de código / refactors | Haiku / Fast | Balance costo/calidad |
+| Tests / debugging | Haiku | 5x más barato, suficiente |
+| Tareas mecánicas (lint, build) | Haiku | Sin razonamiento requerido |
 
 Ver referencias en `~/obsidian_vault_mockup/Obsidian vault/META/METHODOLOGIES_INDEX.md`
 Ver cost-optimization.md en `.claude/cost-optimization.md`
 
 ## 🔄 Checkpoint Protocol (Session Efficiency)
 
-Para evitar degradación del contexto en sesiones largas:
-- **Cada ~15 mensajes**: pausar, pedir resumen denso de la conversación, reiniciar hilo con ese resumen como primer mensaje
-- `/close` ya actualiza CONTEXTO.md — usarlo como punto natural de checkpoint
-- Si la tarea cambia de dominio (ej: de reducer a deploy): reiniciar hilo aunque sean <15 mensajes
+Para evitar degradación del contexto (costo cuadrático: `S × N(N+1)/2`):
+- **Checkpoint cada ≤12 mensajes**: pausar, pedir resumen denso, reiniciar hilo con resumen + siguiente tarea
+- **Editar en vez de corregir**: si el output no es correcto, editar el prompt original y regenerar — no apilar mensajes de corrección
+- **JIT Context Loading**: cargar archivos solo cuando se editan/referencian, nunca al inicio "por si acaso"
+- **Thinking in Code**: extraer métricas/errores con scripts, no pegando logs enteros
+- **TERMINATION**: parar cuando se cumple la condición sin resumir ni expandir
+
+### Métricas de Sesión Saludable
+
+| Métrica | Objetivo | Señal de alerta |
+|---------|----------|-----------------|
+| Intercambios por sesión | ≤12 | >15 sin checkpoint |
+| Correcciones por sesión | 0-1 | >2 (prompt insuficiente) |
+| Archivos cargados sin usar | 0 | Cualquiera |
+| Tiempo hasta primer output útil | ≤2 turnos | >3 (contexto insuficiente) |
+| Acceptance rate | >70% | <70% en 3 sesiones consecutivas = problema de contexto |
 
 ## 🧠 Memoria Evolutiva
 
-- `.claude/memory/learned-rules.md` — reglas candidatas (tras 3 sesiones sin violación → verified-patterns.md)
-- `.claude/rules/verified-patterns.md` — patrones confirmados (P1-P9)
-- `.claude/memory/corrections.jsonl` — correcciones crudas de cada sesión
-- Ciclo: corrections → learned-rules → verified-patterns → CLAUDE.md (solo con aprobación explícita)
+| Archivo | Propósito | Promoción |
+|---------|-----------|-----------|
+| `.claude/memory/corrections.jsonl` | Correcciones crudas de cada sesión | Nivel 0 |
+| `.claude/memory/learned-rules.md` | Reglas candidatas (2+ ocurrencias) | Nivel 1 |
+| `.claude/rules/verified-patterns.md` | Patrones confirmados (3 sesiones sin violación) | Nivel 2 |
+| `.claude/memory/DECISIONS.md` | Decisiones arquitectónicas cerradas | Inmutable |
+| `CLAUDE.md` | Invariantes del sistema | Nivel 3 (solo con aprobación) |
+| `sessions.jsonl` | Historial de sesiones (scorecard) | Trigger de /evolution cada 10 

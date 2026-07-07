@@ -1,6 +1,7 @@
 const initSqlJs = require('sql.js');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 // En Vercel (serverless) el filesystem del proyecto es de solo lectura; solo
 // /tmp es escribible y efímero. La copia durable vive en Vercel Blob.
@@ -24,8 +25,12 @@ async function loadFromBlob() {
     // get acepta el pathname directamente (no hace falta construir la URL del store).
     const result = await get(BLOB_KEY, { access: 'private', useCache: false });
     if (!result) { _loadState = 'absent'; return false; }
-    const buffer = Buffer.from(await new Response(result.stream).arrayBuffer());
-    fs.writeFileSync(dbPath, buffer);
+    // La SDK devuelve stream=null en respuestas 304 (sin cambios). En ese
+    // caso la copia local (/tmp/) ya está actualizada — no reescribir.
+    if (result.stream) {
+      const buffer = Buffer.from(await new Response(result.stream).arrayBuffer());
+      fs.writeFileSync(dbPath, buffer);
+    }
     _loadState = 'loaded';
     return true;
   } catch (e) {
@@ -41,8 +46,12 @@ async function loadFromBlob() {
 async function flushToBlob() {
   if (!IS_VERCEL || !_dirty || !process.env.BLOB_READ_WRITE_TOKEN) return;
   try {
+    // Safety: verificar que la BD tenga datos antes de pisar el Blob durable
+    if (!fs.existsSync(dbPath) || fs.statSync(dbPath).size < 256) return;
     const { put } = require('@vercel/blob');
     const buffer = fs.readFileSync(dbPath);
+    // No subir si el buffer parece vacío (data loss prevention)
+    if (buffer.length < 256) return;
     await put(BLOB_KEY, buffer, {
       access: 'private',
       addRandomSuffix: false,
@@ -59,7 +68,8 @@ function saveDB() {
   const data = db.export();
   const buffer = Buffer.from(data);
   fs.writeFileSync(dbPath, buffer);
-  _dirty = true; // marcar para que el wrapper serverless lo suba a Blob
+  _dirty = true;
+  global._dbDirty = true;
 }
 
 async function initDB() {
@@ -183,6 +193,28 @@ async function initDB() {
   db.run(`INSERT OR IGNORE INTO config (key, value) VALUES ('provincia', '')`);
   db.run(`INSERT OR IGNORE INTO config (key, value) VALUES ('servicio_year', '')`);
 
+  // Users + sessions tables
+  db.run(`CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    role TEXT DEFAULT 'user',
+    created_at TEXT DEFAULT (datetime('now','localtime'))
+  )`);
+  db.run(`CREATE TABLE IF NOT EXISTS sessions (
+    token TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    created_at TEXT DEFAULT (datetime('now','localtime')),
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  )`);
+
+  // Seed default admin user if no users exist
+  const userCount = db.exec('SELECT COUNT(*) as c FROM users');
+  if (!userCount.length || userCount[0].values[0][0] === 0) {
+    const { hash } = hashPassword('Michoacan1');
+    run("INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)", ['jorge', hash, 'admin']);
+  }
+
   saveDB();
   return db;
 }
@@ -225,4 +257,16 @@ function transaction(fn) {
   }
 }
 
-module.exports = { initDB, getDB, query, get, run, transaction, saveDB, flushToBlob, getLoadState, IS_VERCEL };
+function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.pbkdf2Sync(password, salt, 100000, 64, 'sha512').toString('hex');
+  return { salt, hash: `${salt}:${hash}` };
+}
+
+function verifyPassword(password, stored) {
+  const [salt, hash] = stored.split(':');
+  const check = crypto.pbkdf2Sync(password, salt, 100000, 64, 'sha512').toString('hex');
+  return hash === check;
+}
+
+module.exports = { initDB, getDB, query, get, run, transaction, saveDB, flushToBlob, getLoadState, IS_VERCEL, hashPassword, verifyPassword };

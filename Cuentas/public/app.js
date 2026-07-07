@@ -2,7 +2,7 @@ let currentPage = 0;
 const PAGE_SIZE = 20;
 let currentForm = 's26';
 
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
   const today = new Date().toISOString().slice(0, 10);
   document.getElementById('txnDate').value = today;
   loadConfig();
@@ -15,8 +15,10 @@ document.addEventListener('DOMContentLoaded', () => {
   showSection('menu');
   renderMonthGrid();
   renderCodes();
-  // Carga la hoja del mes actual al inicio
   renderS26Landing(new Date().getFullYear(), new Date().getMonth() + 1);
+  checkSyncStatus();
+  setupSyncButton();
+  await checkAuth();
 });
 
 function toast(msg, type = 'success') {
@@ -30,6 +32,7 @@ function toast(msg, type = 'success') {
 async function api(url, opts = {}) {
   const headers = {};
   if (!(opts.body instanceof FormData)) headers['Content-Type'] = 'application/json';
+  if (authToken) headers['Authorization'] = 'Bearer ' + authToken;
   const res = await fetch(url, { headers, ...opts });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Error de servidor');
@@ -44,6 +47,7 @@ function showSection(id) {
   if (id === 'cuentas') loadTransactions();
   if (id === 'menu') { loadAccounts(); renderS26Landing(s26Year, s26Month); }
   if (id === 'informe') document.getElementById('reportBtn').click();
+  if (id === 'admin') { if (authUser?.role === 'admin') adminLoadUsers(); else toast('Acceso denegado', 'error'); }
 }
 
 // === CONFIG ===
@@ -103,7 +107,8 @@ async function renderS26Landing(year, month) {
   foot.innerHTML = '';
   try {
     if (!codesCache.length) { try { codesCache = await api('/api/codes'); } catch (_) {} }
-    const { saldoInicial, transactions } = await api(`/api/s26-data?year=${year}&month=${String(month).padStart(2,'0')}`);
+    const data = await api(`/api/s26-data?year=${year}&month=${String(month).padStart(2,'0')}`);
+    const { saldoInicial, transactions, hasOverride } = data;
     const fmt = v => v != null ? '$' + Math.abs(v).toFixed(2) : '';
     let saldo = saldoInicial;
     const totals = { recIn:0, recOut:0, prinIn:0, prinOut:0, secIn:0, secOut:0 };
@@ -111,12 +116,31 @@ async function renderS26Landing(year, month) {
     s26TxnCache = {};
 
     // Fila de saldo inicial
-    rows.push(`<tr class="s26-row-init">
-      <td colspan="3"><strong>${MONTH_NAMES[month].toUpperCase()} — SALDO INICIAL</strong></td>
-      <td></td><td></td><td></td><td></td><td></td><td></td>
-      <td class="s26-amt s26-saldo-cell"><strong>${fmt(saldoInicial)}</strong></td>
-      <td></td>
-    </tr>`);
+    const isEditingSaldo = window._editingSaldoInicial === `${year}-${month}`;
+    if (isEditingSaldo) {
+      rows.push(`<tr class="s26-row-init s26-edit-row">
+        <td colspan="3"><strong>${MONTH_NAMES[month].toUpperCase()} — SALDO INICIAL</strong></td>
+        <td></td><td></td><td></td><td></td><td></td><td></td>
+        <td class="s26-amt s26-saldo-cell">
+          <input type="number" id="s26e-saldo" step="0.01" value="${saldoInicial}" style="width:100px;text-align:right;font-weight:700">
+        </td>
+        <td class="s26-acts">
+          <button type="button" class="s26-act-btn" title="Guardar saldo inicial" onclick="s26SaveSaldoInicial(${year},${month})">💾</button>
+          <button type="button" class="s26-act-btn" title="Cancelar" onclick="s26CancelSaldoInicial()">↩️</button>
+          ${data.hasOverride ? `<button type="button" class="s26-act-btn" title="Restaurar cálculo automático" onclick="s26ClearSaldoInicial(${year},${month})">🔄</button>` : ''}
+        </td>
+      </tr>`);
+    } else {
+      rows.push(`<tr class="s26-row-init">
+        <td colspan="3"><strong>${MONTH_NAMES[month].toUpperCase()} — SALDO INICIAL</strong></td>
+        <td></td><td></td><td></td><td></td><td></td><td></td>
+        <td class="s26-amt s26-saldo-cell"><strong>${fmt(saldoInicial)}</strong></td>
+        <td class="s26-acts">
+          <button type="button" class="s26-act-btn" title="Ajustar saldo inicial" onclick="s26EditSaldoInicial(${year},${month})">✏️</button>
+          ${data.hasOverride ? '<span style="font-size:.6rem;color:var(--accent)">⚑</span>' : ''}
+        </td>
+      </tr>`);
+    }
 
     for (const t of transactions) {
       s26TxnCache[t.id] = t;
@@ -1063,7 +1087,7 @@ document.getElementById('formGenerateBtn').addEventListener('click', async () =>
     } else if (currentForm === 's30') {
       const month = document.getElementById('formMonth').value;
       // Abrir el formulario OFICIAL S-30-S (PDF de la carpeta) ya llenado
-      window.open(`/api/forms/s30/pdf?year=${year}&month=${month}`, '_blank');
+      window.open(`/api/forms/s30/pdf?year=${year}&month=${month}&token=${authToken}`, '_blank');
       data = await api(`/api/forms/s30?year=${year}&month=${month}`);
       renderS30Form(data);
     } else if (currentForm === 's25c') {
@@ -1788,6 +1812,294 @@ function renderAnalysis(data) {
     }
     details.innerHTML = detHtml;
   }
+}
+
+// === SALDO INICIAL EDITING ===
+function s26EditSaldoInicial(year, month) {
+  window._editingSaldoInicial = `${year}-${month}`;
+  renderS26Landing(year, month);
+}
+function s26CancelSaldoInicial() {
+  window._editingSaldoInicial = null;
+  renderS26Landing(s26Year, s26Month);
+}
+async function s26SaveSaldoInicial(year, month) {
+  const val = document.getElementById('s26e-saldo')?.value;
+  if (val === undefined) return;
+  const amount = parseFloat(val);
+  if (isNaN(amount) || amount < 0) { toast('Ingrese un saldo inicial válido', 'error'); return; }
+  try {
+    await api('/api/saldo-inicial', {
+      method: 'POST',
+      body: JSON.stringify({ year, month: String(month).padStart(2,'0'), amount })
+    });
+    window._editingSaldoInicial = null;
+    toast('Saldo inicial actualizado');
+    renderS26Landing(year, month);
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+async function s26ClearSaldoInicial(year, month) {
+  if (!confirm('¿Restaurar el saldo inicial calculado automáticamente?')) return;
+  try {
+    await api('/api/saldo-inicial', {
+      method: 'POST',
+      body: JSON.stringify({ year, month: String(month).padStart(2,'0'), amount: null })
+    });
+    window._editingSaldoInicial = null;
+    toast('Saldo inicial restaurado al cálculo automático');
+    renderS26Landing(year, month);
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+// === SYNC STATUS ===
+async function checkSyncStatus() {
+  try {
+    const status = await api('/api/sync-status');
+    updateSyncUI(status);
+  } catch (_) {
+    updateSyncUI({ dirty: false, vercel: false });
+  }
+}
+
+async function forceSync() {
+  const btn = document.getElementById('syncBtn');
+  const icon = document.getElementById('syncIcon');
+  const label = document.getElementById('syncLabel');
+  btn.classList.add('syncing');
+  icon.textContent = '⏳';
+  label.textContent = 'Sincronizando…';
+  try {
+    const result = await api('/api/sync-now', { method: 'POST' });
+    updateSyncUI({ dirty: false, lastSync: result.syncedAt });
+    toast('Datos sincronizados con la nube');
+  } catch (err) {
+    toast('Error de sincronización: ' + err.message, 'error');
+    updateSyncUI({ dirty: true });
+  } finally {
+    btn.classList.remove('syncing');
+  }
+}
+
+function updateSyncUI(status) {
+  const btn = document.getElementById('syncBtn');
+  const icon = document.getElementById('syncIcon');
+  const label = document.getElementById('syncLabel');
+  if (status.dirty) {
+    btn.className = 'sync-btn error';
+    icon.textContent = '⚠️';
+    label.textContent = 'Sin sincronizar';
+  } else {
+    btn.className = 'sync-btn ok';
+    icon.textContent = '☁️';
+    const last = status.lastSync ? new Date(status.lastSync).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' }) : '';
+    label.textContent = last ? `Sincronizado ${last}` : 'Sincronizado';
+  }
+}
+
+function setupSyncButton() {
+  document.getElementById('syncBtn').addEventListener('click', forceSync);
+}
+
+// === AUTH ===
+let authToken = localStorage.getItem('authToken') || null;
+let authUser = null;
+
+async function checkAuth() {
+  if (!authToken) {
+    updateAuthUI();
+    blockApp();
+    return;
+  }
+  try {
+    const data = await api('/api/auth/verify', { headers: { 'Authorization': 'Bearer ' + authToken } });
+    if (data.authenticated) {
+      authUser = { username: data.username, role: data.role };
+      updateAuthUI();
+    } else {
+      authToken = null;
+      localStorage.removeItem('authToken');
+      authUser = null;
+      updateAuthUI();
+      blockApp();
+    }
+  } catch (_) {
+    authUser = null;
+    updateAuthUI();
+  }
+}
+
+function blockApp() {
+  const overlay = document.getElementById('loginOverlay');
+  if (overlay) overlay.style.display = 'flex';
+  document.getElementById('loginModal').showModal();
+}
+
+function unblockApp() {
+  const overlay = document.getElementById('loginOverlay');
+  if (overlay) overlay.style.display = 'none';
+}
+
+function updateAuthUI() {
+  const loginBtn = document.getElementById('loginBtn');
+  const userBadge = document.getElementById('userBadge');
+  const adminCard = document.getElementById('adminMenuCard');
+  if (authUser) {
+    loginBtn.textContent = '🔒 Cerrar Sesión';
+    loginBtn.onclick = doLogout;
+    userBadge.style.display = 'inline';
+    userBadge.textContent = authUser.username;
+    adminCard.style.display = authUser.role === 'admin' ? 'inline-block' : 'none';
+  } else {
+    loginBtn.textContent = '🔐 Iniciar Sesión';
+    loginBtn.onclick = showLogin;
+    userBadge.style.display = 'none';
+    adminCard.style.display = 'none';
+  }
+}
+
+function showLogin() {
+  document.getElementById('loginUsername').value = '';
+  document.getElementById('loginPassword').value = '';
+  document.getElementById('loginError').style.display = 'none';
+  document.getElementById('loginOverlay').style.display = 'flex';
+  setTimeout(() => document.getElementById('loginUsername').focus(), 100);
+}
+
+function closeLogin() {
+  document.getElementById('loginOverlay').style.display = 'none';
+}
+
+// Permitir Enter en inputs del login
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && document.getElementById('loginOverlay').style.display === 'flex') {
+    doLogin();
+  }
+});
+
+async function doLogin() {
+  const username = document.getElementById('loginUsername').value.trim();
+  const password = document.getElementById('loginPassword').value;
+  const errEl = document.getElementById('loginError');
+  if (!username || !password) { errEl.textContent = 'Complete todos los campos'; errEl.style.display = 'block'; return; }
+  try {
+    document.getElementById('loginSubmitBtn').disabled = true;
+    const data = await api('/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ username, password })
+    });
+    authToken = data.token;
+    localStorage.setItem('authToken', authToken);
+    authUser = { username: data.username, role: data.role };
+    closeLogin();
+    unblockApp();
+    updateAuthUI();
+    // Recargar datos ahora que hay sesión
+    await Promise.all([
+      loadConfig(),
+      loadAccounts(),
+      loadCodes(),
+      loadTransactions(),
+    ]);
+    populateServiceYearSelect();
+    renderS26Landing(s26Year, s26Month);
+    renderCodes();
+    toast('Bienvenido, ' + authUser.username);
+  } catch (err) {
+    errEl.textContent = err.message === 'Usuario o contraseña incorrectos' ? err.message : 'Error de conexión';
+    errEl.style.display = 'block';
+  } finally {
+    document.getElementById('loginSubmitBtn').disabled = false;
+  }
+}
+
+async function doLogout() {
+  try { await api('/api/auth/logout', { headers: { 'Authorization': 'Bearer ' + authToken } }); } catch (_) {}
+  authToken = null;
+  localStorage.removeItem('authToken');
+  authUser = null;
+  updateAuthUI();
+  blockApp();
+  toast('Sesión cerrada');
+}
+
+// === ADMIN: USER MANAGEMENT ===
+async function adminLoadUsers() {
+  try {
+    const data = await api('/api/users', { headers: { 'Authorization': 'Bearer ' + authToken } });
+    const tbody = document.getElementById('adminUsersBody');
+    tbody.innerHTML = data.users.map(u => `
+      <tr>
+        <td>${u.id}</td>
+        <td><strong>${escHtml(u.username)}</strong></td>
+        <td>${u.role === 'admin' ? 'Administrador' : 'Usuario'}</td>
+        <td>${u.created_at || '-'}</td>
+        <td>
+          <button class="btn btn-xs btn-secondary" onclick="adminShowReset('${escHtml(u.username)}')">🔑 Reset</button>
+          ${u.role !== 'admin' || data.users.filter(x => x.role === 'admin').length > 1 ? `<button class="btn btn-xs" style="background:var(--expense);color:#fff" onclick="adminDeleteUser(${u.id},'${escHtml(u.username)}')">🗑 Eliminar</button>` : ''}
+        </td>
+      </tr>
+    `).join('');
+  } catch (err) { toast('Error al cargar usuarios: ' + err.message, 'error'); }
+}
+
+async function adminAddUser() {
+  const username = document.getElementById('newUsername').value.trim();
+  const password = document.getElementById('newPassword').value;
+  const role = document.getElementById('newRole').value;
+  if (!username || !password) { toast('Complete todos los campos', 'error'); return; }
+  if (password.length < 4) { toast('La contraseña debe tener al menos 4 caracteres', 'error'); return; }
+  try {
+    await api('/api/users', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password, role })
+    });
+    document.getElementById('newUsername').value = '';
+    document.getElementById('newPassword').value = '';
+    toast('Usuario ' + username + ' creado');
+    adminLoadUsers();
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+function adminShowReset(username) {
+  document.getElementById('resetUsername').value = username;
+  document.getElementById('resetPassword').value = '';
+  document.getElementById('adminResetSection').style.display = 'block';
+}
+
+function adminCancelReset() {
+  document.getElementById('adminResetSection').style.display = 'none';
+}
+
+async function adminResetPassword() {
+  const username = document.getElementById('resetUsername').value;
+  const newPassword = document.getElementById('resetPassword').value;
+  if (!newPassword || newPassword.length < 4) { toast('La contraseña debe tener al menos 4 caracteres', 'error'); return; }
+  try {
+    await api('/api/users/reset-password', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, newPassword })
+    });
+    toast('Contraseña restablecida para ' + username);
+    adminCancelReset();
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+async function adminDeleteUser(id, username) {
+  if (!confirm('¿Eliminar al usuario "' + username + '"?')) return;
+  try {
+    await api('/api/users/' + id, {
+      method: 'DELETE',
+      headers: { 'Authorization': 'Bearer ' + authToken }
+    });
+    toast('Usuario ' + username + ' eliminado');
+    adminLoadUsers();
+  } catch (err) { toast(err.message, 'error'); }
 }
 
 // === SETUP ALL ===
