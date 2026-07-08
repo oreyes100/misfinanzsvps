@@ -8,6 +8,12 @@
       "port": 5173
     },
     {
+      "name": "mis-finazas-wargame",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["vite", "--config", "vite.config.wargame.mjs"],
+      "port": 5199
+    },
+    {
       "name": "mis-finazas-prod-preview",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "preview"],

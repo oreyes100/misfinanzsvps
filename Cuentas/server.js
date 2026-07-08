@@ -293,13 +293,16 @@ app.get('/api/config', (req, res) => {
 });
 
 app.post('/api/config', (req, res) => {
-  const { congregacion, ciudad, provincia, ai_api_key } = req.body;
+  const { congregacion, ciudad, provincia, ai_api_key, publishers } = req.body;
   if (congregacion !== undefined) run("UPDATE config SET value=? WHERE key='congregacion'", [congregacion]);
   if (ciudad !== undefined) run("UPDATE config SET value=? WHERE key='ciudad'", [ciudad]);
   if (provincia !== undefined) run("UPDATE config SET value=? WHERE key='provincia'", [provincia]);
   if (ai_api_key !== undefined) {
     run("INSERT OR IGNORE INTO config (key, value) VALUES ('ai_api_key', '')");
     run("UPDATE config SET value=? WHERE key='ai_api_key'", [ai_api_key.trim()]);
+  }
+  if (publishers !== undefined) {
+    run("INSERT OR REPLACE INTO config (key, value) VALUES ('publishers', ?)", [String(publishers)]);
   }
   saveDB();
   res.json({ success: true });
@@ -923,6 +926,68 @@ app.post('/api/saldo-inicial', (req, res) => {
   res.json({ success: true });
 });
 
+// === CIERRE DE FIN DE MES (crea o corrige) ===
+app.post('/api/cierre-mes', (req, res) => {
+  const { year, month, publishers } = req.body;
+  if (!year || !month) return res.status(400).json({ error: 'Se requiere año y mes' });
+  const ym = `${year}-${String(month).padStart(2, '0')}`;
+  const lastDay = new Date(parseInt(year), parseInt(month), 0).getDate();
+  const date = `${ym}-${String(lastDay).padStart(2, '0')}`;
+  const monthName = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'][parseInt(month)-1];
+
+  // Helper: upsert cierre transaction by matching pattern
+  function upsertCierre(code, descPattern, amount, description) {
+    if (amount > 0) {
+      const existing = get("SELECT id, amount FROM transactions WHERE date=? AND code=? AND description LIKE ?", [date, code, descPattern]);
+      if (existing) {
+        if (Math.abs(existing.amount - amount) > 0.001) {
+          run("UPDATE transactions SET amount=? WHERE id=?", [amount, existing.id]);
+        }
+      } else {
+        run("INSERT INTO transactions (date,description,code,amount,type,account) VALUES (?,?,?,?,'expense','corriente')",
+          [date, description, code, amount]);
+      }
+    } else {
+      // Si el monto es 0, eliminar el gasto si existe
+      const existing = get("SELECT id FROM transactions WHERE date=? AND code=? AND description LIKE ?", [date, code, descPattern]);
+      if (existing) {
+        run("DELETE FROM transactions WHERE id=?", [existing.id]);
+      }
+    }
+  }
+
+  try {
+    transaction(() => {
+      // 1) Suma de ingresos con código OM → RE
+      const omSum = get("SELECT COALESCE(SUM(amount),0) as t FROM transactions WHERE strftime('%Y-%m',date)=? AND code='OM' AND type='income'", [ym]);
+      const omAmount = Math.round((omSum?.t || 0) * 100) / 100;
+      upsertCierre('RE', 'Envio a betel%', omAmount, 'Envio a betel de la cajita de obra del reino');
+
+      // 2) 30 × publishers → ROM
+      const pubCount = parseInt(publishers) || 0;
+      const romPubsAmount = 30 * pubCount;
+      upsertCierre('ROM', 'Resolucion envio a OR 30 p/pubcr.%', romPubsAmount,
+        `Resolucion envio a OR 30 p/pubcr.(${pubCount} pubs.)`);
+
+      // 3) 10% de donaciones código C → ROM
+      const cIncome = get("SELECT COALESCE(SUM(amount),0) as t FROM transactions WHERE strftime('%Y-%m',date)=? AND code='C' AND type='income'", [ym]);
+      const pctAmount = Math.round((cIncome?.t || 0) * 0.1);
+      upsertCierre('ROM', 'Resolucion envio a OR 10%% de donaciones', pctAmount,
+        'Resolucion envio a OR 10% de donaciones');
+
+      // 4) Mantenimiento fijo $1250 (siempre existe)
+      upsertCierre('GM', `Mantenimiento (${monthName} ${year})%`, 1250,
+        `Mantenimiento (${monthName} ${year})`);
+
+      recalcBalances();
+    });
+    saveDB();
+    res.json({ success: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 // === SYNC STATUS & FORCE SYNC ===
 app.get('/api/sync-status', (req, res) => {
   const dirty = global._dbDirty || false;
@@ -1200,7 +1265,9 @@ app.get('/api/forms/s26', (req, res) => {
     running[t.account] += amt;
     return { ...t, running_balance: running[t.account] };
   });
-  res.json({ year, month, ym, config: cfg, accounts, prevBalances, incomeMap, expenseMap, transactions: txnWithBalance });
+  const endBalances = {};
+  for (const a of accounts) endBalances[a.id] = (prevBalances[a.id] || 0) + (incomeMap[a.id] || 0) - (expenseMap[a.id] || 0);
+  res.json({ year, month, ym, config: cfg, accounts, prevBalances, incomeMap, expenseMap, endBalances, transactions: txnWithBalance });
 });
 
 // === FORM DATA: S-30-S ===

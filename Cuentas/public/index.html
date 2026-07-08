@@ -70,6 +70,15 @@
     </button>
   </div>
 
+  <!-- Botón de cierre de mes -->
+  <div class="landing-cierre">
+    <button class="land-btn land-btn-cierre" onclick="doCierreMes()">
+      <span class="land-icon">📆</span>
+      <span class="land-label">CIERRE DE FIN DE MES</span>
+      <span class="land-sub">Genera gastos de cierre automáticos</span>
+    </button>
+  </div>
+
   <!-- Selector de año de servicio + cuadrícula de meses -->
   <div class="s26-nav-bar">
     <div class="service-year-select">
@@ -237,7 +246,8 @@
     <h2>FORMULARIOS OFICIALES</h2>
     <div class="section-nav">
       <button class="btn btn-secondary" onclick="showSection('menu')">← Menú</button>
-      <button class="btn btn-primary" onclick="document.querySelector('.form-print-area').classList.add('printing');setTimeout(()=>window.print(),200)">🖨️ Imprimir</button>
+      <button class="btn btn-secondary" onclick="window.print()">🖨 Imprimir</button>
+      <button class="btn btn-cierre" onclick="doCierreMes()">📆 Cierre de Mes</button>
     </div>
   </div>
 
@@ -463,6 +473,6 @@
 </div>
 
 <div id="toast"></div>
-<script src="app.js?v=9"></script>
+<script src="app.js?v=10"></script>
 </body>
 </html>

@@ -192,6 +192,7 @@ async function initDB() {
   db.run(`INSERT OR IGNORE INTO config (key, value) VALUES ('ciudad', '')`);
   db.run(`INSERT OR IGNORE INTO config (key, value) VALUES ('provincia', '')`);
   db.run(`INSERT OR IGNORE INTO config (key, value) VALUES ('servicio_year', '')`);
+  db.run(`INSERT OR IGNORE INTO config (key, value) VALUES ('publishers', '70')`);
 
   // Users + sessions tables
   db.run(`CREATE TABLE IF NOT EXISTS users (

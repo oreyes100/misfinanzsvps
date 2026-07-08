@@ -6,7 +6,7 @@
 
 ## 📅 Última Actualización
 **Fecha**: 2026-07-06
-**Sesión**: Fase 2.5b — Migración auth Cuentas a HMAC stateless
+**Sesión**: Fase 2.5c — Cuentas: cierre de mes, upsert, S-26 page fill, endBalances server-side
 
 ---
 
@@ -21,9 +21,10 @@
 ---
 
 ## ✅ Qué se Completó (Esta Sesión)
-1. **Cuentas Congregación — auth HMAC**: Migrado de tokens UUID en tabla `sessions` a tokens autónomos HMAC-sha256 firmados con `auth_secret` persistido en `config` DB
-2. **Cuentas Congregación — fix códigos CT**: Cargaban antes de login (401), ahora se recargan tras `doLogin()` exitoso
-3. **Cuentas Congregación — deploy**: Smoke test en producción: login, verify, codes, config, s26-data, PDF — todo OK sin "Sesión inválida"
+1. **Cuentas — botón Cierre de Mes**: Modal con selector de mes/año, input de publicadores, preview de 4 gastos (OM→RE, 30×pubs→ROM, 10% C→ROM, Mantenimiento)
+2. **Cuentas — upsert en cierre**: Si ya existe cierre para el mes, UPDATE montos en vez de duplicar. Si monto da $0, DELETE. Transacción atómica con `recalcBalances()`
+3. **Cuentas — S-26 page fill**: `PAGE_ROWS` ajustado a 50 para que página 1 cubra sin huecos
+4. **Cuentas — endBalances server-side**: `/api/forms/s26` ahora envía `endBalances` computado en servidor (prev + incomeMap − expenseMap). Caja de efectivo ya no muestra `prev.corriente` ($586) sino `endCorriente` real
 
 ---
 

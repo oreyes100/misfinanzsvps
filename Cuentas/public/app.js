@@ -1144,9 +1144,10 @@ function renderS26Form(data) {
   const tRecEnt = tc.caja.ent, tRecSal = tc.caja.sal;
   const tPrinEnt = tc.corriente.ent, tPrinSal = tc.corriente.sal;
   const tSecEnt = tc.sucursal.ent, tSecSal = tc.sucursal.sal;
-  const endCaja = prev.caja + tRecEnt - tRecSal;
-  const endCorriente = prev.corriente + tPrinEnt - tPrinSal;
-  const endSucursal = prev.sucursal + tSecEnt - tSecSal;
+  const endB = data.endBalances || {};
+  const endCaja = endB.caja !== undefined ? endB.caja : prev.caja + tRecEnt - tRecSal;
+  const endCorriente = endB.corriente !== undefined ? endB.corriente : prev.corriente + tPrinEnt - tPrinSal;
+  const endSucursal = endB.sucursal !== undefined ? endB.sucursal : prev.sucursal + tSecEnt - tSecSal;
   const endTotal = endCaja + endCorriente + endSucursal;
 
   const e = (x) => '$' + x.toFixed(2);
@@ -1158,8 +1159,8 @@ function renderS26Form(data) {
 
   // La página 1 del S-26 oficial siempre se llena con filas en blanco
   // después de las transacciones, hasta completar la hoja (el formulario
-  // oficial S-26-S tiene 41 renglones en la página 1).
-  const PAGE_ROWS = 41;
+  // oficial S-26-S tiene 46 renglones en la página 1).
+  const PAGE_ROWS = 50;
   const fillerCount = Math.max(0, PAGE_ROWS - txnRowCount);
   const emptyRows = Array(fillerCount).fill('').map(() => '<tr><td>&nbsp;</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>').join('');
 
@@ -1850,6 +1851,135 @@ async function s26ClearSaldoInicial(year, month) {
     window._editingSaldoInicial = null;
     toast('Saldo inicial restaurado al cálculo automático');
     renderS26Landing(year, month);
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+// === CIERRE DE FIN DE MES ===
+async function doCierreMes() {
+  // Paso 1: Seleccionar mes
+  const ySel = s26Year;
+  const mSel = s26Month;
+  const ym = await new Promise(resolve => {
+    const div = document.createElement('div');
+    div.className = 'modal-dialog';
+    div.innerHTML = `<div class="modal-dialog-box">
+      <h4>📆 Seleccionar mes de cierre</h4>
+      <p>Elija el año y mes para generar/corregir el cierre:</p>
+      <div style="display:flex;gap:.5rem;margin-bottom:.5rem">
+        <div class="form-group" style="flex:1"><label>Año</label>
+          <select id="cierreYear">${[ySel-1, ySel, ySel+1].map(y => `<option value="${y}"${y===ySel?' selected':''}>${y}</option>`).join('')}</select>
+        </div>
+        <div class="form-group" style="flex:1"><label>Mes</label>
+          <select id="cierreMonth">${['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'].map((n,i) => `<option value="${i+1}"${i+1===mSel?' selected':''}>${n}</option>`).join('')}</select>
+        </div>
+      </div>
+      <div class="modal-dialog-acts">
+        <button class="btn btn-secondary" id="ymCancel">Cancelar</button>
+        <button class="btn btn-primary" id="ymOk">Continuar</button>
+      </div>
+    </div>`;
+    document.body.appendChild(div);
+    div.querySelector('#ymOk').onclick = () => {
+      const y = parseInt(div.querySelector('#cierreYear').value);
+      const m = parseInt(div.querySelector('#cierreMonth').value);
+      div.remove();
+      resolve({ y, m });
+    };
+    div.querySelector('#ymCancel').onclick = () => { div.remove(); resolve(null); };
+  });
+  if (!ym) return;
+  const { y, m } = ym;
+
+  const monthName = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'][m-1];
+  const lastDay = new Date(y, m, 0).getDate();
+  const dateStr = `${y}-${String(m).padStart(2,'0')}-${String(lastDay).padStart(2,'0')}`;
+
+  // Paso 2: Obtener publisher count
+  let pubs = null;
+  try { const cfg = await api('/api/config'); if (cfg.publishers) pubs = parseInt(cfg.publishers); } catch (_) {}
+  pubs = await new Promise(resolve => {
+    const div = document.createElement('div');
+    div.className = 'modal-dialog';
+    div.innerHTML = `<div class="modal-dialog-box">
+      <h4>📆 Publicadores del mes</h4>
+      <p>Ingrese el número de publicadores para ${monthName} ${y}:</p>
+      <div class="form-group"><input type="number" id="pubsInput" value="${pubs || 70}" min="1" style="font-size:1.1rem;text-align:center;font-weight:700"></div>
+      <div style="display:flex;gap:.35rem;margin-top:.5rem">
+        <label style="font-size:.72rem;display:flex;align-items:center;gap:.3rem;color:var(--text-light)">
+          <input type="checkbox" id="savePubsCheck" checked> Guardar para próximo mes
+        </label>
+      </div>
+      <div class="modal-dialog-acts" style="margin-top:.75rem">
+        <button class="btn btn-secondary" id="pubsCancel">Cancelar</button>
+        <button class="btn btn-primary" id="pubsOk">Continuar</button>
+      </div>
+    </div>`;
+    document.body.appendChild(div);
+    const input = div.querySelector('#pubsInput'); input.focus(); input.select();
+    div.querySelector('#pubsOk').onclick = () => {
+      const val = parseInt(input.value);
+      if (!val || val < 1) return;
+      if (div.querySelector('#savePubsCheck').checked)
+        api('/api/config', { method: 'POST', body: JSON.stringify({ publishers: String(val) }) }).catch(() => {});
+      div.remove(); resolve(val);
+    };
+    div.querySelector('#pubsCancel').onclick = () => { div.remove(); resolve(null); };
+    input.onkeydown = e => { if (e.key === 'Enter') div.querySelector('#pubsOk').click(); };
+  });
+  if (!pubs) return;
+
+  // Paso 3: Previsualización
+  const data = await api(`/api/s26-data?year=${y}&month=${String(m).padStart(2,'0')}`);
+  const omSum = data.transactions.filter(t => t.code === 'OM' && t.type === 'income').reduce((s,t) => s + t.amount, 0);
+  const cSum = data.transactions.filter(t => t.code === 'C' && t.type === 'income').reduce((s,t) => s + t.amount, 0);
+  const items = [
+    { label: 'OM → RE (envío a Betel)', value: omSum },
+    { label: `30 × ${pubs} pubs. (ROM)`, value: 30 * pubs },
+    { label: `10% de donaciones C (ROM)`, value: Math.round(cSum * 0.1) },
+    { label: `Mantenimiento (${monthName} ${y})`, value: 1250 },
+  ];
+  const total = items.reduce((s,i) => s + i.value, 0);
+
+  // Detectar si hay cierre previo (para cambiar copy)
+  const existing = await api(`/api/transactions?limit=1&startDate=${dateStr}&endDate=${dateStr}&code=GM`);
+  const isCorrection = existing.transactions && existing.transactions.length > 0;
+  const title = isCorrection ? '🔄 Corregir cierre' : '📆 Nuevo cierre';
+  const verb = isCorrection ? 'se corregirán' : 'se generarán';
+
+  const confirmed = total === 1250 && omSum === 0 && cSum === 0
+    ? confirm(`📆 Cierre de ${monthName} ${y}\n\nEste mes no tiene ingresos con código OM ni C.\nSolo se ${verb} el gasto de Mantenimiento por $1,250.00.\n\n¿Continuar?`)
+    : await new Promise(resolve => {
+        const div = document.createElement('div');
+        div.className = 'cierre-modal';
+        div.innerHTML = `<div class="cierre-modal-box">
+          <h3>${title} — ${monthName} ${y}</h3>
+          <p>${isCorrection ? 'Las donaciones cambiaron. Los montos se recalcularán y corregirán:' : `${verb} los siguientes gastos el ${dateStr}:`}</p>
+          <div class="cierre-modal-summary">
+            ${items.map(it => `<div class="item"><span class="label">${it.label}</span><span class="value">$${it.value.toFixed(2)}</span></div>`).join('')}
+            <div class="item" style="font-weight:700;border-top:2px solid var(--primary);padding-top:.4rem;margin-top:.2rem">
+              <span class="label">TOTAL GASTOS</span><span class="value">$${total.toFixed(2)}</span>
+            </div>
+          </div>
+          <div class="cierre-modal-acts">
+            <button class="btn btn-secondary" id="cierreCancel">Cancelar</button>
+            <button class="btn btn-cierre" id="cierreOk">${isCorrection ? '🔄 Corregir' : '✅ Confirmar y Ejecutar'}</button>
+          </div>
+        </div>`;
+        document.body.appendChild(div);
+        div.querySelector('#cierreOk').onclick = () => { div.remove(); resolve(true); };
+        div.querySelector('#cierreCancel').onclick = () => { div.remove(); resolve(false); };
+      });
+  if (!confirmed) return;
+
+  try {
+    await api('/api/cierre-mes', {
+      method: 'POST',
+      body: JSON.stringify({ year: y, month: String(m).padStart(2,'0'), publishers: pubs })
+    });
+    toast(isCorrection ? '✅ Cierre corregido exitosamente' : '✅ Cierre de mes generado correctamente');
+    renderS26Landing(y, m);
   } catch (err) {
     toast(err.message, 'error');
   }

@@ -721,6 +721,86 @@ tr:hover td { background: #eaf2f8; }
 .land-btn-form { background: var(--grad-sunset); box-shadow: 0 5px 18px rgba(231,76,60,.32); }
 .land-btn-form:hover { box-shadow: 0 10px 26px rgba(231,76,60,.42); }
 
+.land-btn-cierre { background: var(--grad-green); box-shadow: 0 5px 18px rgba(39,174,96,.35); }
+.land-btn-cierre:hover { box-shadow: 0 10px 26px rgba(39,174,96,.45); }
+
+.landing-cierre {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 1.25rem;
+}
+.landing-cierre .land-btn {
+  flex-direction: row;
+  padding: .85rem 2rem;
+  gap: .65rem;
+  min-width: 300px;
+}
+.landing-cierre .land-icon { font-size: 1.6rem; }
+.landing-cierre .land-label { font-size: .85rem; }
+.landing-cierre .land-sub { font-size: .65rem; }
+
+.btn-cierre {
+  padding: .5rem 1rem;
+  border: none;
+  border-radius: 7px;
+  font-size: .82rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: .3rem;
+  background: var(--grad-green);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(39,174,96,.3);
+  transition: all .18s cubic-bezier(.2,.8,.3,1.1);
+}
+.btn-cierre:hover { transform: translateY(-1px); box-shadow: 0 5px 14px rgba(39,174,96,.4); filter: brightness(1.08); }
+
+/* Modal de confirmación de cierre */
+.cierre-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 99990;
+  background: rgba(0,0,0,.45);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.cierre-modal-box {
+  background: #fff;
+  border-radius: 16px;
+  padding: 1.5rem 2rem;
+  width: min(92vw, 480px);
+  box-shadow: 0 8px 40px rgba(0,0,0,.2);
+  max-height: 90vh;
+  overflow-y: auto;
+}
+.cierre-modal-box h3 { margin: 0 0 .5rem; font-size: 1.1rem; color: var(--primary-dark); }
+.cierre-modal-box p { font-size: .82rem; color: var(--text-light); margin-bottom: .75rem; }
+.cierre-modal-summary { background: #f8f9fa; border-radius: 8px; padding: .75rem; margin-bottom: .75rem; }
+.cierre-modal-summary .item { display: flex; justify-content: space-between; padding: .3rem 0; font-size: .82rem; border-bottom: 1px solid #e8eaed; }
+.cierre-modal-summary .item:last-child { border-bottom: none; }
+.cierre-modal-summary .item .label { color: var(--text-light); }
+.cierre-modal-summary .item .value { font-weight: 700; }
+.cierre-modal-acts { display: flex; gap: .5rem; justify-content: flex-end; }
+.cierre-modal-acts .btn { min-width: 100px; justify-content: center; }
+
+/* Diálogo modal personalizado */
+.modal-dialog {
+  position: fixed; inset: 0; z-index: 99991;
+  background: rgba(0,0,0,.45); backdrop-filter: blur(2px);
+  display: flex; align-items: center; justify-content: center;
+}
+.modal-dialog-box {
+  background: #fff; border-radius: 16px; padding: 1.5rem 2rem;
+  width: min(92vw, 400px); box-shadow: 0 8px 40px rgba(0,0,0,.2);
+}
+.modal-dialog-box h4 { margin: 0 0 .5rem; font-size: 1rem; }
+.modal-dialog-box p { font-size: .85rem; color: var(--text-light); margin-bottom: .75rem; }
+.modal-dialog-acts { display: flex; gap: .5rem; justify-content: flex-end; }
+.modal-dialog-acts .btn { min-width: 80px; justify-content: center; }
+
 /* Barra de nav + cuadrícula de meses */
 .s26-nav-bar { margin-bottom: 1rem; }
 .s26-nav-bar .service-year-select { margin-bottom: .6rem; }
