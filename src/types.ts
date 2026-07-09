@@ -182,6 +182,7 @@ export interface AppState {
   _syncVersion: number;
   // Para que los deletes de transacciones no reaparezcan por merge de nube
   deletedTransactions?: Record<string, number>; // txId -> delete timestamp (ms)
+  deletedAccountIds?: string[]; // IDs de cuentas explícitamente borradas por el usuario
 }
 
 // ---------- Acciones del reducer (discriminated union) ----------

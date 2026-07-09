@@ -6,8 +6,7 @@ import type {
 
 // ---------- API base (Capacitor nativo vs. web) ----------
 
-const isNative = typeof window !== "undefined" &&
-  (window.location.hostname === "localhost" || window.location.protocol === "capacitor:");
+const isNative = typeof window !== "undefined" && window.location.protocol === "capacitor:";
 export const API_BASE: string = isNative ? "https://mis-finazas-gold.vercel.app" : "";
 
 // ---------- Monedas y conversión ----------
@@ -79,9 +78,10 @@ export function cleanOrphanTransactions(accounts: any[], transactions: any[]): a
 // Once deleted, we strip them on load/restore/merge so they don't regenerate from SEED or cloud.
 export const DEMO_ACCOUNT_IDS: string[] = ["acc-corriente", "acc-ahorro", "acc-deposito", "acc-usd"];
 
-export function stripDemoAccounts(accounts: any[]): any[] {
+export function stripDemoAccounts(accounts: any[], deletedIds: string[]): any[] {
   if (!Array.isArray(accounts)) return [];
-  return accounts.filter((a: any) => !DEMO_ACCOUNT_IDS.includes(a.id));
+  if (!deletedIds || !deletedIds.length) return accounts;
+  return accounts.filter((a: any) => !deletedIds.includes(a.id));
 }
 
 // ---------- Categorías ----------

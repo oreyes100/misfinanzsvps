@@ -65,6 +65,7 @@ const SEED = {
   },
   goldPriceEUR: 68.4, // €/gramo
   _syncVersion: 0,
+  deletedAccountIds: [],
 };
 
 // ---------- Reducer ----------
@@ -82,7 +83,7 @@ function innerReducer(state, action) {
   switch (action.type) {
     case "hydrate": {
       const h = action.state || state;
-      const strippedAccounts = h && Array.isArray(h.accounts) ? stripDemoAccounts(h.accounts) : (h ? h.accounts : []);
+      const strippedAccounts = h && Array.isArray(h.accounts) ? stripDemoAccounts(h.accounts, h.deletedAccountIds || []) : (h ? h.accounts : []);
       let cleaned = h && Array.isArray(h.accounts) && Array.isArray(h.transactions)
         ? { ...h, accounts: strippedAccounts, transactions: cleanOrphanTransactions(strippedAccounts, h.transactions) }
         : h;
@@ -225,13 +226,19 @@ function innerReducer(state, action) {
       return { ...state, accounts };
     }
 
-    case "delete_account":
+    case "delete_account": {
       const aid = action.accountId;
+      const DEMO_IDS = ["acc-corriente", "acc-ahorro", "acc-deposito", "acc-usd"];
+      const deletedAccountIds = DEMO_IDS.includes(aid)
+        ? [...new Set([...(state.deletedAccountIds || []), aid])]
+        : (state.deletedAccountIds || []);
       return {
         ...state,
         accounts: state.accounts.filter((a) => a.id !== aid),
         transactions: state.transactions.filter((t) => t.accountId !== aid),
+        deletedAccountIds,
       };
+    }
 
     case "add_category":
       return { ...state, categories: [...state.categories, { id: uid(), _updatedAt: Date.now(), ...action.category }] };
@@ -378,8 +385,9 @@ function innerReducer(state, action) {
         }
         return changed ? [...map.values()] : local;
       }
+      const mergedDeletedAccountIds = [...new Set([...(state.deletedAccountIds || []), ...(s.deletedAccountIds || [])])];
       let mergedAccounts = mergeByID(state.accounts, s.accounts);
-      mergedAccounts = stripDemoAccounts(mergedAccounts);
+      mergedAccounts = stripDemoAccounts(mergedAccounts, mergedDeletedAccountIds);
       let mergedTxs = mergeByID(state.transactions, s.transactions);
       mergedTxs = cleanOrphanTransactions(mergedAccounts, mergedTxs);
       const mergedDeleted = { ...(state.deletedTransactions || {}), ...(s.deletedTransactions || {}) };
@@ -396,6 +404,7 @@ function innerReducer(state, action) {
         transactions: mergedTxs,
         scheduled: mergedScheduled,
         deletedTransactions: mergedDeleted,
+        deletedAccountIds: mergedDeletedAccountIds,
         categories: mergeByID(state.categories, s.categories, "id"),
         assets: s.assets ? { ...state.assets, ...s.assets, crypto: mergeByID(state.assets.crypto, s.assets.crypto, "id"), realEstate: mergeByID(state.assets.realEstate, s.assets.realEstate, "id"), depreciating: mergeByID(state.assets.depreciating || [], s.assets.depreciating || [], "id") } : state.assets,
         transferAliases: { ...state.transferAliases, ...(s.transferAliases || {}) },
@@ -423,7 +432,7 @@ function load() {
     if (!raw) return accrueInterest(SEED);
     const saved = JSON.parse(raw);
     const merged = { ...SEED, ...saved, fx: { ...BASE_FX, ...saved.fx } };
-    merged.accounts = stripDemoAccounts(merged.accounts);
+    merged.accounts = stripDemoAccounts(merged.accounts, merged.deletedAccountIds || []);
     merged.transactions = cleanOrphanTransactions(merged.accounts, merged.transactions);
     if (merged.deletedTransactions) {
       merged.transactions = (merged.transactions || []).filter((t) => !merged.deletedTransactions[t.id]);
@@ -438,8 +447,8 @@ const SYNC_KEY = "mis-finazas-sync-id";
 
 /** Partes del estado que viajan a la nube (precios/FX en vivo se quedan fuera). */
 function syncableSlice(state) {
-  const { settings, accounts, assets, transactions, scheduled, categories, transferAliases, categoryAliases, statementPatterns, _syncVersion, deletedTransactions } = state;
-  return { settings, accounts, assets, transactions, scheduled, categories, transferAliases, categoryAliases, statementPatterns, _syncVersion, deletedTransactions };
+  const { settings, accounts, assets, transactions, scheduled, categories, transferAliases, categoryAliases, statementPatterns, _syncVersion, deletedTransactions, deletedAccountIds } = state;
+  return { settings, accounts, assets, transactions, scheduled, categories, transferAliases, categoryAliases, statementPatterns, _syncVersion, deletedTransactions, deletedAccountIds };
 }
 
 export function StoreProvider({ children }) {
@@ -625,13 +634,18 @@ export function StoreProvider({ children }) {
     return JSON.stringify(rest);
   }, [state.settings, state.accounts, state.assets, state.transactions, state.scheduled, state.categories, state.transferAliases, state.categoryAliases, state.statementPatterns, state._syncVersion]);
   const saveTimerRef = useRef(null);
+  // Ref siempre actualizado con el JSON más reciente — evita el stale closure en beforeunload.
+  const stableSaveRef = useRef(stableSave);
+  stableSaveRef.current = stableSave;
   useEffect(() => {
     clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(saveLocal, 100);
     return () => clearTimeout(saveTimerRef.current);
   }, [stableSave]);
   useEffect(() => {
-    const handler = () => saveLocal();
+    const handler = () => {
+      try { localStorage.setItem(KEY, stableSaveRef.current); } catch {}
+    };
     window.addEventListener('beforeunload', handler);
     return () => window.removeEventListener('beforeunload', handler);
   }, []);

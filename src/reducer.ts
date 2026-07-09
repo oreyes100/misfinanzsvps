@@ -1,6 +1,6 @@
 // reducer.ts — Reductor puro con tipos completos
 import type { AppState, Action, NetWorth, PendingCardPayment, Account, Transaction } from "./types.ts";
-import { BASE_FX, DEFAULT_CATEGORIES, DAY_MS, categorize, cleanOrphanTransactions, stripDemoAccounts, todayISO, uid } from "./utils.ts";
+import { BASE_FX, DEFAULT_CATEGORIES, DAY_MS, DEMO_ACCOUNT_IDS, categorize, cleanOrphanTransactions, stripDemoAccounts, todayISO, uid } from "./utils.ts";
 import type { Currency, Category } from "./types.ts";
 import { accrueInterest } from "./interest.ts";
 import { migrate } from "./migrations.ts";
@@ -63,6 +63,7 @@ export const SEED: AppState = {
   },
   goldPriceEUR: 68.4,
   _syncVersion: 0,
+  deletedAccountIds: [] as string[],
 };
 
 // ---------- Reducer ----------
@@ -72,9 +73,6 @@ function mergeByID<T extends { id: string; _updatedAt?: number }>(local: T[], cl
   if (!Array.isArray(local)) return cloud;
   const map = new Map(local.map((x) => [x[key] as string, x]));
   let changed = false;
-
-  // Demo accounts from SEED (base model). Once deleted locally by user, don't bring them back from cloud.
-  const DEMO_ACCOUNT_IDS = ["acc-corriente", "acc-ahorro", "acc-deposito", "acc-usd"];
 
   for (const item of cloud) {
     const existing = map.get(item[key] as string);
@@ -94,7 +92,7 @@ function innerReducer(state: AppState, action: Action): AppState {
   switch (action.type) {
     case "hydrate": {
       const h = action.state || state;
-      const strippedAccounts = h && Array.isArray(h.accounts) ? stripDemoAccounts(h.accounts) : (h ? h.accounts : []);
+      const strippedAccounts = h && Array.isArray(h.accounts) ? stripDemoAccounts(h.accounts, h.deletedAccountIds || []) : (h ? h.accounts : []);
       let cleaned = h && Array.isArray(h.accounts) && Array.isArray(h.transactions)
         ? { ...h, accounts: strippedAccounts, transactions: cleanOrphanTransactions(strippedAccounts, h.transactions) }
         : h;
@@ -230,13 +228,18 @@ function innerReducer(state: AppState, action: Action): AppState {
       return { ...state, accounts };
     }
 
-    case "delete_account":
+    case "delete_account": {
       const aid = action.accountId;
+      const deletedAccountIds = DEMO_ACCOUNT_IDS.includes(aid)
+        ? [...new Set([...(state.deletedAccountIds || []), aid])]
+        : (state.deletedAccountIds || []);
       return {
         ...state,
         accounts: state.accounts.filter((a) => a.id !== aid),
         transactions: state.transactions.filter((t) => t.accountId !== aid),
+        deletedAccountIds,
       };
+    }
 
     case "add_category":
       return { ...state, categories: [...state.categories, { id: uid(), ...action.category }] };
@@ -355,8 +358,9 @@ function innerReducer(state: AppState, action: Action): AppState {
 
     case "restore": {
       const s = action.state || {};
+      const mergedDeletedAccountIds = [...new Set([...(state.deletedAccountIds || []), ...(s.deletedAccountIds || [])])];
       let mergedAccounts = mergeByID(state.accounts, s.accounts);
-      mergedAccounts = stripDemoAccounts(mergedAccounts);
+      mergedAccounts = stripDemoAccounts(mergedAccounts, mergedDeletedAccountIds);
       let mergedTxs = mergeByID(state.transactions, s.transactions);
       mergedTxs = cleanOrphanTransactions(mergedAccounts, mergedTxs);
       const mergedDeleted = { ...(state.deletedTransactions || {}), ...(s.deletedTransactions || {}) };
@@ -373,6 +377,7 @@ function innerReducer(state: AppState, action: Action): AppState {
         transactions: mergedTxs,
         scheduled: mergedScheduled,
         deletedTransactions: mergedDeleted,
+        deletedAccountIds: mergedDeletedAccountIds,
         categories: mergeByID(state.categories, s.categories),
         assets: s.assets ? {
           ...state.assets, ...s.assets,

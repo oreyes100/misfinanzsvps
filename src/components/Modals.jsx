@@ -238,6 +238,7 @@ export function TransactionModal({ onClose, preset, tx }) {
   const [receipt, setReceipt] = useState(null); // { merchant, total, date, items } tras escanear
   const [statement, setStatement] = useState(null); // { merchant, rows } captura bancaria con varios movimientos
   const [counterpartId, setCounterpartId] = useState(tx?.counterpartId || "");
+  const [formError, setFormError] = useState("");
   const fileRef = useRef(null);
 
   const ai = categorize(desc, state.categories);
@@ -410,7 +411,9 @@ export function TransactionModal({ onClose, preset, tx }) {
   const save = (e) => {
     e.preventDefault();
     const amt = parseFloat(amount);
-    if (!desc || !amt) return;
+    if (!desc) { setFormError("Escribe una descripción."); return; }
+    if (!amt) { setFormError("Introduce un importe válido mayor que cero."); return; }
+    setFormError("");
     const acc = state.accounts.find((a) => a.id === accountId);
     const useCurrency = acc?.currency || tx?.currency || "EUR";
     const payload = {
@@ -778,6 +781,7 @@ export function TransactionModal({ onClose, preset, tx }) {
         </Btn>
         {ocr?.note && <p className="rounded-lg bg-white/6 px-3 py-2 text-xs text-ink-dim" aria-live="polite">{ocr.note}</p>}
 
+        {formError && <p role="alert" className="text-xs font-medium text-loss">{formError}</p>}
         <div className="flex items-center gap-2 pt-1">
           {isEdit && (
             <Btn variant="danger" onClick={remove} aria-label={`Eliminar movimiento ${tx.description}`}>🗑 Eliminar</Btn>
