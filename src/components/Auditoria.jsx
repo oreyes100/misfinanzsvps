@@ -70,6 +70,7 @@ export default function Auditoria() {
   const [selectedAccountId, setSelectedAccountId] = useState(null);
   const [error, setError] = useState(null);
   const [itemStates, setItemStates] = useState({});
+  const [ocrFallback, setOcrFallback] = useState(false);
 
   const fileRef = useRef(null);
   const inputRef = useRef(null);
@@ -91,6 +92,7 @@ export default function Auditoria() {
     setSelectedAccountId(null);
     setError(null);
     setItemStates({});
+    setOcrFallback(false);
   };
 
   // Aprende un patrón cuando el usuario aplica una corrección
@@ -166,114 +168,89 @@ export default function Auditoria() {
         imagesToAnalyze = [f];
       }
 
-      // Si tenemos API key de Gemini, usar aiExtract (más preciso)
+      // Helper: OCR local con Tesseract como fallback
+      const runTesseract = async (images, fileName) => {
+        setProgressLabel("Aplicando OCR local...");
+        let allText = "";
+        for (let i = 0; i < images.length; i++) {
+          setProgressLabel(`Aplicando OCR página ${i + 1}/${images.length}...`);
+          setProgress(40 + Math.round((i / images.length) * 40));
+          const pageFile = new File([images[i]], `page_${i + 1}.png`, { type: "image/png" });
+          const text = await ocrImage(pageFile, (p) => setProgress(40 + Math.round(p * 40)));
+          allText += text + "\n";
+        }
+        setProgress(85);
+        setProgressLabel("Analizando texto OCR...");
+        const parsed = parseStatement(allText, { statementPatterns, accounts });
+        return {
+          type: "statement",
+          merchant: parsed.merchant || fileName,
+          movements: parsed.movements,
+          detectedBank: parsed.detectedBank,
+        };
+      };
+
+      // Aplicar patrones aprendidos a movimientos extraídos con IA
+      const applyPatterns = (movements) =>
+        movements.map((m) => {
+          const learned = statementPatterns[makePatternKey(m.description)];
+          return learned
+            ? { ...m, description: learned.description || m.description, category: learned.category || m.category, direction: learned.direction || m.direction }
+            : m;
+        });
+
+      let combinedExtract;
+
       const geminiKey = settings.geminiKey;
       if (geminiKey) {
         setProgressLabel("Analizando con IA (Gemini)...");
         setProgress(50);
 
-        let allMovements = [];
-        let merchant = "";
-        for (let i = 0; i < imagesToAnalyze.length; i++) {
-          setProgressLabel(`Analizando página ${i + 1}/${imagesToAnalyze.length} con IA...`);
-          setProgress(50 + Math.round((i / imagesToAnalyze.length) * 40));
-
-          const pageFile = new File([imagesToAnalyze[i]], `page_${i + 1}.png`, { type: "image/png" });
-          const pageExtract = await aiExtract(pageFile, geminiKey, {
-            categories: state.categories,
-            accounts,
-          });
-
-          if (!merchant && pageExtract.merchant) merchant = pageExtract.merchant;
-          if (pageExtract.movements?.length) allMovements.push(...pageExtract.movements);
-        }
-
-        // Mejorar movimientos con patrones aprendidos
-        allMovements = allMovements.map((m) => {
-          const key = makePatternKey(m.description);
-          const learned = statementPatterns[key];
-          if (learned) {
-            return {
-              ...m,
-              description: learned.description || m.description,
-              category: learned.category || m.category,
-              direction: learned.direction || m.direction,
-            };
+        try {
+          let allMovements = [];
+          let merchant = "";
+          for (let i = 0; i < imagesToAnalyze.length; i++) {
+            setProgressLabel(`Analizando página ${i + 1}/${imagesToAnalyze.length} con IA...`);
+            setProgress(50 + Math.round((i / imagesToAnalyze.length) * 40));
+            const pageFile = new File([imagesToAnalyze[i]], `page_${i + 1}.png`, { type: "image/png" });
+            const pageExtract = await aiExtract(pageFile, geminiKey, { categories: state.categories, accounts });
+            if (!merchant && pageExtract.merchant) merchant = pageExtract.merchant;
+            if (pageExtract.movements?.length) allMovements.push(...pageExtract.movements);
           }
-          return m;
-        });
-
-        setProgress(90);
-        setProgressLabel("Aplicando auditoría...");
-
-        const combinedExtract = {
-          type: "statement",
-          merchant: merchant || f.name,
-          movements: allMovements,
-        };
-        setExtract(combinedExtract);
-
-        const auditResult = await runAudit(combinedExtract);
-        setResult(auditResult);
-
-        const states = {};
-        for (const item of auditResult.checklist) {
-          states[item.id] = "pending";
-        }
-        setItemStates(states);
-
-        if (auditResult.account) {
-          setSelectedAccountId(auditResult.account.id);
-          setPhase("results");
-        } else {
-          setPhase("account_select");
-          if (accounts.length === 1) {
-            setSelectedAccountId(accounts[0].id);
-          }
+          combinedExtract = {
+            type: "statement",
+            merchant: merchant || f.name,
+            movements: applyPatterns(allMovements),
+          };
+        } catch (geminiErr) {
+          // 503 / 429 / red caída → aviso y fallback a OCR local
+          console.warn("Gemini OCR falló, usando Tesseract:", geminiErr.message);
+          setProgressLabel(`IA no disponible (${geminiErr.message}) — usando OCR local...`);
+          combinedExtract = await runTesseract(imagesToAnalyze, f.name);
+          combinedExtract._ocrFallback = true;
         }
       } else {
-        // Sin Gemini: usar Tesseract.js local + statement-parser
-        setProgressLabel("Aplicando OCR local...");
-        let allText = "";
-        for (let i = 0; i < imagesToAnalyze.length; i++) {
-          setProgressLabel(`Aplicando OCR página ${i + 1}/${imagesToAnalyze.length}...`);
-          setProgress(40 + Math.round((i / imagesToAnalyze.length) * 40));
-          const pageFile = new File([imagesToAnalyze[i]], `page_${i + 1}.png`, { type: "image/png" });
-          const text = await ocrImage(pageFile, (p) => setProgress(40 + Math.round(p * 40)));
-          allText += text + "\n";
-        }
+        combinedExtract = await runTesseract(imagesToAnalyze, f.name);
+      }
 
-        setProgress(85);
-        setProgressLabel("Analizando texto OCR...");
+      setProgress(90);
+      setProgressLabel("Aplicando auditoría...");
+      setExtract(combinedExtract);
+      if (combinedExtract._ocrFallback) setOcrFallback(true);
 
-        // Parser inteligente con detección de banco y patrones aprendidos
-        const parsed = parseStatement(allText, {
-          statementPatterns,
-          accounts,
-        });
+      const auditResult = await runAudit(combinedExtract);
+      setResult(auditResult);
 
-        const parsedExtract = {
-          type: "statement",
-          merchant: parsed.merchant || f.name,
-          movements: parsed.movements,
-          detectedBank: parsed.detectedBank,
-        };
-        setExtract(parsedExtract);
+      const states = {};
+      for (const item of auditResult.checklist) states[item.id] = "pending";
+      setItemStates(states);
 
-        const auditResult = await runAudit(parsedExtract);
-        setResult(auditResult);
-
-        const states = {};
-        for (const item of auditResult.checklist) states[item.id] = "pending";
-        setItemStates(states);
-
-        if (auditResult.account) {
-          setSelectedAccountId(auditResult.account.id);
-          setPhase("results");
-        } else {
-          setPhase("account_select");
-          if (accounts.length === 1) setSelectedAccountId(accounts[0].id);
-        }
+      if (auditResult.account) {
+        setSelectedAccountId(auditResult.account.id);
+        setPhase("results");
+      } else {
+        setPhase("account_select");
+        if (accounts.length === 1) setSelectedAccountId(accounts[0].id);
       }
 
       setProgress(100);
@@ -426,6 +403,15 @@ export default function Auditoria() {
               </p>
             )}
           </Glass>
+
+          {/* Aviso OCR fallback */}
+          {ocrFallback && (
+            <Glass className="!rounded-xl border border-amber-500/30 bg-amber-500/10 p-3">
+              <p className="text-xs text-amber-300">
+                ⚠ Gemini no estuvo disponible (503) — se usó OCR local. Los resultados pueden ser menos precisos. Reintenta más tarde para análisis con IA.
+              </p>
+            </Glass>
+          )}
 
           {/* Checklist */}
           <AuditChecklist
