@@ -41,6 +41,11 @@ export default function AuditChecklist({ result, accountId, itemStates, onToggle
     [state.categories]
   );
 
+  const accountCurrency = useMemo(
+    () => state.accounts.find((a) => a.id === accountId)?.currency ?? null,
+    [state.accounts, accountId]
+  );
+
   if (!hasIssues) {
     return (
       <Glass className="!rounded-2xl p-5 text-center">
@@ -75,6 +80,7 @@ export default function AuditChecklist({ result, accountId, itemStates, onToggle
             amount: item.direction === "out" ? -item.amount : item.amount,
             category,
             accountId,
+            ...(accountCurrency ? { currency: accountCurrency } : {}),
             notes,
             auto: false,
           },
@@ -90,6 +96,7 @@ export default function AuditChecklist({ result, accountId, itemStates, onToggle
             amount: item.direction === "out" ? -item.amount : item.amount,
             category: "Transferencia",
             accountId,
+            ...(accountCurrency ? { currency: accountCurrency } : {}),
             notes,
             auto: false,
           },

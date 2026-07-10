@@ -208,7 +208,7 @@ export default function Auditoria() {
 
         const combinedExtract = {
           type: "statement",
-          merchant: merchant || file.name,
+          merchant: merchant || f.name,
           movements: allMovements,
         };
         setExtract(combinedExtract);
@@ -254,7 +254,7 @@ export default function Auditoria() {
 
         const parsedExtract = {
           type: "statement",
-          merchant: parsed.merchant || file.name,
+          merchant: parsed.merchant || f.name,
           movements: parsed.movements,
           detectedBank: parsed.detectedBank,
         };
