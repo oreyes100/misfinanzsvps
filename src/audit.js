@@ -404,12 +404,16 @@ export function aiItemsToChecklist(items, transactions) {
     const tx = it.txId ? byId.get(it.txId) || null : null;
     // phantom/mismatch requieren tx real; si la IA alucinó el id, degradar a missing
     if ((it.kind !== "missing") && it.txId && !tx) continue;
+    // Si la IA marca el faltante como transferencia, usar add_transfer
+    const action = (it.kind === "missing" && it.isTransfer) ? "add_transfer" : map.action;
+    const type = (it.kind === "missing" && it.isTransfer) ? "missing_transfer" : map.type;
     checklist.push({
       id: `ai-${it.kind}-${i}`,
-      type: map.type,
+      type,
       severity: it.severity && ["high", "medium", "low"].includes(it.severity) ? it.severity : map.severity,
       mov: null,
       tx,
+      isTransfer: !!it.isTransfer,
       description: it.description || tx?.description || "—",
       date: it.date || tx?.date || null,
       amount: it.amount,
@@ -418,7 +422,7 @@ export function aiItemsToChecklist(items, transactions) {
       difference: tx && it.kind === "amount_mismatch" ? Math.abs(it.amount - Math.abs(tx.amount)) : undefined,
       direction: it.direction || (tx && tx.amount > 0 ? "in" : "out"),
       proposed: it.explanation || "",
-      action: map.action,
+      action,
       category: it.proposal?.category || null,
       proposal: it.proposal || {
         description: it.description || "",

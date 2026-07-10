@@ -17,9 +17,13 @@ const TYPE_LABELS = {
   wrong_sign: "Signo incorrecto",
 };
 
+// Un item es pago/transferencia si viene marcado como isTransfer o es tipo add_transfer
+const isTransferItem = (item) =>
+  item.action === "add_transfer" || item.isTransfer === true;
+
 export default function AuditChecklist({ result, accountId, itemStates, onToggleItem }) {
   const { state, dispatch } = useStore();
-  // Ediciones por item: { [itemId]: { description, category, notes } }
+  // Ediciones por item: { [itemId]: { description, category, notes, counterpartId } }
   const [edits, setEdits] = useState({});
 
   const summary = result.summary;
@@ -30,6 +34,7 @@ export default function AuditChecklist({ result, accountId, itemStates, onToggle
     description: item.proposal?.description ?? item.description ?? "",
     category: item.proposal?.category ?? item.category ?? "",
     notes: item.proposal?.notes ?? "",
+    counterpartId: "",
     ...(edits[item.id] || {}),
   });
 
@@ -43,6 +48,12 @@ export default function AuditChecklist({ result, accountId, itemStates, onToggle
 
   const accountCurrency = useMemo(
     () => state.accounts.find((a) => a.id === accountId)?.currency ?? null,
+    [state.accounts, accountId]
+  );
+
+  // Cuentas disponibles para contraparte (excluye la cuenta auditada)
+  const counterpartAccounts = useMemo(
+    () => state.accounts.filter((a) => a.id !== accountId),
     [state.accounts, accountId]
   );
 
@@ -88,19 +99,36 @@ export default function AuditChecklist({ result, accountId, itemStates, onToggle
         break;
       }
       case "add_transfer": {
-        dispatch({
-          type: "add_transaction",
-          tx: {
+        const ed2 = editFor(item);
+        const counterpartId = ed2.counterpartId;
+        if (counterpartId) {
+          // Registro completo como transferencia entre cuentas
+          const fromId = item.direction === "out" ? accountId : counterpartId;
+          const toId = item.direction === "out" ? counterpartId : accountId;
+          dispatch({
+            type: "transfer",
+            fromId,
+            toId,
+            amount: item.amount,
             date: item.proposal?.date || item.date,
-            description: description + (item.direction === "out" ? " (origen)" : " (destino)"),
-            amount: item.direction === "out" ? -item.amount : item.amount,
-            category: "Transferencia",
-            accountId,
-            ...(accountCurrency ? { currency: accountCurrency } : {}),
             notes,
-            auto: false,
-          },
-        });
+          });
+        } else {
+          // Sin contraparte seleccionada: registra solo el lado conocido
+          dispatch({
+            type: "add_transaction",
+            tx: {
+              date: item.proposal?.date || item.date,
+              description: description + (item.direction === "out" ? " (origen)" : " (destino)"),
+              amount: item.direction === "out" ? -item.amount : item.amount,
+              category: "Transferencia",
+              accountId,
+              ...(accountCurrency ? { currency: accountCurrency } : {}),
+              notes,
+              auto: false,
+            },
+          });
+        }
         break;
       }
       case "correct_amount": {
@@ -201,6 +229,7 @@ export default function AuditChecklist({ result, accountId, itemStates, onToggle
           const state_ = itemStates[item.id] || "pending";
           const ed = editFor(item);
           const editable = state_ === "pending" && item.action !== "remove_transaction" && item.action !== "correct_sign";
+          const isTransfer = isTransferItem(item);
 
           return (
             <motion.div
@@ -255,6 +284,27 @@ export default function AuditChecklist({ result, accountId, itemStates, onToggle
                   {/* Campos editables antes de aplicar */}
                   {editable && (
                     <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
+                      {/* Selector de contraparte para transferencias */}
+                      {isTransfer && (
+                        <div className="sm:col-span-2">
+                          <label className="mb-0.5 block text-[11px] text-ink-dim">
+                            {item.direction === "out" ? "Cuenta destino" : "Cuenta origen"}
+                            {" "}
+                            <span className="text-amber-400">(pago registrado como transferencia)</span>
+                          </label>
+                          <select
+                            className={`${inputCls} !py-1.5 !text-xs`}
+                            value={ed.counterpartId || ""}
+                            onChange={(e) => setEdit(item.id, { counterpartId: e.target.value || "" })}
+                            aria-label="Cuenta contraparte de la transferencia"
+                          >
+                            <option value="">Sin contraparte — registrar solo este lado</option>
+                            {counterpartAccounts.map((a) => (
+                              <option key={a.id} value={a.id}>{a.name}</option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
                       <input
                         className={`${inputCls} !py-1.5 !text-xs`}
                         value={ed.description}

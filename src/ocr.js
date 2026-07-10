@@ -351,12 +351,13 @@ Devuelve SOLO JSON:
  "description": "...",
  "amount": número positivo,
  "direction": "in"|"out",
+ "isTransfer": true|false,
  "explanation": "explicación breve en español de la discrepancia",
  "proposal": {"description": "...", "amount": número positivo, "date": "AAAA-MM-DD", "category": "..." | null, "notes": "..."}
 }]}
 
 Significados:
-- "missing": está en el extracto, NO en registros → proposal = datos para crear el registro. severity high.
+- "missing": está en el extracto, NO en registros → proposal = datos para crear el registro. severity high. Si es un pago interbancario, SPEI, traspaso o pago de tarjeta, marca isTransfer=true.
 - "phantom": registrado en la app, NO respaldado por el extracto (solo si su fecha cae dentro del período del extracto). severity medium.
 - "amount_mismatch": mismo movimiento, importe distinto → proposal.amount = el del extracto. severity medium.
 - "detail_mismatch": mismo movimiento, descripción/categoría pobre o equivocada → proposal con descripción clara y categoría sugerida. severity low.
