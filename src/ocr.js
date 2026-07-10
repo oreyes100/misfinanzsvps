@@ -277,3 +277,109 @@ Reglas:
   }
   throw lastErr || new Error("Ningún modelo Gemini disponible");
 }
+
+// ---------- Auditoría comparativa con IA ----------
+
+async function geminiJSON(prompt, apiKey) {
+  const body = {
+    contents: [{ parts: [{ text: prompt }] }],
+    generationConfig: { response_mime_type: "application/json", temperature: 0 },
+  };
+  let lastErr = null;
+  for (const model of GEMINI_MODELS) {
+    try {
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`,
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }
+      );
+      if (res.status === 404) continue;
+      if (res.status === 400 || res.status === 403) throw new Error("API key de Gemini inválida o sin permisos");
+      if (res.status === 429) throw new Error("Límite de uso de Gemini alcanzado, espera un momento");
+      if (!res.ok) throw new Error(`Gemini respondió ${res.status}`);
+      const out = await res.json();
+      const text = out.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!text) throw new Error("Gemini no devolvió contenido");
+      return JSON.parse(text);
+    } catch (e) {
+      lastErr = e;
+      if (!/404/.test(String(e.message))) throw e;
+    }
+  }
+  throw lastErr || new Error("Ningún modelo Gemini disponible");
+}
+
+/**
+ * Auditoría comparativa: la IA coteja los movimientos del extracto contra las
+ * transacciones registradas y devuelve discrepancias con propuestas de corrección.
+ *
+ * @param {Object[]} movements — [{date, description, amount(+), direction, isTransfer, category}]
+ * @param {Object[]} registered — transacciones de la cuenta [{id, date, description, amount(signed), category, notes}]
+ * @param {string} apiKey — Gemini API key
+ * @param {Object} opts — { categories }
+ * @returns {Promise<{items: Array}>} items: [{kind, severity, date, description, amount, direction, txId, explanation, proposal}]
+ */
+export async function aiAudit(movements, registered, apiKey, { categories = [] } = {}) {
+  const catNames = categories.filter((c) => !c.system).map((c) => c.name).join(", ");
+  const movs = movements.map((m, i) => ({
+    i, date: m.date, description: m.description, amount: m.amount, direction: m.direction,
+  }));
+  const regs = registered.map((t) => ({
+    id: t.id, date: t.date, description: t.description, amount: t.amount,
+    category: t.category || null, notes: t.notes || null,
+  }));
+
+  const prompt = `Eres un auditor contable meticuloso. Compara el ESTADO DE CUENTA bancario contra los REGISTROS de una app de finanzas personales y detecta TODA discrepancia.
+
+ESTADO DE CUENTA (movimientos extraídos, amount siempre positivo, direction "in"=abono / "out"=cargo):
+${JSON.stringify(movs)}
+
+REGISTROS DE LA APP (amount con signo: negativo=gasto, positivo=ingreso):
+${JSON.stringify(regs)}
+
+Reglas de emparejamiento:
+- Un registro solo puede cubrir UN movimiento del extracto (1 a 1). Dos cargos idénticos del extracto requieren dos registros.
+- Match = mismo importe (±0.03), fecha cercana (±3 días) y concepto compatible (los bancos abrevian: "SPEI ENVIADO OXXO" ≈ "Oxxo").
+- direction "out" corresponde a amount negativo en registros; "in" a positivo. Si el signo no corresponde, es discrepancia "wrong_sign".
+
+Devuelve SOLO JSON:
+{"items":[{
+ "kind": "missing"|"phantom"|"amount_mismatch"|"detail_mismatch"|"wrong_sign",
+ "severity": "high"|"medium"|"low",
+ "movIndex": número | null,
+ "txId": "id del registro" | null,
+ "date": "AAAA-MM-DD",
+ "description": "...",
+ "amount": número positivo,
+ "direction": "in"|"out",
+ "explanation": "explicación breve en español de la discrepancia",
+ "proposal": {"description": "...", "amount": número positivo, "date": "AAAA-MM-DD", "category": "..." | null, "notes": "..."}
+}]}
+
+Significados:
+- "missing": está en el extracto, NO en registros → proposal = datos para crear el registro. severity high.
+- "phantom": registrado en la app, NO respaldado por el extracto (solo si su fecha cae dentro del período del extracto). severity medium.
+- "amount_mismatch": mismo movimiento, importe distinto → proposal.amount = el del extracto. severity medium.
+- "detail_mismatch": mismo movimiento, descripción/categoría pobre o equivocada → proposal con descripción clara y categoría sugerida. severity low.
+- "wrong_sign": registrado con signo contrario al extracto. severity high.
+- Categorías disponibles: ${catNames}. En proposal.category usa una de ellas o null.
+- En proposal.notes escribe una nota breve útil (ej. "Detectado en auditoría del extracto, banco reporta ${"${fecha}"}").
+- Si TODO cuadra, devuelve {"items":[]}. NO inventes discrepancias.`;
+
+  const out = await geminiJSON(prompt, apiKey);
+  const items = Array.isArray(out?.items) ? out.items : [];
+  // Sanear: importes numéricos, kinds válidos
+  const VALID = new Set(["missing", "phantom", "amount_mismatch", "detail_mismatch", "wrong_sign"]);
+  return {
+    items: items.filter((it) => it && VALID.has(it.kind) && isFinite(+it.amount)).map((it) => ({
+      ...it,
+      amount: Math.abs(+it.amount),
+      proposal: it.proposal && typeof it.proposal === "object" ? {
+        description: String(it.proposal.description || it.description || "").slice(0, 60),
+        amount: isFinite(+it.proposal.amount) ? Math.abs(+it.proposal.amount) : Math.abs(+it.amount),
+        date: it.proposal.date || it.date || null,
+        category: it.proposal.category || null,
+        notes: String(it.proposal.notes || "").slice(0, 200),
+      } : null,
+    })),
+  };
+}

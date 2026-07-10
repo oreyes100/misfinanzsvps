@@ -2,8 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { useStore } from "../store.jsx";
 import { fmtMoney, groupedAccounts } from "../utils.js";
-import { aiExtract, ocrImage } from "../ocr.js";
-import { auditStatement, buildCorrectionActions } from "../audit.js";
+import { aiAudit, aiExtract, ocrImage } from "../ocr.js";
+import { aiItemsToChecklist, auditStatement, summarizeChecklist } from "../audit.js";
 import { parseStatement, makePatternKey, buildPattern } from "../statement-parser.js";
 import AuditChecklist from "./AuditChecklist.jsx";
 import { Btn, Glass, inputCls } from "./UI.jsx";
@@ -101,6 +101,43 @@ export default function Auditoria() {
     }
   };
 
+  // Auditoría en dos pasos: heurística local + (si hay API key) verificación
+  // comparativa con IA, que es la fuente autoritativa cuando responde.
+  const runAudit = useCallback(async (extractData, overrideAccountId) => {
+    const opts = overrideAccountId ? { overrideAccountId } : {};
+    let auditResult = auditStatement(extractData, accounts, state.transactions, opts);
+
+    const geminiKey = settings.geminiKey;
+    if (geminiKey && auditResult.account) {
+      try {
+        setProgressLabel("Verificando con IA (análisis comparativo)...");
+        setProgress(95);
+        const accountTx = state.transactions.filter((t) => t.accountId === auditResult.account.id);
+        // Acotar al período del extracto (±5 días de margen) para no mandar todo el historial
+        const periodTx = auditResult.period
+          ? accountTx.filter((t) => {
+              const lo = new Date(auditResult.period.from + "T00:00:00") - 5 * 86400000;
+              const hi = new Date(auditResult.period.to + "T00:00:00").getTime() + 5 * 86400000;
+              const d = new Date((t.date || "1970-01-01") + "T12:00:00").getTime();
+              return d >= lo && d <= hi;
+            })
+          : accountTx;
+        const ai = await aiAudit(extractData.movements || [], periodTx, geminiKey, { categories: state.categories });
+        const aiChecklist = aiItemsToChecklist(ai.items, state.transactions);
+        auditResult = {
+          ...auditResult,
+          checklist: aiChecklist,
+          summary: summarizeChecklist(aiChecklist, (extractData.movements || []).length),
+          aiVerified: true,
+        };
+      } catch (e) {
+        console.warn("aiAudit falló, usando auditoría heurística:", e);
+        auditResult = { ...auditResult, aiVerified: false, aiError: e.message };
+      }
+    }
+    return auditResult;
+  }, [accounts, state.transactions, state.categories, settings.geminiKey]);
+
   const onFile = useCallback(async (f) => {
     if (!f) return;
     if (f.size > MAX_SIZE) {
@@ -130,7 +167,7 @@ export default function Auditoria() {
       }
 
       // Si tenemos API key de Gemini, usar aiExtract (más preciso)
-      const geminiKey = settings.geminiApiKey;
+      const geminiKey = settings.geminiKey;
       if (geminiKey) {
         setProgressLabel("Analizando con IA (Gemini)...");
         setProgress(50);
@@ -176,7 +213,7 @@ export default function Auditoria() {
         };
         setExtract(combinedExtract);
 
-        const auditResult = auditStatement(combinedExtract, accounts, state.transactions);
+        const auditResult = await runAudit(combinedExtract);
         setResult(auditResult);
 
         const states = {};
@@ -223,7 +260,7 @@ export default function Auditoria() {
         };
         setExtract(parsedExtract);
 
-        const auditResult = auditStatement(parsedExtract, accounts, state.transactions);
+        const auditResult = await runAudit(parsedExtract);
         setResult(auditResult);
 
         const states = {};
@@ -246,13 +283,14 @@ export default function Auditoria() {
       setError(err.message || "Error al procesar el archivo");
       setPhase("error");
     }
-  }, [accounts, state.categories, state.transactions, state.settings, statementPatterns, preview]);
+  }, [accounts, state.categories, state.transactions, state.settings, statementPatterns, preview, runAudit]);
 
-  const confirmAccount = () => {
+  const confirmAccount = async () => {
     if (!selectedAccountId) return;
-    const auditResult = auditStatement(extract, accounts, state.transactions, {
-      overrideAccountId: selectedAccountId,
-    });
+    setPhase("processing");
+    setProgressLabel("Auditando cuenta seleccionada...");
+    setProgress(90);
+    const auditResult = await runAudit(extract, selectedAccountId);
     setResult(auditResult);
     const states = {};
     for (const item of auditResult.checklist) states[item.id] = "pending";
@@ -352,9 +390,21 @@ export default function Auditoria() {
                   {result.account && ` (${fmtMoney(result.account.balance, result.account.currency)})`}
                 </span>
               </div>
-              <span className="rounded-full bg-accent/20 px-2.5 py-0.5 text-[11px] text-accent-soft">
-                Confianza: {Math.round(result.accountConfidence * 100)}%
-              </span>
+              <div className="flex items-center gap-1.5">
+                {result.aiVerified && (
+                  <span className="rounded-full bg-green-500/20 px-2.5 py-0.5 text-[11px] text-green-300">
+                    🧠 Verificado con IA
+                  </span>
+                )}
+                {result.aiVerified === false && (
+                  <span className="rounded-full bg-amber-500/20 px-2.5 py-0.5 text-[11px] text-amber-300" title={result.aiError}>
+                    ⚠ IA no disponible — análisis heurístico
+                  </span>
+                )}
+                <span className="rounded-full bg-accent/20 px-2.5 py-0.5 text-[11px] text-accent-soft">
+                  Confianza: {Math.round(result.accountConfidence * 100)}%
+                </span>
+              </div>
             </div>
             {result.accountReason && (
               <p className="mt-1 text-xs text-ink-dim">Motivo: {result.accountReason}</p>

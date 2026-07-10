@@ -109,10 +109,11 @@ export function identifyAccount(extract, accounts) {
 
 // ---------- Matching de movimientos ----------
 
-function findMatch(mov, accountTransactions) {
+function findMatch(mov, accountTransactions, consumed) {
   let best = { tx: null, score: -1, type: null };
 
   for (const tx of accountTransactions) {
+    if (consumed.has(tx.id)) continue; // 1-a-1: una tx registrada solo cubre UN movimiento del extracto
     const txAmount = Math.abs(tx.amount);
     const movAmount = mov.amount;
     const amountMatch = Math.abs(txAmount - movAmount) < 0.03;
@@ -135,15 +136,16 @@ function findMatch(mov, accountTransactions) {
       }
     }
 
-    // Match solo por importe + fecha (cuando descripción es muy distinta)
+    // Match solo por importe + fecha (descripción muy distinta) — sospechoso, no silencioso
     if (amountMatch && dd <= 2 && ds <= 0.55) {
       const score = 0.3 - dd * 0.05;
       if (score > best.score) {
-        best = { tx, score, type: "amount_only" };
+        best = { tx, score, type: "detail_mismatch" };
       }
     }
   }
 
+  if (best.score >= 0) consumed.add(best.tx.id);
   return best.score >= 0 ? best : null;
 }
 
@@ -183,10 +185,11 @@ export function auditStatement(extract, accounts, transactions, options = {}) {
   // --- Comparar cada movimiento del extracto vs registradas ---
 
   const checklist = [];
+  const consumed = new Set(); // ids de txs registradas ya emparejadas (matching 1-a-1)
 
   for (let i = 0; i < movements.length; i++) {
     const mov = movements[i];
-    const match = findMatch(mov, accountTx);
+    const match = findMatch(mov, accountTx, consumed);
 
     if (!match) {
       // No hay match → transacción faltante en nuestro registro
@@ -216,6 +219,13 @@ export function auditStatement(extract, accounts, transactions, options = {}) {
           proposed: `Registrar movimiento faltante: "${mov.description}" — ${fmtAmountShort(mov.amount)}`,
           action: "add_transaction",
           category: mov.category || null,
+          proposal: {
+            description: mov.description?.slice(0, 60) || "Movimiento bancario",
+            amount: mov.amount,
+            date: mov.date,
+            category: mov.category || null,
+            notes: "",
+          },
         });
       }
       continue;
@@ -239,10 +249,70 @@ export function auditStatement(extract, accounts, transactions, options = {}) {
         direction: dir,
         proposed: `Corregir importe en "${mov.description}": de ${fmtAmountShort(Math.abs(tx.amount))} → ${fmtAmountShort(mov.amount)}`,
         action: "correct_amount",
+        proposal: {
+          description: tx.description,
+          amount: mov.amount,
+          date: tx.date,
+          category: tx.category || null,
+          notes: tx.notes || "",
+        },
       });
     }
 
-    // Si es "exact" o "amount_only" → todo correcto, no generar item
+    if (match.type === "detail_mismatch") {
+      // Mismo importe y fecha pero descripción muy distinta — posible asiento mal descrito
+      const tx = match.tx;
+      checklist.push({
+        id: `det-${i}`,
+        type: "detail_mismatch",
+        severity: "low",
+        mov,
+        tx,
+        description: mov.description,
+        date: mov.date,
+        amount: mov.amount,
+        registeredDescription: tx.description,
+        direction: tx.amount > 0 ? "in" : "out",
+        proposed: `Verificar asiento: registrado como "${tx.description}", el extracto dice "${mov.description}"`,
+        action: "correct_details",
+        proposal: {
+          description: mov.description?.slice(0, 60) || tx.description,
+          amount: Math.abs(tx.amount),
+          date: tx.date,
+          category: tx.category || null,
+          notes: tx.notes || "",
+        },
+      });
+    }
+
+    // Solo "exact" pasa sin generar item
+  }
+
+  // --- Asientos fantasma: registrados en la app dentro del período pero ausentes del extracto ---
+  if (targetAccount && period) {
+    for (const tx of accountTx) {
+      if (consumed.has(tx.id)) continue;
+      if (!tx.date || tx.date < period.from || tx.date > period.to) continue;
+      checklist.push({
+        id: `phantom-${tx.id}`,
+        type: "phantom_transaction",
+        severity: "medium",
+        tx,
+        description: tx.description,
+        date: tx.date,
+        amount: Math.abs(tx.amount),
+        direction: tx.amount > 0 ? "in" : "out",
+        proposed: `"${tx.description}" (${fmtAmountShort(Math.abs(tx.amount))}) está registrado pero NO aparece en el estado de cuenta — verificar o eliminar`,
+        action: "remove_transaction",
+        proposal: {
+          description: tx.description,
+          amount: Math.abs(tx.amount),
+          date: tx.date,
+          category: tx.category || null,
+          notes: tx.notes || "",
+        },
+      });
+    }
   }
 
   // --- Detectar transferencias entre cuentas internas no registradas ---
@@ -285,7 +355,9 @@ export function auditStatement(extract, accounts, transactions, options = {}) {
   });
 
   // --- Resumen ---
-  const exactMatches = movements.length - checklist.length;
+  // Coincidencias exactas = movimientos del extracto sin ningún item de discrepancia asociado
+  const movementIssues = checklist.filter((c) => c.type !== "phantom_transaction").length;
+  const exactMatches = Math.max(0, movements.length - movementIssues);
 
   return {
     account: targetAccount,
@@ -300,8 +372,82 @@ export function auditStatement(extract, accounts, transactions, options = {}) {
       amountMismatches: checklist.filter((c) => c.type === "amount_mismatch").length,
       missingTransactions: checklist.filter((c) => c.type === "missing_transaction").length,
       missingTransfers: checklist.filter((c) => c.type === "missing_transfer").length,
+      phantomTransactions: checklist.filter((c) => c.type === "phantom_transaction").length,
+      detailMismatches: checklist.filter((c) => c.type === "detail_mismatch").length,
     },
     checklist,
+  };
+}
+
+// ---------- Fusión con auditoría IA ----------
+
+const AI_KIND_MAP = {
+  missing: { type: "missing_transaction", action: "add_transaction", severity: "high" },
+  phantom: { type: "phantom_transaction", action: "remove_transaction", severity: "medium" },
+  amount_mismatch: { type: "amount_mismatch", action: "correct_amount", severity: "medium" },
+  detail_mismatch: { type: "detail_mismatch", action: "correct_details", severity: "low" },
+  wrong_sign: { type: "wrong_sign", action: "correct_sign", severity: "high" },
+};
+
+/**
+ * Convierte los hallazgos de aiAudit (ocr.js) al formato del checklist local.
+ * La IA es la fuente autoritativa cuando está disponible; este resultado
+ * REEMPLAZA al checklist heurístico.
+ */
+export function aiItemsToChecklist(items, transactions) {
+  const byId = new Map((transactions || []).map((t) => [t.id, t]));
+  const checklist = [];
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    const map = AI_KIND_MAP[it.kind];
+    if (!map) continue;
+    const tx = it.txId ? byId.get(it.txId) || null : null;
+    // phantom/mismatch requieren tx real; si la IA alucinó el id, degradar a missing
+    if ((it.kind !== "missing") && it.txId && !tx) continue;
+    checklist.push({
+      id: `ai-${it.kind}-${i}`,
+      type: map.type,
+      severity: it.severity && ["high", "medium", "low"].includes(it.severity) ? it.severity : map.severity,
+      mov: null,
+      tx,
+      description: it.description || tx?.description || "—",
+      date: it.date || tx?.date || null,
+      amount: it.amount,
+      registeredAmount: tx ? Math.abs(tx.amount) : undefined,
+      registeredDescription: tx?.description,
+      difference: tx && it.kind === "amount_mismatch" ? Math.abs(it.amount - Math.abs(tx.amount)) : undefined,
+      direction: it.direction || (tx && tx.amount > 0 ? "in" : "out"),
+      proposed: it.explanation || "",
+      action: map.action,
+      category: it.proposal?.category || null,
+      proposal: it.proposal || {
+        description: it.description || "",
+        amount: it.amount,
+        date: it.date || null,
+        category: null,
+        notes: "",
+      },
+      source: "ai",
+    });
+  }
+  const sev = { high: 0, medium: 1, low: 2 };
+  checklist.sort((a, b) => (sev[a.severity] ?? 2) - (sev[b.severity] ?? 2) || (a.date || "").localeCompare(b.date || ""));
+  return checklist;
+}
+
+/** Recalcula el summary desde un checklist (para cuando la IA reemplaza al heurístico). */
+export function summarizeChecklist(checklist, totalMovements) {
+  const count = (t) => checklist.filter((c) => c.type === t).length;
+  const movementIssues = checklist.filter((c) => c.type !== "phantom_transaction").length;
+  return {
+    totalMovements,
+    exactMatches: Math.max(0, totalMovements - movementIssues),
+    amountMismatches: count("amount_mismatch"),
+    missingTransactions: count("missing_transaction"),
+    missingTransfers: count("missing_transfer"),
+    phantomTransactions: count("phantom_transaction"),
+    detailMismatches: count("detail_mismatch"),
+    wrongSigns: count("wrong_sign"),
   };
 }
 
@@ -348,6 +494,37 @@ export function buildCorrectionActions(checklist, selectedAccountId, accounts) {
           type: "update_transaction",
           payload: { id: item.tx.id, patch: { amount: Math.round(newAmount * 100) / 100 } },
           label: `✏️ "${item.description?.slice(0, 30)}": ${item.registeredAmount?.toFixed(2)} → ${item.amount.toFixed(2)}`,
+        });
+        break;
+      }
+      case "correct_details": {
+        if (!item.tx) break;
+        actions.push({
+          id: item.id,
+          type: "update_transaction",
+          payload: { id: item.tx.id, patch: { description: item.proposal?.description || item.description } },
+          label: `✏️ Actualizar descripción: "${item.proposal?.description?.slice(0, 40)}"`,
+        });
+        break;
+      }
+      case "remove_transaction": {
+        if (!item.tx) break;
+        actions.push({
+          id: item.id,
+          type: "delete_transaction",
+          payload: { id: item.tx.id },
+          label: `🗑 Eliminar asiento no respaldado: "${item.description?.slice(0, 40)}"`,
+        });
+        break;
+      }
+      case "correct_sign": {
+        if (!item.tx) break;
+        const fixed = item.direction === "out" ? -Math.abs(item.tx.amount) : Math.abs(item.tx.amount);
+        actions.push({
+          id: item.id,
+          type: "update_transaction",
+          payload: { id: item.tx.id, patch: { amount: Math.round(fixed * 100) / 100 } },
+          label: `↔️ Corregir signo: "${item.description?.slice(0, 40)}"`,
         });
         break;
       }
