@@ -320,7 +320,7 @@ function innerReducer(state: AppState, action: Action): AppState {
 
     case "mark_card_paid": {
       const accounts = state.accounts.map((a) =>
-        a.id === action.accountId ? { ...a, lastPaidCycle: action.cycle } : a
+        a.id === action.accountId ? { ...a, lastPaidCycle: action.cycle, _updatedAt: Date.now() } : a
       );
       return { ...state, accounts };
     }
