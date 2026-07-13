@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Contabilidad Congregación — S-26 / S-30 / S-25c</title>
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css?v=2">
 </head>
 <body>
 
@@ -448,6 +448,24 @@
   </div>
 </dialog>
 
+<!-- POPUP DE ADVERTENCIA: la IA de recibos falló -->
+<dialog id="aiWarnModal" class="ai-warn-modal" aria-labelledby="aiWarnTitle">
+  <div class="ai-warn-header">
+    <h3 id="aiWarnTitle">⚠ La interpretación con IA no está disponible</h3>
+    <button class="ocr-modal-close" onclick="closeAiWarn()" aria-label="Cerrar">✕</button>
+  </div>
+  <div class="ai-warn-body">
+    <p id="aiWarnCause" class="ai-warn-cause"></p>
+    <ol id="aiWarnSteps" class="ai-warn-steps"></ol>
+    <p class="ai-warn-note">Mientras tanto puede usar el resultado del <strong>OCR local</strong> que aparece detrás: revise las cantidades manualmente antes de registrar.</p>
+    <div id="aiWarnRetryResult" class="ai-warn-retry" style="display:none"></div>
+  </div>
+  <div class="ai-warn-actions">
+    <button type="button" class="btn btn-secondary" id="aiWarnRetryBtn">🔄 Probar clave de nuevo</button>
+    <button type="button" class="btn btn-primary" id="aiWarnConfigBtn">⚙ Ir a Configuración</button>
+  </div>
+</dialog>
+
 <!-- ASISTENTE IA -->
 <button id="aiFab" onclick="toggleAiChat()" title="Asistente Contable IA" aria-label="Abrir asistente de IA">✨</button>
 <div id="aiChat" class="ai-chat" role="dialog" aria-label="Asistente contable de IA">
@@ -473,6 +491,6 @@
 </div>
 
 <div id="toast"></div>
-<script src="app.js?v=10"></script>
+<script src="app.js?v=11"></script>
 </body>
 </html>

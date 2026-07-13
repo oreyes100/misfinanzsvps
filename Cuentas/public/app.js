@@ -700,6 +700,117 @@ function defaultAccountFor(type) {
 // Las claves de Google AI Studio empiezan con "AIza"
 function isGoogleApiKey(k) { return /^AIza[0-9A-Za-z_\-]{20,}$/.test(k); }
 
+// === POPUP DE ADVERTENCIA: IA de recibos no disponible ===
+// Flag: hubo clave funcionando alguna vez en este navegador. Distingue
+// "nunca configuró clave" (solo hint amarillo) de "la clave desapareció" (popup).
+const HAD_AI_KEY_FLAG = 'cuentas-had-ai-key';
+
+// Mapa causa → explicación + pasos de solución
+const AI_WARN_CONTENT = {
+  invalid_key: {
+    cause: 'La clave API de Google fue rechazada (clave inválida o revocada).',
+    steps: [
+      'Entre a aistudio.google.com/apikey con su cuenta de Google.',
+      'Use "Crear clave de API" y copie la clave completa (empieza con "AIza").',
+      'Péguela en Configuración → "Clave API de IA" y guarde.',
+      'Vuelva a subir el recibo.'
+    ]
+  },
+  forbidden: {
+    cause: 'Google rechazó la clave por permisos (403): la API no está habilitada o la clave tiene restricciones.',
+    steps: [
+      'En Google Cloud Console, habilite la "Generative Language API" para el proyecto de la clave.',
+      'En las restricciones de la clave elija "None" — las restricciones por sitio web bloquean el uso desde el servidor.',
+      'Si no puede cambiarla, cree una clave nueva en aistudio.google.com/apikey.'
+    ]
+  },
+  quota: {
+    cause: 'Se agotó la cuota gratuita de la clave (límite por minuto o por día).',
+    steps: [
+      'Espere 1-2 minutos y pulse "Probar clave de nuevo".',
+      'Si sigue fallando, la cuota diaria se agotó: espere al día siguiente.',
+      'Alternativa: cree una clave en otro proyecto de Google y péguela en Configuración.'
+    ]
+  },
+  model_missing: {
+    cause: 'Ningún modelo de IA está disponible para esta clave.',
+    steps: [
+      'El sistema ya intentó modelos alternos sin éxito.',
+      'Cree una clave nueva en aistudio.google.com/apikey y péguela en Configuración.'
+    ]
+  },
+  overloaded: {
+    cause: 'El servicio de IA de Google está sobrecargado en este momento (error temporal).',
+    steps: [
+      'Reintente en unos minutos con "Probar clave de nuevo".',
+      'Mientras tanto, use el resultado del OCR local y verifique los montos a mano.'
+    ]
+  },
+  network: {
+    cause: 'No se pudo conectar con el servicio de IA de Google.',
+    steps: [
+      'Verifique la conexión a internet.',
+      'Reintente en unos minutos con "Probar clave de nuevo".'
+    ]
+  },
+  key_lost: {
+    cause: 'La clave de IA que estaba configurada ya no está guardada (se perdió al reiniciar el servidor en la nube).',
+    steps: [
+      'Vuelva a pegar su clave en Configuración → "Clave API de IA" y guarde.',
+      'Para que no vuelva a perderse, configure la clave como variable de entorno GEMINI_API_KEY en Vercel.'
+    ]
+  }
+};
+
+function showAiWarning(code) {
+  const content = AI_WARN_CONTENT[code] || AI_WARN_CONTENT.network;
+  document.getElementById('aiWarnCause').textContent = content.cause;
+  document.getElementById('aiWarnSteps').innerHTML = content.steps.map(s => `<li>${s}</li>`).join('');
+  const retryRes = document.getElementById('aiWarnRetryResult');
+  retryRes.style.display = 'none';
+  retryRes.className = 'ai-warn-retry';
+  const m = document.getElementById('aiWarnModal');
+  if (!m.open) m.showModal();
+}
+
+function closeAiWarn() { document.getElementById('aiWarnModal').close(); }
+
+function setupAiWarnModal() {
+  const m = document.getElementById('aiWarnModal');
+  m.addEventListener('click', e => { if (e.target === m) closeAiWarn(); });
+
+  document.getElementById('aiWarnRetryBtn').addEventListener('click', async () => {
+    const out = document.getElementById('aiWarnRetryResult');
+    out.style.display = 'block';
+    out.className = 'ai-warn-retry';
+    out.textContent = 'Probando clave…';
+    try {
+      const st = await api('/api/ai-status');
+      if (st.ok) {
+        out.className = 'ai-warn-retry ok';
+        out.textContent = '✅ La IA responde correctamente. Vuelva a subir el recibo.';
+        localStorage.setItem(HAD_AI_KEY_FLAG, '1');
+        setTimeout(closeAiWarn, 1800);
+      } else {
+        const c = AI_WARN_CONTENT[st.code] || AI_WARN_CONTENT.network;
+        out.className = 'ai-warn-retry fail';
+        out.textContent = '✗ Sigue fallando: ' + c.cause;
+      }
+    } catch (e) {
+      out.className = 'ai-warn-retry fail';
+      out.textContent = '✗ No se pudo contactar al servidor: ' + e.message;
+    }
+  });
+
+  document.getElementById('aiWarnConfigBtn').addEventListener('click', () => {
+    closeAiWarn();
+    closeOcrModal();
+    const input = document.getElementById('cfgAiKey');
+    input.focus();
+    input.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  });
+}
+
 function setupUpload() {
   const area = document.getElementById('uploadArea');
   const input = document.getElementById('receiptInput');
@@ -736,6 +847,7 @@ function setupUpload() {
       await api('/api/config', { method: 'POST', body: JSON.stringify({ ai_api_key: key }) });
       document.getElementById('cfgAiKey').value = key;
       document.getElementById('ocrAiHint').style.display = 'none';
+      localStorage.setItem(HAD_AI_KEY_FLAG, '1');
       toast('✅ Clave guardada. Vuelva a subir el recibo para usar la IA.');
     } catch (err) {
       toast(err.message, 'error');
@@ -751,7 +863,7 @@ async function processFile(file) {
   fd.append('receipt', file);
   try {
     const [data, codes] = await Promise.all([
-      fetch('/api/upload-receipt', { method: 'POST', body: fd }).then(r => r.json()),
+      fetch('/api/upload-receipt', { method: 'POST', body: fd, headers: authToken ? { 'Authorization': 'Bearer ' + authToken } : {} }).then(r => r.json()),
       api('/api/codes')
     ]);
     ocrCodesCache = codes;
@@ -775,8 +887,20 @@ async function processFile(file) {
       verified: !!t.verified
     }));
     document.getElementById('ocrAiHint').style.display = data.engine === 'ia' ? 'none' : 'block';
-    if (data.error && data.error.startsWith('IA:')) {
-      toast('La IA falló (' + data.error.slice(0, 120) + '). Se usó OCR local.', 'error');
+
+    // Tabla de decisión del popup de IA (war-game Move 4):
+    //   hasKey && !ok            → la clave falló: popup con la causa clasificada
+    //   !hasKey && hubo clave    → la clave desapareció: popup 'key_lost'
+    //   !hasKey && nunca hubo    → solo el hint amarillo (sin popup)
+    const ai = data.aiStatus || null;
+    if (ai) {
+      if (ai.ok) {
+        localStorage.setItem(HAD_AI_KEY_FLAG, '1');
+      } else if (ai.hasKey) {
+        showAiWarning(ai.code || 'network');
+      } else if (localStorage.getItem(HAD_AI_KEY_FLAG) === '1') {
+        showAiWarning('key_lost');
+      }
     }
     const engineLabel = data.engine === 'ia'
       ? '<span style="background:#eaf2f8;color:#1a5276;padding:.1rem .4rem;border-radius:4px;font-size:.65rem;font-weight:700">🤖 Interpretado con IA</span> '
@@ -2236,5 +2360,6 @@ async function adminDeleteUser(id, username) {
 function setupAll() {
   setupForm();
   setupUpload();
+  setupAiWarnModal();
   setupFilters();
 }

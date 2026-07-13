@@ -308,6 +308,41 @@ app.post('/api/config', (req, res) => {
   res.json({ success: true });
 });
 
+// === DIAGNÓSTICO IA ===
+// Prueba la clave Gemini con una llamada mínima y devuelve estado clasificado.
+// La UI lo usa para el botón "Probar clave de nuevo" del popup de advertencia.
+app.get('/api/ai-status', async (req, res) => {
+  const apiKey = getAiKey();
+  if (!apiKey) return res.json({ ok: false, code: 'no_key' });
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 10000);
+  try {
+    let lastStatus = null;
+    for (const model of AI_MODELS) {
+      const r = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+        {
+          method: 'POST',
+          headers: { 'x-goog-api-key': apiKey, 'content-type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: 'ping' }] }],
+            generationConfig: { maxOutputTokens: 1 }
+          }),
+          signal: ctrl.signal
+        }
+      );
+      if (r.ok) { clearTimeout(timer); return res.json({ ok: true, model }); }
+      lastStatus = r.status;
+      if (r.status !== 404) break; // solo 404 justifica probar otro modelo
+    }
+    clearTimeout(timer);
+    return res.json({ ok: false, code: classifyAiError(lastStatus), status: lastStatus });
+  } catch (e) {
+    clearTimeout(timer);
+    return res.json({ ok: false, code: 'network', detail: e.message.slice(0, 120) });
+  }
+});
+
 // === ACCOUNTS ===
 app.get('/api/accounts', (req, res) => {
   res.json(query('SELECT * FROM accounts'));
@@ -427,7 +462,9 @@ const sharp = require('sharp');
 // GEMINI_API_KEY), el recibo se interpreta con Google Gemini Flash
 // (capa GRATUITA de Google AI Studio: https://aistudio.google.com/apikey)
 // y el OCR local queda como respaldo.
-const AI_MODEL = process.env.AI_MODEL || 'gemini-2.5-flash';
+// Lista con fallback: si el primero devuelve 404 (modelo no disponible para
+// esa clave/región) se intenta el siguiente.
+const AI_MODELS = [process.env.AI_MODEL || 'gemini-2.5-flash', 'gemini-2.0-flash'];
 
 function getConfigValue(key) {
   const row = get('SELECT value FROM config WHERE key=?', [key]);
@@ -436,6 +473,16 @@ function getConfigValue(key) {
 
 function getAiKey() {
   return process.env.GEMINI_API_KEY || (getConfigValue('ai_api_key') || '').trim() || null;
+}
+
+/** Clasifica el HTTP status de Gemini en un código accionable para la UI. */
+function classifyAiError(status) {
+  if (status === 400) return 'invalid_key';
+  if (status === 401 || status === 403) return 'forbidden';
+  if (status === 429) return 'quota';
+  if (status === 404) return 'model_missing';
+  if (status === 503) return 'overloaded';
+  return 'network';
 }
 
 // En Vercel el filesystem del proyecto es de solo lectura, así que tesseract.js
@@ -479,36 +526,58 @@ async function interpretWithAI(filePath, apiKey) {
     .resize({ width: 1600, withoutEnlargement: true })
     .jpeg({ quality: 88 })
     .toBuffer();
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${AI_MODEL}:generateContent`;
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'x-goog-api-key': apiKey,
-      'content-type': 'application/json'
-    },
-    body: JSON.stringify({
-      contents: [{
-        parts: [
-          { inline_data: { mime_type: 'image/jpeg', data: buf.toString('base64') } },
-          { text: buildAiPrompt() }
-        ]
-      }],
-      generationConfig: {
-        temperature: 0,
-        response_mime_type: 'application/json'
-      }
-    })
+  const body = JSON.stringify({
+    contents: [{
+      parts: [
+        { inline_data: { mime_type: 'image/jpeg', data: buf.toString('base64') } },
+        { text: buildAiPrompt() }
+      ]
+    }],
+    generationConfig: {
+      temperature: 0,
+      response_mime_type: 'application/json'
+    }
   });
-  if (!response.ok) {
-    const t = await response.text();
-    throw new Error(`API de IA ${response.status}: ${t.slice(0, 300)}`);
+
+  let lastErr = null;
+  for (const model of AI_MODELS) {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+    let response;
+    try {
+      response = await fetch(url, {
+        method: 'POST',
+        headers: { 'x-goog-api-key': apiKey, 'content-type': 'application/json' },
+        body
+      });
+    } catch (e) {
+      const err = new Error(`API de IA sin conexión: ${e.message}`);
+      err.aiCode = 'network';
+      throw err;
+    }
+    if (response.status === 404) {
+      // Modelo no disponible para esta clave: probar el siguiente
+      lastErr = new Error(`API de IA 404: modelo ${model} no disponible`);
+      lastErr.aiCode = 'model_missing';
+      continue;
+    }
+    if (!response.ok) {
+      const t = await response.text();
+      const err = new Error(`API de IA ${response.status}: ${t.slice(0, 300)}`);
+      err.aiCode = classifyAiError(response.status);
+      throw err;
+    }
+    const out = await response.json();
+    const textOut = ((out.candidates || [])[0]?.content?.parts || []).map(p => p.text || '').join('');
+    const jsonMatch = textOut.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      const err = new Error('La IA no devolvió JSON');
+      err.aiCode = 'network';
+      throw err;
+    }
+    const parsed = JSON.parse(jsonMatch[0]);
+    return { text: JSON.stringify(parsed, null, 2), suggested: aiToSuggested(parsed) };
   }
-  const out = await response.json();
-  const textOut = ((out.candidates || [])[0]?.content?.parts || []).map(p => p.text || '').join('');
-  const jsonMatch = textOut.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) throw new Error('La IA no devolvió JSON');
-  const parsed = JSON.parse(jsonMatch[0]);
-  return { text: JSON.stringify(parsed, null, 2), suggested: aiToSuggested(parsed) };
+  throw lastErr || Object.assign(new Error('Ningún modelo de IA disponible'), { aiCode: 'model_missing' });
 }
 
 /** Corrige fechas donde la IA invirtió año/mes o usó el siglo equivocado.
@@ -762,6 +831,7 @@ app.post('/api/upload-receipt', upload.single('receipt'), async (req, res) => {
   let ocrError = null;
   let useMindee = false;
   let engine = null;
+  let aiCode = null; // clasificación del fallo de IA (para el popup de la UI)
 
   // ── 1) IA con visión (la mejor opción para manuscritos) ─────────
   const aiKey = getAiKey();
@@ -772,6 +842,7 @@ app.post('/api/upload-receipt', upload.single('receipt'), async (req, res) => {
     } catch (e) {
       console.warn('IA falló, usando OCR local:', e.message);
       ocrError = 'IA: ' + e.message;
+      aiCode = e.aiCode || 'network';
     }
   }
 
@@ -824,7 +895,11 @@ app.post('/api/upload-receipt', upload.single('receipt'), async (req, res) => {
     text: ocrResult?.text || '',
     suggested: ocrResult?.suggested || { amount: null, description: '', type: 'expense', multi: false },
     engine: engine || (useMindee ? 'mindee' : 'tesseract'),
-    error: ocrError
+    error: ocrError,
+    // Contrato con el popup del frontend. Solo describe la IA Gemini (no Mindee):
+    // attempted = había clave y se intentó; ok = la IA produjo el resultado;
+    // code = clasificación del fallo; hasKey = hay clave configurada.
+    aiStatus: { attempted: !!aiKey, ok: engine === 'ia', code: aiCode, hasKey: !!aiKey }
   });
 });
 

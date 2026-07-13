@@ -1171,3 +1171,47 @@ tr:hover td { background: #eaf2f8; }
   .s26-table { font-size: 7.5pt; }
   .s26-page1 { page-break-after: always; }
 }
+
+/* === Popup de advertencia: IA de recibos no disponible === */
+/* max-height acotado: la app corre embebida en un iframe de 70vh dentro de
+   Mis Finanzas; el modal debe caber y scrollear internamente. */
+.ai-warn-modal {
+  margin: auto;
+  border: none;
+  border-radius: 12px;
+  padding: 0;
+  width: min(92vw, 520px);
+  max-height: 85%;
+  box-shadow: 0 8px 40px rgba(0,0,0,.28);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.ai-warn-modal:not([open]) { display: none; }
+.ai-warn-modal::backdrop { background: rgba(0,0,0,.55); backdrop-filter: blur(2px); }
+.ai-warn-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .5rem;
+  padding: .7rem .9rem;
+  background: #fdf2e9;
+  border-bottom: 1px solid #f5cba7;
+}
+.ai-warn-header h3 { margin: 0; font-size: .95rem; color: #b9770e; }
+.ai-warn-body { padding: .8rem .9rem; overflow-y: auto; font-size: .82rem; }
+.ai-warn-cause { margin: 0 0 .6rem; font-weight: 600; color: var(--text, #2c3e50); }
+.ai-warn-steps { margin: 0 0 .6rem; padding-left: 1.2rem; color: var(--text, #2c3e50); }
+.ai-warn-steps li { margin-bottom: .35rem; }
+.ai-warn-note { margin: 0; font-size: .75rem; color: var(--text-light, #7f8c8d); }
+.ai-warn-retry { margin-top: .6rem; padding: .5rem .65rem; border-radius: 6px; font-size: .78rem; font-weight: 600; }
+.ai-warn-retry.ok { background: #eafaf1; color: #27ae60; }
+.ai-warn-retry.fail { background: #fdedec; color: #c0392b; }
+.ai-warn-actions {
+  display: flex;
+  gap: .5rem;
+  justify-content: flex-end;
+  padding: .7rem .9rem;
+  border-top: 1px solid #e8eaed;
+  background: #fbfcfc;
+}
