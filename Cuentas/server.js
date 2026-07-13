@@ -2,7 +2,7 @@ const express = require('express');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-const { initDB, query, get, run, transaction, saveDB, flushToBlob, IS_VERCEL, verifyPassword, hashPassword } = require('./database');
+const { initDB, getDB, query, get, run, transaction, saveDB, flushToBlob, IS_VERCEL, verifyPassword, hashPassword, restoreFromBuffer } = require('./database');
 const { parseDate, detectCategory, suggestFromOCR, extractAmountCandidates } = require('./receipt-parser');
 
 const app = express();
@@ -937,7 +937,7 @@ Usa SOLO estos datos para dar cifras; si un dato no está, dilo claramente. Form
   contents.push({ role: 'user', parts: [{ text: question }] });
 
   try {
-    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${AI_MODEL}:generateContent`, {
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${AI_MODELS[0]}:generateContent`, {
       method: 'POST',
       headers: { 'x-goog-api-key': apiKey, 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -1571,6 +1571,97 @@ app.get('/api/forms/s25c', (req, res) => {
   const fundsAtEnd = fundsAtStart + totalIncome - totalExpense;
 
   res.json({ year, quarter, months: ranges, config: cfg, accounts, monthData, totalIncome, totalExpense, fundsAtStart, fundsAtEnd });
+});
+
+// === ADMIN: BACKUP & RESTORE ===
+// Multer independiente sin restricción de tipo MIME (acepta .db y .csv)
+const restoreUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
+
+/** Parser CSV mínimo compatible con el formato exportado (campos entre comillas dobles). */
+function parseCSVText(text) {
+  const parseRow = line => {
+    const fields = []; let field = '', inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (c === '"') { if (inQ && line[i + 1] === '"') { field += '"'; i++; } else inQ = !inQ; }
+      else if (c === ',' && !inQ) { fields.push(field); field = ''; }
+      else field += c;
+    }
+    fields.push(field);
+    return fields;
+  };
+  const lines = text.split(/\r?\n/).filter(l => l.trim());
+  if (!lines.length) return [];
+  const headers = parseRow(lines[0]);
+  return lines.slice(1).map(l => {
+    const vals = parseRow(l);
+    const obj = {};
+    headers.forEach((h, i) => { obj[h] = vals[i] ?? ''; });
+    return obj;
+  });
+}
+
+// Descarga la BD SQLite completa (solo admin)
+app.get('/api/admin/backup/db', requireAdmin, (req, res) => {
+  const buf = Buffer.from(getDB().export());
+  const date = new Date().toISOString().slice(0, 10);
+  res.setHeader('Content-Type', 'application/octet-stream');
+  res.setHeader('Content-Disposition', `attachment; filename="contabilidad-${date}.db"`);
+  res.send(buf);
+});
+
+// Descarga todas las transacciones como CSV con BOM (compatible con Excel)
+app.get('/api/admin/backup/csv', requireAdmin, (req, res) => {
+  const txns = query('SELECT id,date,description,code,amount,type,account,from_account,to_account,receipt_text,service_year FROM transactions ORDER BY date ASC, id ASC');
+  const cols = ['id','date','description','code','amount','type','account','from_account','to_account','receipt_text','service_year'];
+  const esc = v => v == null || v === '' ? '' : '"' + String(v).replace(/"/g, '""') + '"';
+  const lines = [cols.join(','), ...txns.map(t => cols.map(c => esc(t[c])).join(','))];
+  const date = new Date().toISOString().slice(0, 10);
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="transacciones-${date}.csv"`);
+  res.send('﻿' + lines.join('\r\n'));
+});
+
+// Restaura la BD desde un archivo .db (reemplazo total) o .csv (reemplazo de transacciones)
+app.post('/api/admin/restore', requireAdmin, restoreUpload.single('backup'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No se subió ningún archivo' });
+  const name = (req.file.originalname || '').toLowerCase();
+  try {
+    if (name.endsWith('.db')) {
+      restoreFromBuffer(req.file.buffer);
+      saveDB();
+      res.json({ success: true, type: 'db', message: 'Base de datos restaurada correctamente' });
+    } else if (name.endsWith('.csv')) {
+      let text = req.file.buffer.toString('utf8');
+      if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1); // quitar BOM
+      const rows = parseCSVText(text);
+      if (!rows.length) return res.status(400).json({ error: 'El CSV está vacío o tiene formato inválido' });
+      const required = ['date', 'description', 'code', 'amount', 'type', 'account'];
+      const headers = Object.keys(rows[0]);
+      for (const r of required) {
+        if (!headers.includes(r)) return res.status(400).json({ error: `El CSV no tiene la columna requerida: "${r}"` });
+      }
+      let inserted = 0, skipped = 0;
+      transaction(() => {
+        run('DELETE FROM transactions');
+        for (const row of rows) {
+          if (!row.date || !row.description || !row.code || !row.amount || !row.type || !row.account) { skipped++; continue; }
+          const amount = parseFloat(row.amount);
+          if (isNaN(amount) || amount <= 0) { skipped++; continue; }
+          run("INSERT INTO transactions (date,description,code,amount,type,account,from_account,to_account,service_year,receipt_text) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            [row.date, row.description, row.code, amount, row.type, row.account,
+             row.from_account || null, row.to_account || null, row.service_year || null, row.receipt_text || null]);
+          inserted++;
+        }
+        recalcBalances();
+      });
+      res.json({ success: true, type: 'csv', inserted, skipped });
+    } else {
+      return res.status(400).json({ error: 'Tipo de archivo no soportado. Use .db o .csv' });
+    }
+  } catch (e) {
+    res.status(500).json({ error: 'Restauración fallida: ' + e.message });
+  }
 });
 
 app.get('/api/health', (req, res) => { res.json({ status: 'ok', dbReady: !!dbReady, runtime: IS_VERCEL ? 'vercel' : 'local' }); });

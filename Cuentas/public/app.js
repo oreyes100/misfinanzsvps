@@ -2356,6 +2356,50 @@ async function adminDeleteUser(id, username) {
   } catch (err) { toast(err.message, 'error'); }
 }
 
+// === ADMIN: BACKUP & RESTORE ===
+function adminDownloadDb() {
+  const token = encodeURIComponent(authToken || '');
+  window.open('/api/admin/backup/db?token=' + token, '_blank');
+}
+
+function adminDownloadCsv() {
+  const token = encodeURIComponent(authToken || '');
+  window.open('/api/admin/backup/csv?token=' + token, '_blank');
+}
+
+async function adminUploadRestore(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const name = file.name.toLowerCase();
+  if (!name.endsWith('.db') && !name.endsWith('.csv')) {
+    toast('Solo archivos .db o .csv', 'error');
+    input.value = '';
+    return;
+  }
+  const typeLabel = name.endsWith('.db') ? 'base de datos completa' : 'transacciones (CSV)';
+  if (!confirm(`¿Restaurar la ${typeLabel} desde "${file.name}"?\n\nEsto REEMPLAZARÁ todos los datos actuales. Esta acción no se puede deshacer.`)) {
+    input.value = '';
+    return;
+  }
+  const prog = document.getElementById('restoreProgress');
+  if (prog) { prog.style.display = 'block'; prog.textContent = 'Subiendo y procesando…'; }
+  const fd = new FormData();
+  fd.append('backup', file);
+  try {
+    const data = await api('/api/admin/restore', { method: 'POST', body: fd });
+    const msg = data.type === 'csv'
+      ? `✅ ${data.inserted} transacciones restauradas${data.skipped ? ` (${data.skipped} omitidas)` : ''}. Recargando…`
+      : '✅ Base de datos restaurada. Recargando…';
+    if (prog) prog.textContent = msg;
+    toast(msg, 'success');
+    setTimeout(() => location.reload(), 2000);
+  } catch (err) {
+    if (prog) { prog.style.display = 'none'; }
+    toast('Error en restauración: ' + err.message, 'error');
+  }
+  input.value = '';
+}
+
 // === SETUP ALL ===
 function setupAll() {
   setupForm();

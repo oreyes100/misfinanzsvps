@@ -10,6 +10,7 @@ const dbPath = IS_VERCEL ? '/tmp/contabilidad.db' : path.join(__dirname, 'contab
 const BLOB_KEY = 'cuentas/contabilidad.db';
 
 let db;
+let SQL; // guardado tras initDB para poder reinicializar la BD en restoreFromBuffer
 let _dirty = false;
 // Resultado de la última carga desde Blob: 'loaded' (había copia), 'absent'
 // (no hay copia aún → primer arranque legítimo) o 'error' (fallo transitorio).
@@ -75,7 +76,7 @@ function saveDB() {
 async function initDB() {
   // locateFile resuelve el .wasm de sql.js de forma robusta tanto en local como
   // en el bundle serverless de Vercel (require.resolve lo marca para node-file-trace).
-  const SQL = await initSqlJs({
+  SQL = await initSqlJs({
     locateFile: (file) => {
       // Local: resolver desde node_modules. Vercel: copia incluida en public/ (includeFiles).
       try { return require.resolve('sql.js/dist/' + file); } catch {}
@@ -222,6 +223,15 @@ async function initDB() {
 
 function getDB() { return db; }
 
+/** Reemplaza la BD en memoria con el buffer proporcionado y persiste al disco (y Blob en Vercel). */
+function restoreFromBuffer(buf) {
+  if (!SQL) throw new Error('El módulo SQL no está listo — inicie sesión de nuevo');
+  db = new SQL.Database(buf);
+  fs.writeFileSync(dbPath, buf);
+  _dirty = true;
+  global._dbDirty = true;
+}
+
 function query(sql, params = []) {
   const stmt = db.prepare(sql);
   const isSelect = sql.trim().toUpperCase().startsWith('SELECT') || sql.trim().toUpperCase().startsWith('WITH');
@@ -270,4 +280,4 @@ function verifyPassword(password, stored) {
   return hash === check;
 }
 
-module.exports = { initDB, getDB, query, get, run, transaction, saveDB, flushToBlob, getLoadState, IS_VERCEL, hashPassword, verifyPassword };
+module.exports = { initDB, getDB, query, get, run, transaction, saveDB, flushToBlob, getLoadState, IS_VERCEL, hashPassword, verifyPassword, restoreFromBuffer };
