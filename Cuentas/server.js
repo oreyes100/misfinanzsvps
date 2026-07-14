@@ -521,11 +521,16 @@ Reglas: usa null cuando un dato no se vea; NO incluyas el TOTAL como partida; NO
 }
 
 async function interpretWithAI(filePath, apiKey) {
-  const buf = await sharp(filePath)
-    .rotate()
-    .resize({ width: 1600, withoutEnlargement: true })
-    .jpeg({ quality: 88 })
-    .toBuffer();
+  let buf;
+  try {
+    buf = await Promise.race([
+      sharp(filePath).rotate().resize({ width: 1600, withoutEnlargement: true }).jpeg({ quality: 88 }).toBuffer(),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('sharp timeout')), 12000))
+    ]);
+  } catch (e) {
+    console.warn('sharp falló en interpretWithAI, usando archivo crudo:', e.message);
+    buf = fs.readFileSync(filePath);
+  }
   const body = JSON.stringify({
     contents: [{
       parts: [
@@ -667,14 +672,16 @@ function aiToSuggested(p) {
  */
 async function preprocessImage(inputPath) {
   const outputPath = inputPath.replace(/(\.\w+)$/, '_processed$1');
-  await sharp(inputPath)
-    .grayscale()
-    .normalize({ lower: 5, upper: 95 })
-    .sharpen({ sigma: 0.6, m1: 0.2, m2: 1 })
-    .linear(1.8, -60)
-    .resize({ width: 2200, withoutEnlargement: false })
-    .toFile(outputPath);
-  return outputPath;
+  try {
+    await Promise.race([
+      sharp(inputPath).grayscale().normalize({ lower: 5, upper: 95 }).sharpen({ sigma: 0.6, m1: 0.2, m2: 1 }).linear(1.8, -60).resize({ width: 2200, withoutEnlargement: false }).toFile(outputPath),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('sharp timeout')), 12000))
+    ]);
+    return outputPath;
+  } catch (e) {
+    console.warn('preprocessImage falló, usando imagen original:', e.message);
+    return inputPath;
+  }
 }
 
 /**
@@ -701,12 +708,17 @@ async function recognizeWithMindee(filePath) {
 async function recognizeWithTesseract(filePath) {
   const Tesseract = require('tesseract.js');
   const processedPath = await preprocessImage(filePath);
-  const { data } = await Tesseract.recognize(processedPath, 'spa', {
-    ...TESS_OPTS,
-    tessedit_pageseg_mode: '3',
-    tessedit_ocr_engine_mode: '1',
-    preserve_interword_spaces: '1'
-  });
+  const tessTimeout = new Promise((_, rej) =>
+    setTimeout(() => rej(new Error('Tesseract timeout (>40s) — configura GEMINI_API_KEY en Vercel para OCR confiable')), 40000));
+  const { data } = await Promise.race([
+    Tesseract.recognize(processedPath, 'spa', {
+      ...TESS_OPTS,
+      tessedit_pageseg_mode: '3',
+      tessedit_ocr_engine_mode: '1',
+      preserve_interword_spaces: '1'
+    }),
+    tessTimeout
+  ]);
   try { fs.unlinkSync(processedPath); } catch (_) {}
   return { text: data.text, hocr: data.hocr, confidence: data.confidence };
 }
@@ -719,24 +731,40 @@ async function recognizeWithTesseract(filePath) {
  */
 async function recognizeAmountsColumn(filePath) {
   const Tesseract = require('tesseract.js');
-  const meta = await sharp(filePath).metadata();
+  let meta;
+  try {
+    meta = await Promise.race([
+      sharp(filePath).metadata(),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('sharp timeout')), 12000))
+    ]);
+  } catch (e) {
+    console.warn('recognizeAmountsColumn: sharp.metadata falló:', e.message);
+    return [];
+  }
   const w = meta.width || 0, h = meta.height || 0;
   if (!w || !h) return [];
   const left = Math.floor(w * 0.58);
   const top = Math.floor(h * 0.30);
   const cropPath = filePath.replace(/(\.\w+)$/, '_amounts$1');
-  await sharp(filePath)
-    .extract({ left, top, width: w - left, height: h - top })
-    .grayscale()
-    .normalize({ lower: 5, upper: 95 })
-    .linear(1.6, -40)
-    .resize({ width: 1200, withoutEnlargement: false })
-    .toFile(cropPath);
-  const { data } = await Tesseract.recognize(cropPath, 'spa', {
-    ...TESS_OPTS,
-    tessedit_pageseg_mode: '6',
-    tessedit_char_whitelist: '0123456789.,$S '
-  });
+  try {
+    await Promise.race([
+      sharp(filePath).extract({ left, top, width: w - left, height: h - top }).grayscale().normalize({ lower: 5, upper: 95 }).linear(1.6, -40).resize({ width: 1200, withoutEnlargement: false }).toFile(cropPath),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('sharp timeout')), 12000))
+    ]);
+  } catch (e) {
+    console.warn('recognizeAmountsColumn: sharp.extract falló:', e.message);
+    return [];
+  }
+  const tessTimeout2 = new Promise((_, rej) =>
+    setTimeout(() => rej(new Error('Tesseract amounts timeout')), 15000));
+  const { data } = await Promise.race([
+    Tesseract.recognize(cropPath, 'spa', {
+      ...TESS_OPTS,
+      tessedit_pageseg_mode: '6',
+      tessedit_char_whitelist: '0123456789.,$S '
+    }),
+    tessTimeout2
+  ]);
   try { fs.unlinkSync(cropPath); } catch (_) {}
   const amounts = [];
   for (const line of (data.text || '').split('\n')) {
