@@ -521,20 +521,28 @@ Reglas: usa null cuando un dato no se vea; NO incluyas el TOTAL como partida; NO
 }
 
 async function interpretWithAI(filePath, apiKey) {
-  let buf;
-  try {
-    buf = await Promise.race([
-      sharp(filePath).rotate().resize({ width: 1600, withoutEnlargement: true }).jpeg({ quality: 88 }).toBuffer(),
-      new Promise((_, rej) => setTimeout(() => rej(new Error('sharp timeout')), 12000))
-    ]);
-  } catch (e) {
-    console.warn('sharp falló en interpretWithAI, usando archivo crudo:', e.message);
+  const isPdf = path.extname(filePath).toLowerCase() === '.pdf';
+  let buf, mimeType;
+  if (isPdf) {
     buf = fs.readFileSync(filePath);
+    mimeType = 'application/pdf';
+  } else {
+    try {
+      buf = await Promise.race([
+        sharp(filePath).rotate().resize({ width: 1600, withoutEnlargement: true }).jpeg({ quality: 88 }).toBuffer(),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('sharp timeout')), 12000))
+      ]);
+      mimeType = 'image/jpeg';
+    } catch (e) {
+      console.warn('sharp falló en interpretWithAI, usando archivo crudo:', e.message);
+      buf = fs.readFileSync(filePath);
+      mimeType = 'image/jpeg';
+    }
   }
   const body = JSON.stringify({
     contents: [{
       parts: [
-        { inline_data: { mime_type: 'image/jpeg', data: buf.toString('base64') } },
+        { inline_data: { mime_type: mimeType, data: buf.toString('base64') } },
         { text: buildAiPrompt() }
       ]
     }],
@@ -897,8 +905,12 @@ app.post('/api/upload-receipt', upload.single('receipt'), async (req, res) => {
     }
   }
 
-  // ── 3) Respaldo: Tesseract (texto completo + pase de cantidades) ─
+  // ── 3) Respaldo: Tesseract (solo imágenes; PDFs requieren Gemini) ─
   if (!ocrResult) {
+    const isPdfFile = path.extname(req.file.path || '').toLowerCase() === '.pdf';
+    if (isPdfFile) {
+      ocrError = (ocrError ? ocrError + ' | ' : '') + 'El OCR de PDFs requiere clave Gemini — configurar en Ajustes → Clave API de IA';
+    } else {
     try {
       const [tesseractResult, amountsCol] = await Promise.all([
         recognizeWithTesseract(req.file.path),
@@ -915,6 +927,7 @@ app.post('/api/upload-receipt', upload.single('receipt'), async (req, res) => {
     } catch (err) {
       ocrError = err.message;
     }
+    } // end !isPdfFile
   }
 
   res.json({
@@ -1092,6 +1105,13 @@ app.post('/api/cierre-mes', (req, res) => {
 });
 
 // === SYNC STATUS & FORCE SYNC ===
+app.get('/api/admin/sync-summary', requireAdmin, (req, res) => {
+  const count = (get('SELECT COUNT(*) as c FROM transactions') || {}).c || 0;
+  const latest = (get('SELECT MAX(date) as d FROM transactions') || {}).d || null;
+  const amountSum = (get('SELECT ROUND(SUM(amount),2) as s FROM transactions') || {}).s || 0;
+  res.json({ count, latest, checksum: amountSum, dirty: global._dbDirty || false, lastSync: global._lastSyncTime || null });
+});
+
 app.get('/api/sync-status', (req, res) => {
   const dirty = global._dbDirty || false;
   res.json({
@@ -1660,6 +1680,7 @@ app.post('/api/admin/restore', requireAdmin, restoreUpload.single('backup'), (re
       saveDB();
       res.json({ success: true, type: 'db', message: 'Base de datos restaurada correctamente' });
     } else if (name.endsWith('.csv')) {
+      const mode = req.query.mode || 'replace'; // 'replace' | 'merge'
       let text = req.file.buffer.toString('utf8');
       if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1); // quitar BOM
       const rows = parseCSVText(text);
@@ -1669,13 +1690,20 @@ app.post('/api/admin/restore', requireAdmin, restoreUpload.single('backup'), (re
       for (const r of required) {
         if (!headers.includes(r)) return res.status(400).json({ error: `El CSV no tiene la columna requerida: "${r}"` });
       }
-      let inserted = 0, skipped = 0;
+      let inserted = 0, skipped = 0, duplicates = 0;
       transaction(() => {
-        run('DELETE FROM transactions');
+        if (mode === 'replace') run('DELETE FROM transactions');
         for (const row of rows) {
           if (!row.date || !row.description || !row.code || !row.amount || !row.type || !row.account) { skipped++; continue; }
           const amount = parseFloat(row.amount);
           if (isNaN(amount) || amount <= 0) { skipped++; continue; }
+          if (mode === 'merge') {
+            const exists = get(
+              'SELECT id FROM transactions WHERE date=? AND code=? AND ROUND(amount,4)=ROUND(?,4) AND account=? AND type=?',
+              [row.date, row.code, amount, row.account, row.type]
+            );
+            if (exists) { duplicates++; continue; }
+          }
           run("INSERT INTO transactions (date,description,code,amount,type,account,from_account,to_account,service_year,receipt_text) VALUES (?,?,?,?,?,?,?,?,?,?)",
             [row.date, row.description, row.code, amount, row.type, row.account,
              row.from_account || null, row.to_account || null, row.service_year || null, row.receipt_text || null]);
@@ -1683,7 +1711,7 @@ app.post('/api/admin/restore', requireAdmin, restoreUpload.single('backup'), (re
         }
         recalcBalances();
       });
-      res.json({ success: true, type: 'csv', inserted, skipped });
+      res.json({ success: true, type: 'csv', mode, inserted, skipped, duplicates });
     } else {
       return res.status(400).json({ error: 'Tipo de archivo no soportado. Use .db o .csv' });
     }

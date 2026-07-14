@@ -47,7 +47,7 @@ function showSection(id) {
   if (id === 'cuentas') loadTransactions();
   if (id === 'menu') { loadAccounts(); renderS26Landing(s26Year, s26Month); }
   if (id === 'informe') document.getElementById('reportBtn').click();
-  if (id === 'admin') { if (authUser?.role === 'admin') adminLoadUsers(); else toast('Acceso denegado', 'error'); }
+  if (id === 'admin') { if (authUser?.role === 'admin') { adminLoadUsers(); refreshAdminSyncSummary(); } else toast('Acceso denegado', 'error'); }
 }
 
 // === CONFIG ===
@@ -317,7 +317,7 @@ document.getElementById('aiChatForm').addEventListener('submit', e => {
 document.getElementById('cfgSave').addEventListener('click', async () => {
   const aiKey = document.getElementById('cfgAiKey').value.trim();
   if (aiKey && !isGoogleApiKey(aiKey)) {
-    toast('La clave de IA no parece válida: debe empezar con "AIza" (cree una en aistudio.google.com/apikey)', 'error');
+    toast('La clave de IA no parece válida: debe tener al menos 20 caracteres (cree una en aistudio.google.com/apikey)', 'error');
     return;
   }
   await api('/api/config', {
@@ -697,8 +697,8 @@ function defaultAccountFor(type) {
   return type === 'expense' ? 'corriente' : 'caja';
 }
 
-// Las claves de Google AI Studio empiezan con "AIza"
-function isGoogleApiKey(k) { return /^AIza[0-9A-Za-z_\-]{20,}$/.test(k); }
+// Las claves de Google AI pueden tener distintos formatos — solo validar longitud mínima
+function isGoogleApiKey(k) { return typeof k === 'string' && k.trim().length >= 20; }
 
 // === POPUP DE ADVERTENCIA: IA de recibos no disponible ===
 // Flag: hubo clave funcionando alguna vez en este navegador. Distingue
@@ -711,7 +711,7 @@ const AI_WARN_CONTENT = {
     cause: 'La clave API de Google fue rechazada (clave inválida o revocada).',
     steps: [
       'Entre a aistudio.google.com/apikey con su cuenta de Google.',
-      'Use "Crear clave de API" y copie la clave completa (empieza con "AIza").',
+      'Use "Crear clave de API" y copie la clave completa.',
       'Péguela en Configuración → "Clave API de IA" y guarde.',
       'Vuelva a subir el recibo.'
     ]
@@ -840,7 +840,7 @@ function setupUpload() {
     const key = document.getElementById('ocrAiKeyInput').value.trim();
     if (!key) { toast('Pegue la clave API primero', 'error'); return; }
     if (!isGoogleApiKey(key)) {
-      toast('Esa no es una clave API de Google: debe empezar con "AIza". En aistudio.google.com/apikey use "Crear clave de API" y copie la clave.', 'error');
+      toast('La clave parece muy corta (mínimo 20 caracteres). En aistudio.google.com/apikey use "Crear clave de API" y copie la clave completa.', 'error');
       return;
     }
     try {
@@ -856,7 +856,8 @@ function setupUpload() {
 }
 
 async function processFile(file) {
-  if (!file.type.startsWith('image/')) { toast('Solo imágenes', 'error'); return; }
+  const typeOk = file.type.startsWith('image/') || file.type === 'application/pdf';
+  if (!typeOk) { toast('Solo imágenes (JPG, PNG, WebP) y PDF', 'error'); return; }
   document.getElementById('ocrLoading').style.display = 'block';
   document.getElementById('ocrResult').style.display = 'none';
   const fd = new FormData();
@@ -2367,7 +2368,7 @@ function adminDownloadCsv() {
   window.open('/api/admin/backup/csv?token=' + token, '_blank');
 }
 
-async function adminUploadRestore(input) {
+async function adminUploadRestore(input, mode) {
   const file = input.files[0];
   if (!file) return;
   const name = file.name.toLowerCase();
@@ -2376,8 +2377,13 @@ async function adminUploadRestore(input) {
     input.value = '';
     return;
   }
-  const typeLabel = name.endsWith('.db') ? 'base de datos completa' : 'transacciones (CSV)';
-  if (!confirm(`¿Restaurar la ${typeLabel} desde "${file.name}"?\n\nEsto REEMPLAZARÁ todos los datos actuales. Esta acción no se puede deshacer.`)) {
+  const isCsv = name.endsWith('.csv');
+  const mergeMode = isCsv && (mode === 'merge');
+  const typeLabel = !isCsv ? 'base de datos completa' : (mergeMode ? 'transacciones (fusionar, sin duplicados)' : 'transacciones (reemplazar todas)');
+  const confirmMsg = mergeMode
+    ? `¿Fusionar transacciones desde "${file.name}"?\n\nSe agregarán solo las transacciones que NO existan ya en la base de datos (sin duplicados).`
+    : `¿Restaurar la ${typeLabel} desde "${file.name}"?\n\nEsto REEMPLAZARÁ todos los datos actuales. Esta acción no se puede deshacer.`;
+  if (!confirm(confirmMsg)) {
     input.value = '';
     return;
   }
@@ -2385,10 +2391,11 @@ async function adminUploadRestore(input) {
   if (prog) { prog.style.display = 'block'; prog.textContent = 'Subiendo y procesando…'; }
   const fd = new FormData();
   fd.append('backup', file);
+  const url = '/api/admin/restore' + (mergeMode ? '?mode=merge' : '');
   try {
-    const data = await api('/api/admin/restore', { method: 'POST', body: fd });
+    const data = await api(url, { method: 'POST', body: fd });
     const msg = data.type === 'csv'
-      ? `✅ ${data.inserted} transacciones restauradas${data.skipped ? ` (${data.skipped} omitidas)` : ''}. Recargando…`
+      ? `✅ ${data.inserted} transacciones ${mergeMode ? 'fusionadas' : 'restauradas'}${data.duplicates ? ` (${data.duplicates} duplicados omitidos)` : ''}${data.skipped ? ` (${data.skipped} inválidas)` : ''}. Recargando…`
       : '✅ Base de datos restaurada. Recargando…';
     if (prog) prog.textContent = msg;
     toast(msg, 'success');
@@ -2398,6 +2405,33 @@ async function adminUploadRestore(input) {
     toast('Error en restauración: ' + err.message, 'error');
   }
   input.value = '';
+}
+
+// === ADMIN SYNC SUMMARY ===
+async function refreshAdminSyncSummary() {
+  const el = document.getElementById('adminSyncSummary');
+  if (!el) return;
+  try {
+    const s = await api('/api/admin/sync-summary');
+    const syncState = s.dirty
+      ? `<span style="color:var(--expense)">⚠️ Cambios pendientes de subir</span>`
+      : `<span style="color:var(--income)">✅ Sincronizado${s.lastSync ? ' ' + new Date(s.lastSync).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' }) : ''}</span>`;
+    el.innerHTML = `📊 <strong>${s.count}</strong> transacciones | Última: <strong>${s.latest || 'N/A'}</strong> | ${syncState}`;
+  } catch (_) { el.textContent = ''; }
+}
+
+async function adminSyncPush() {
+  const btn = document.getElementById('adminSyncPushBtn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Subiendo…'; }
+  try {
+    const result = await api('/api/sync-now', { method: 'POST' });
+    toast('✅ Datos subidos a producción: ' + new Date(result.syncedAt).toLocaleTimeString('es-MX'));
+    await refreshAdminSyncSummary();
+  } catch (err) {
+    toast('Error al subir: ' + err.message, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '☁️ Subir a producción'; }
+  }
 }
 
 // === SETUP ALL ===

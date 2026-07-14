@@ -378,18 +378,31 @@
   <!-- BACKUP & RESTORE -->
   <div class="table-section" style="margin-top:1.5rem">
     <h3>💾 RESPALDO Y SINCRONIZACIÓN</h3>
+
+    <!-- Estado de sync -->
+    <div id="adminSyncSummary" style="font-size:.82rem;color:var(--text-light);margin:.25rem 0 .75rem;min-height:1.2em">
+      Cargando estado…
+    </div>
+    <div style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;margin-bottom:1rem">
+      <button class="btn btn-primary" id="adminSyncPushBtn" onclick="adminSyncPush()">☁️ Subir a producción</button>
+      <span style="font-size:.75rem;color:var(--text-light)">Sube todos los datos locales a la nube (Vercel Blob) para que producción los vea.</span>
+    </div>
+
+    <hr style="border:none;border-top:1px solid var(--border);margin:.75rem 0">
     <p style="font-size:.82rem;color:var(--text-light);margin:.25rem 0 .75rem">
-      Descargue un respaldo completo de la base de datos (.db) o solo las transacciones (.csv).<br>
-      Para mover datos entre el servidor local y producción: descargue en un entorno y restaure en el otro.
+      <strong>Respaldo manual:</strong> descargue la BD (.db) o las transacciones (.csv).<br>
+      <strong>Restaurar completo:</strong> reemplaza TODOS los datos. <strong>Fusionar CSV:</strong> agrega solo transacciones nuevas sin duplicar.
     </p>
     <div style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;margin-bottom:.5rem">
       <button class="btn btn-secondary" onclick="adminDownloadDb()">📥 Descargar BD (.db)</button>
       <button class="btn btn-secondary" onclick="adminDownloadCsv()">📊 Descargar CSV</button>
-      <button class="btn btn-primary" onclick="document.getElementById('restoreInput').click()">📤 Restaurar desde archivo…</button>
-      <input type="file" id="restoreInput" accept=".db,.csv" style="display:none" onchange="adminUploadRestore(this)">
+      <button class="btn btn-secondary" onclick="document.getElementById('restoreInput').click()">📤 Restaurar (reemplazar)…</button>
+      <button class="btn btn-primary" onclick="document.getElementById('mergeInput').click()">🔀 Fusionar CSV (sin duplicados)…</button>
+      <input type="file" id="restoreInput" accept=".db,.csv" style="display:none" onchange="adminUploadRestore(this,'replace')">
+      <input type="file" id="mergeInput" accept=".csv" style="display:none" onchange="adminUploadRestore(this,'merge')">
     </div>
     <div id="restoreProgress" style="display:none;font-size:.82rem;padding:.4rem .6rem;border-radius:6px;background:var(--bg);border:1px solid var(--border)">Procesando...</div>
-    <p style="font-size:.72rem;color:var(--expense);margin:.4rem 0 0">⚠ La restauración reemplaza TODOS los datos actuales. Descargue un respaldo antes de restaurar.</p>
+    <p style="font-size:.72rem;color:var(--expense);margin:.4rem 0 0">⚠ "Restaurar" reemplaza TODOS los datos. "Fusionar" solo agrega registros nuevos sin borrar los existentes.</p>
   </div>
 </section>
 
@@ -508,6 +521,6 @@
 </div>
 
 <div id="toast"></div>
-<script src="app.js?v=12"></script>
+<script src="app.js?v=13"></script>
 </body>
 </html>
