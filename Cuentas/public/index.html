@@ -70,12 +70,17 @@
     </button>
   </div>
 
-  <!-- Botón de cierre de mes -->
+  <!-- Botón de cierre de mes + arqueo -->
   <div class="landing-cierre">
     <button class="land-btn land-btn-cierre" onclick="doCierreMes()">
       <span class="land-icon">📆</span>
       <span class="land-label">CIERRE DE FIN DE MES</span>
       <span class="land-sub">Genera gastos de cierre automáticos</span>
+    </button>
+    <button class="land-btn land-btn-arqueo" onclick="openArqueoModal()">
+      <span class="land-icon">💵</span>
+      <span class="land-label">ARQUEO DE CAJA</span>
+      <span class="land-sub">Corte y conteo de efectivo</span>
     </button>
   </div>
 
@@ -429,9 +434,9 @@
   <div class="ocr-modal-body">
     <p style="font-size:.8rem;color:var(--text-light);margin-bottom:.75rem">Sube la foto de un recibo. El sistema extrae los datos con OCR y permite registrar la transacción con un clic. Una vez aprobadas, las transacciones se añaden a la hoja de cuentas.</p>
     <div class="upload-area" id="uploadArea">
-      <p>Arrastre una imagen de recibo aquí o haga clic para seleccionar</p>
-      <input type="file" id="receiptInput" accept="image/*" hidden>
-      <button type="button" class="btn btn-secondary" id="uploadBtn">Seleccionar Imagen</button>
+      <p>Arrastre imagen o PDF de recibo aquí, o haga clic para seleccionar</p>
+      <input type="file" id="receiptInput" accept="image/*,application/pdf" hidden>
+      <button type="button" class="btn btn-secondary" id="uploadBtn">Seleccionar Imagen o PDF</button>
     </div>
     <div id="ocrAiHint" style="display:none;background:#fef9e7;border:1px solid #f5cba7;border-radius:6px;padding:.5rem .65rem;margin:.5rem 0;font-size:.75rem">
       <strong>💡 Active la IA gratuita para leer cantidades manuscritas.</strong>
@@ -443,7 +448,7 @@
         <button type="button" class="btn btn-primary btn-xs" id="ocrAiKeySave">Guardar clave</button>
       </div>
     </div>
-    <div id="ocrLoading" style="display:none"><div class="spinner"></div><p>Procesando imagen con OCR…</p></div>
+    <div id="ocrLoading" style="display:none"><div class="spinner"></div><p>Procesando con OCR…</p></div>
     <div id="ocrResult" style="display:none">
       <div style="display:grid;grid-template-columns:1fr 1.7fr;gap:.75rem">
         <div>
@@ -496,6 +501,83 @@
   </div>
 </dialog>
 
+<!-- MODAL ARQUEO DE CAJA -->
+<dialog id="arqueoModal" class="ocr-modal" style="max-width:560px">
+  <div class="ocr-modal-header">
+    <h2>💵 Arqueo de Caja — Corte de Efectivo</h2>
+    <button class="ocr-modal-close" onclick="closeArqueoModal()" aria-label="Cerrar">✕</button>
+  </div>
+  <div class="ocr-modal-body">
+    <!-- Encabezado: saldo sistema y fecha -->
+    <div style="display:flex;gap:1rem;flex-wrap:wrap;align-items:center;margin-bottom:.75rem;padding:.5rem .75rem;background:var(--bg);border-radius:8px;border:1px solid var(--border)">
+      <div style="flex:1;min-width:140px">
+        <div style="font-size:.7rem;color:var(--text-light);text-transform:uppercase;letter-spacing:.04em">Saldo en sistema (Caja)</div>
+        <div id="arqueoSaldoSistema" style="font-size:1.3rem;font-weight:700;color:var(--primary)">—</div>
+      </div>
+      <div style="display:flex;gap:.5rem;flex-wrap:wrap">
+        <div><label style="font-size:.7rem;color:var(--text-light)">Fecha</label>
+          <input type="date" id="arqueoFecha" style="display:block;padding:.3rem .5rem;border:1px solid var(--border);border-radius:5px;font-size:.82rem"></div>
+        <div><label style="font-size:.7rem;color:var(--text-light)">Responsable</label>
+          <input type="text" id="arqueoResponsable" placeholder="Nombre" style="display:block;padding:.3rem .5rem;border:1px solid var(--border);border-radius:5px;font-size:.82rem;width:130px"></div>
+      </div>
+    </div>
+
+    <!-- Denominaciones -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:.75rem">
+      <!-- Billetes -->
+      <div>
+        <div style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text-light);margin-bottom:.4rem">Billetes</div>
+        <table style="width:100%;border-collapse:collapse;font-size:.82rem" id="arqueoTableBilletes">
+          <thead><tr style="color:var(--text-light);font-size:.7rem">
+            <th style="text-align:left;padding:.2rem .3rem">Denominación</th>
+            <th style="text-align:center;padding:.2rem .3rem;width:56px">Cant.</th>
+            <th style="text-align:right;padding:.2rem .3rem">Subtotal</th>
+          </tr></thead>
+          <tbody id="arqueoBilletesBody"></tbody>
+          <tfoot><tr>
+            <td colspan="2" style="font-size:.75rem;color:var(--text-light);padding:.3rem .3rem 0">Subtotal billetes</td>
+            <td style="text-align:right;font-weight:600;padding:.3rem .3rem 0" id="arqueoSubBilletes">$0.00</td>
+          </tr></tfoot>
+        </table>
+      </div>
+      <!-- Monedas -->
+      <div>
+        <div style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text-light);margin-bottom:.4rem">Monedas</div>
+        <table style="width:100%;border-collapse:collapse;font-size:.82rem" id="arqueoTableMonedas">
+          <thead><tr style="color:var(--text-light);font-size:.7rem">
+            <th style="text-align:left;padding:.2rem .3rem">Denominación</th>
+            <th style="text-align:center;padding:.2rem .3rem;width:56px">Cant.</th>
+            <th style="text-align:right;padding:.2rem .3rem">Subtotal</th>
+          </tr></thead>
+          <tbody id="arqueoMonedasBody"></tbody>
+          <tfoot><tr>
+            <td colspan="2" style="font-size:.75rem;color:var(--text-light);padding:.3rem .3rem 0">Subtotal monedas</td>
+            <td style="text-align:right;font-weight:600;padding:.3rem .3rem 0" id="arqueoSubMonedas">$0.00</td>
+          </tr></tfoot>
+        </table>
+      </div>
+    </div>
+
+    <!-- Total y diferencia -->
+    <div style="margin-top:.9rem;padding:.65rem .75rem;background:var(--primary);color:#fff;border-radius:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.4rem">
+      <span style="font-size:.8rem;font-weight:600;text-transform:uppercase;letter-spacing:.04em">Total contado</span>
+      <span id="arqueoTotal" style="font-size:1.5rem;font-weight:700">$0.00</span>
+    </div>
+    <div id="arqueoDiffRow" style="margin-top:.4rem;padding:.45rem .75rem;border-radius:6px;font-size:.83rem;font-weight:600;display:flex;justify-content:space-between;align-items:center">
+      <span>Diferencia vs sistema</span>
+      <span id="arqueoDiff">—</span>
+    </div>
+
+    <!-- Acciones -->
+    <div style="margin-top:.75rem;display:flex;gap:.5rem;flex-wrap:wrap;justify-content:flex-end">
+      <button type="button" class="btn btn-secondary" onclick="arqueoImprimir()">🖨️ Imprimir / Exportar</button>
+      <button type="button" class="btn btn-secondary" onclick="arqueoLimpiar()">🔄 Limpiar</button>
+      <button type="button" class="btn btn-primary" id="arqueoRegistrarBtn" onclick="arqueoRegistrar()" style="display:none">📝 Registrar diferencia</button>
+      <button type="button" class="btn btn-secondary" onclick="closeArqueoModal()">Cerrar</button>
+    </div>
+  </div>
+</dialog>
+
 <!-- ASISTENTE IA -->
 <button id="aiFab" onclick="toggleAiChat()" title="Asistente Contable IA" aria-label="Abrir asistente de IA">✨</button>
 <div id="aiChat" class="ai-chat" role="dialog" aria-label="Asistente contable de IA">
@@ -521,6 +603,6 @@
 </div>
 
 <div id="toast"></div>
-<script src="app.js?v=13"></script>
+<script src="app.js?v=14"></script>
 </body>
 </html>

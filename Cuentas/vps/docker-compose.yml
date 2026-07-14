@@ -1,0 +1,43 @@
+services:
+  cuentas:
+    build:
+      context: ..
+      dockerfile: vps/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3002:3002"
+    volumes:
+      - cuentas_data:/app/vps/data
+      - cuentas_uploads:/app/uploads
+    environment:
+      - PORT=3002
+      - NODE_ENV=production
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - MINDEE_API_KEY=${MINDEE_API_KEY:-}
+      - JWT_SECRET=${JWT_SECRET:-cambia_este_secreto_en_produccion}
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3002/api/health',r=>r.statusCode===200?process.exit(0):process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # Nginx reverse proxy (opcional — habilita HTTPS con Certbot)
+  nginx:
+    image: nginx:alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - certbot_www:/var/www/certbot:ro
+      - certbot_conf:/etc/letsencrypt:ro
+    depends_on:
+      - cuentas
+    profiles: ["with-nginx"]
+
+volumes:
+  cuentas_data:
+  cuentas_uploads:
+  certbot_www:
+  certbot_conf:

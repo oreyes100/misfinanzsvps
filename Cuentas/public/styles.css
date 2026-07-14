@@ -723,17 +723,21 @@ tr:hover td { background: #eaf2f8; }
 
 .land-btn-cierre { background: var(--grad-green); box-shadow: 0 5px 18px rgba(39,174,96,.35); }
 .land-btn-cierre:hover { box-shadow: 0 10px 26px rgba(39,174,96,.45); }
+.land-btn-arqueo { background: linear-gradient(135deg,#b7791f,#d97706); box-shadow: 0 5px 18px rgba(180,120,20,.35); }
+.land-btn-arqueo:hover { box-shadow: 0 10px 26px rgba(180,120,20,.45); }
 
 .landing-cierre {
   display: flex;
   justify-content: center;
+  gap: .75rem;
+  flex-wrap: wrap;
   margin-bottom: 1.25rem;
 }
 .landing-cierre .land-btn {
   flex-direction: row;
   padding: .85rem 2rem;
   gap: .65rem;
-  min-width: 300px;
+  min-width: 280px;
 }
 .landing-cierre .land-icon { font-size: 1.6rem; }
 .landing-cierre .land-label { font-size: .85rem; }

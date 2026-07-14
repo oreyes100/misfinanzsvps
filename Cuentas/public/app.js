@@ -255,6 +255,162 @@ document.getElementById('ocrModal').addEventListener('click', e => {
   if (e.target === e.currentTarget) closeOcrModal();
 });
 
+// === ARQUEO DE CAJA ===
+const ARQUEO_BILLETES = [500, 200, 100, 50, 20];
+const ARQUEO_MONEDAS  = [10, 5, 2, 1];
+const _arqueoQty = {};  // denominacion -> cantidad
+
+function _buildArqueoRows(denos, tbodyId) {
+  const tbody = document.getElementById(tbodyId);
+  tbody.innerHTML = '';
+  for (const d of denos) {
+    _arqueoQty[d] = 0;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td style="padding:.25rem .3rem;color:var(--text-main)"><strong>$${d}</strong></td>
+      <td style="padding:.25rem .3rem;text-align:center">
+        <input type="number" min="0" step="1" value="0" data-deno="${d}"
+          style="width:50px;text-align:center;padding:.2rem;border:1px solid var(--border);border-radius:4px;font-size:.82rem"
+          oninput="arqueoUpdate(this)">
+      </td>
+      <td id="arqueoSub${d}" style="padding:.25rem .3rem;text-align:right;font-size:.82rem;color:var(--text-light)">$0.00</td>`;
+    tbody.appendChild(tr);
+  }
+}
+
+function arqueoUpdate(input) {
+  const d = parseInt(input.dataset.deno, 10);
+  const qty = Math.max(0, parseInt(input.value, 10) || 0);
+  _arqueoQty[d] = qty;
+  const sub = d * qty;
+  document.getElementById('arqueoSub' + d).textContent = '$' + sub.toLocaleString('es-MX', { minimumFractionDigits: 2 });
+  _arqueoRecalcTotals();
+}
+
+function _arqueoRecalcTotals() {
+  const subB = ARQUEO_BILLETES.reduce((s, d) => s + d * (_arqueoQty[d] || 0), 0);
+  const subM = ARQUEO_MONEDAS.reduce((s, d)  => s + d * (_arqueoQty[d] || 0), 0);
+  const total = subB + subM;
+  const fmt = v => '$' + v.toLocaleString('es-MX', { minimumFractionDigits: 2 });
+
+  document.getElementById('arqueoSubBilletes').textContent = fmt(subB);
+  document.getElementById('arqueoSubMonedas').textContent  = fmt(subM);
+  document.getElementById('arqueoTotal').textContent = fmt(total);
+
+  // Diferencia vs sistema
+  const saldoEl = document.getElementById('arqueoSaldoSistema');
+  const saldoSys = parseFloat(saldoEl.dataset.saldo || '0');
+  const diff = total - saldoSys;
+  const diffEl = document.getElementById('arqueoDiff');
+  const diffRow = document.getElementById('arqueoDiffRow');
+  const registrarBtn = document.getElementById('arqueoRegistrarBtn');
+
+  if (!isNaN(saldoSys) && saldoSys !== null) {
+    diffEl.textContent = (diff >= 0 ? '+' : '') + fmt(diff);
+    diffEl.style.color = Math.abs(diff) < 0.01 ? 'var(--income)' : 'var(--expense)';
+    diffRow.style.background = Math.abs(diff) < 0.01 ? 'rgba(39,174,96,.08)' : 'rgba(192,57,43,.08)';
+    registrarBtn.style.display = Math.abs(diff) >= 0.01 ? '' : 'none';
+  }
+}
+
+async function openArqueoModal() {
+  const m = document.getElementById('arqueoModal');
+  _buildArqueoRows(ARQUEO_BILLETES, 'arqueoBilletesBody');
+  _buildArqueoRows(ARQUEO_MONEDAS,  'arqueoMonedasBody');
+
+  // Fecha de hoy por defecto
+  document.getElementById('arqueoFecha').value = new Date().toISOString().slice(0, 10);
+  document.getElementById('arqueoResponsable').value = authUser?.username || '';
+
+  // Cargar saldo del sistema desde la API
+  const saldoEl = document.getElementById('arqueoSaldoSistema');
+  saldoEl.textContent = '…';
+  try {
+    const accs = await api('/api/accounts');
+    const caja = accs.find(a => a.id === 'caja');
+    const saldo = caja ? caja.balance : 0;
+    saldoEl.textContent = '$' + saldo.toLocaleString('es-MX', { minimumFractionDigits: 2 });
+    saldoEl.dataset.saldo = saldo;
+  } catch (_) { saldoEl.textContent = '—'; }
+
+  _arqueoRecalcTotals();
+  m.showModal();
+}
+function closeArqueoModal() { document.getElementById('arqueoModal').close(); }
+
+function arqueoLimpiar() {
+  document.querySelectorAll('#arqueoModal input[data-deno]').forEach(inp => {
+    inp.value = 0;
+    arqueoUpdate(inp);
+  });
+}
+
+async function arqueoRegistrar() {
+  const saldoEl = document.getElementById('arqueoSaldoSistema');
+  const saldoSys = parseFloat(saldoEl.dataset.saldo || '0');
+  const totalEl = document.getElementById('arqueoTotal');
+  const totalStr = totalEl.textContent.replace(/[$,]/g, '');
+  const total = parseFloat(totalStr) || 0;
+  const diff = parseFloat((total - saldoSys).toFixed(2));
+  if (Math.abs(diff) < 0.01) return;
+
+  const fecha = document.getElementById('arqueoFecha').value || new Date().toISOString().slice(0, 10);
+  const tipo = diff > 0 ? 'income' : 'expense';
+  const monto = Math.abs(diff);
+  const desc = `Ajuste arqueo de caja (contado ${totalEl.textContent}, sistema $${saldoSys.toLocaleString('es-MX', { minimumFractionDigits: 2 })})`;
+
+  try {
+    await api('/api/transactions', { method: 'POST', body: JSON.stringify({
+      date: fecha, description: desc, code: 'OI', amount: monto,
+      type: tipo, account: 'caja'
+    })});
+    toast('✅ Diferencia registrada en caja', 'success');
+    closeArqueoModal();
+    loadTransactions();
+  } catch (err) { toast('Error: ' + err.message, 'error'); }
+}
+
+function arqueoImprimir() {
+  const fecha = document.getElementById('arqueoFecha').value;
+  const resp  = document.getElementById('arqueoResponsable').value;
+  const saldo = document.getElementById('arqueoSaldoSistema').textContent;
+  const total = document.getElementById('arqueoTotal').textContent;
+  const diff  = document.getElementById('arqueoDiff').textContent;
+
+  const rows = [...ARQUEO_BILLETES, ...ARQUEO_MONEDAS].map(d => {
+    const qty = _arqueoQty[d] || 0;
+    if (!qty) return '';
+    return `<tr><td>${d >= 20 ? 'Billete' : 'Moneda'} $${d}</td><td align="center">${qty}</td><td align="right">$${(d*qty).toLocaleString('es-MX',{minimumFractionDigits:2})}</td></tr>`;
+  }).filter(Boolean).join('');
+
+  const html = `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">
+  <title>Arqueo de Caja — ${fecha}</title>
+  <style>body{font-family:Arial,sans-serif;max-width:420px;margin:30px auto;font-size:13px}
+  h2{text-align:center;border-bottom:2px solid #333;padding-bottom:8px}
+  table{width:100%;border-collapse:collapse;margin-top:12px}
+  th,td{padding:5px 8px;border-bottom:1px solid #ddd}
+  .total{font-weight:700;font-size:15px;border-top:2px solid #333}
+  .diff{color:${diff.startsWith('+') ? 'green' : diff === '$0.00' ? 'green' : 'red'}}
+  @media print{button{display:none}}</style></head>
+  <body><h2>ARQUEO DE CAJA</h2>
+  <p><strong>Fecha:</strong> ${fecha} &nbsp; <strong>Responsable:</strong> ${resp || '—'}</p>
+  <table><thead><tr><th>Denominación</th><th>Cantidad</th><th>Subtotal</th></tr></thead>
+  <tbody>${rows}</tbody>
+  <tfoot><tr class="total"><td colspan="2">TOTAL CONTADO</td><td align="right">${total}</td></tr>
+  <tr><td colspan="2">Saldo en sistema (Caja)</td><td align="right">${saldo}</td></tr>
+  <tr><td colspan="2" class="diff">Diferencia</td><td align="right" class="diff">${diff}</td></tr></tfoot></table>
+  <br><p style="font-size:11px;color:#666">Firma: ___________________________</p>
+  <script>window.print();<\/script></body></html>`;
+
+  const w = window.open('', '_blank');
+  w.document.write(html);
+  w.document.close();
+}
+
+document.getElementById('arqueoModal').addEventListener('click', e => {
+  if (e.target === e.currentTarget) closeArqueoModal();
+});
+
 // === ASISTENTE IA ===
 let aiHistory = [];
 
