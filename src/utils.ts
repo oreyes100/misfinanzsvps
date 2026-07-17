@@ -417,7 +417,7 @@ Responde SOLO con un objeto JSON válido (sin texto extra):
   }
 }
 
-export function downloadReportCSV(report: any, filename: string, gran: string, startDate: string, endDate: string, health: any) {
+export function downloadReportCSV(report: any, filename: string, gran: string, startDate: string, endDate: string, health: any, byGroup?: any, filtered?: any[]) {
   let csv = `# MIS FINAZAS — REPORTE FINANCIERO PERSONAL\n`;
   csv += `# Generado: ${new Date().toISOString()}\n`;
   csv += `# Período: ${startDate || '—'} — ${endDate || '—'} | Agrupación: ${gran}\n`;
@@ -465,12 +465,30 @@ export function downloadReportCSV(report: any, filename: string, gran: string, s
     });
   }
 
+  if (byGroup && Object.keys(byGroup).length > 0) {
+    csv += `\n## DETALLE DE TRANSACCIONES POR PERÍODO Y CATEGORÍA\n`;
+    csv += `Periodo,Categoría,Tipo,Fecha,Descripción,Monto\n`;
+    for (const period of Object.keys(byGroup).sort()) {
+      const pg = byGroup[period];
+      for (const [cat, txs] of Object.entries(pg.txsByIncomeCat || {})) {
+        for (const t of txs as any[]) {
+          csv += `${csvCell(period)},${csvCell(cat)},Ingreso,${csvCell(t.date)},${csvCell(t.description)},${csvCell(Math.abs(t.amount).toFixed(2))}\n`;
+        }
+      }
+      for (const [cat, txs] of Object.entries(pg.txsByExpenseCat || {})) {
+        for (const t of txs as any[]) {
+          csv += `${csvCell(period)},${csvCell(cat)},Gasto,${csvCell(t.date)},${csvCell(t.description)},${csvCell(Math.abs(t.amount).toFixed(2))}\n`;
+        }
+      }
+    }
+  }
+
   csv += `\n# NOTA: Este CSV es datos tabulares. Abre el PDF para gráficas visuales, KPIs ejecutivos y formato profesional de reporte financiero.\n`;
 
   downloadBlob(csv, filename, 'text/csv;charset=utf-8;');
 }
 
-export function downloadReportPDF(report: any, granularity: string, startDate: string, endDate: string, health: any) {
+export function downloadReportPDF(report: any, granularity: string, startDate: string, endDate: string, health: any, byGroup?: any, _filtered?: any[]) {
   const title = `MIS FINANZAS — Reporte Financiero Personal`;
   const subtitle = `Estado de Resultados y Análisis por Categorías · ${granularity}`;
   const range = `${startDate || '—'} a ${endDate || '—'}`;
@@ -648,6 +666,37 @@ ${health ? `<div class="section">
   </div>
   <ul style="margin:6px 0 2px 16px;padding:0;font-size:9.5px;">${recsHtml}</ul>
 </div>` : ''}
+
+${(() => {
+  if (!byGroup || Object.keys(byGroup).length === 0) return '';
+  let rows = '';
+  let count = 0;
+  const MAX = 500;
+  for (const period of Object.keys(byGroup).sort()) {
+    const pg = byGroup[period];
+    for (const [cat, txs] of Object.entries(pg.txsByIncomeCat || {})) {
+      for (const t of txs as any[]) {
+        if (count >= MAX) break;
+        rows += `<tr><td>${period}</td><td>${cat}</td><td class="gain">Ingreso</td><td>${t.date}</td><td>${t.description || ''}</td><td class="num gain">${fmt(Math.abs(t.amount))}</td></tr>`;
+        count++;
+      }
+    }
+    for (const [cat, txs] of Object.entries(pg.txsByExpenseCat || {})) {
+      for (const t of txs as any[]) {
+        if (count >= MAX) break;
+        rows += `<tr><td>${period}</td><td>${cat}</td><td class="loss">Gasto</td><td>${t.date}</td><td>${t.description || ''}</td><td class="num loss">${fmt(Math.abs(t.amount))}</td></tr>`;
+        count++;
+      }
+    }
+    if (count >= MAX) break;
+  }
+  const truncNote = count >= MAX ? `<div class="muted" style="font-size:8px;margin-top:4px;">Mostrando primeras ${MAX} transacciones. Detalle completo en el CSV.</div>` : '';
+  return `<h2>Detalle de Transacciones por Período y Categoría</h2>
+<table style="font-size:8.5px;">
+<thead><tr><th>Período</th><th>Categoría</th><th>Tipo</th><th>Fecha</th><th>Descripción</th><th class="num">Monto</th></tr></thead>
+<tbody>${rows || '<tr><td colspan="6" class="muted">Sin transacciones en el rango</td></tr>'}</tbody>
+</table>${truncNote}`;
+})()}
 
 <div class="footer">
   <div>Mis Finanzas • Reporte generado automáticamente desde datos locales/sincronizados • Valores en divisa base • Excluye transferencias internas.</div>

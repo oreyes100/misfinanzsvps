@@ -87,8 +87,8 @@ export function BarChart({ bars, height = 96, color = "#2ee6a8", fmt = (v) => v.
   );
 }
 
-/** Donut SVG. `slices` = [{ label, value, color }]. */
-export function PieChart({ slices, size = 150, totalLabel }) {
+/** Donut SVG. `slices` = [{ label, value, color }]. `onSliceClick(label)` optional. */
+export function PieChart({ slices, size = 150, totalLabel, onSliceClick }) {
   const total = slices.reduce((s, x) => s + x.value, 0);
   if (total <= 0) {
     return <p className="text-sm text-ink-dim">Sin gastos este mes todavía.</p>;
@@ -96,6 +96,7 @@ export function PieChart({ slices, size = 150, totalLabel }) {
   const R = 60;
   const C = 2 * Math.PI * R;
   let offset = 0;
+  const clickable = typeof onSliceClick === "function";
 
   return (
     <div className="flex items-center gap-4">
@@ -104,7 +105,7 @@ export function PieChart({ slices, size = 150, totalLabel }) {
         width={size}
         height={size}
         role="img"
-        aria-label={`Distribución de gastos: ${slices.map((s) => `${s.label} ${Math.round((s.value / total) * 100)} %`).join(", ")}`}
+        aria-label={`Distribución: ${slices.map((s) => `${s.label} ${Math.round((s.value / total) * 100)} %`).join(", ")}`}
       >
         <circle cx="75" cy="75" r={R} fill="none" stroke="rgba(255,255,255,0.07)" strokeWidth="18" />
         {slices.map((s) => {
@@ -121,6 +122,9 @@ export function PieChart({ slices, size = 150, totalLabel }) {
               strokeDashoffset={-offset * C}
               transform="rotate(-90 75 75)"
               strokeLinecap="butt"
+              pointerEvents={clickable ? "visibleStroke" : "none"}
+              style={clickable ? { cursor: "pointer" } : undefined}
+              onClick={clickable ? () => onSliceClick(s.label) : undefined}
             />
           );
           offset += frac;
@@ -132,9 +136,16 @@ export function PieChart({ slices, size = 150, totalLabel }) {
           </text>
         )}
       </svg>
-      <ul className="space-y-1.5 text-xs" aria-hidden="true">
+      <ul className="space-y-1.5 text-xs" role={clickable ? "listbox" : undefined} aria-label={clickable ? "Categorías — clic para ver detalle" : undefined}>
         {slices.map((s) => (
-          <li key={s.label} className="flex items-center gap-2">
+          <li
+            key={s.label}
+            className={`flex items-center gap-2 ${clickable ? "cursor-pointer rounded px-1 hover:bg-white/10" : ""}`}
+            onClick={clickable ? () => onSliceClick(s.label) : undefined}
+            role={clickable ? "option" : undefined}
+            tabIndex={clickable ? 0 : undefined}
+            onKeyDown={clickable ? (e) => { if (e.key === "Enter" || e.key === " ") onSliceClick(s.label); } : undefined}
+          >
             <span className="inline-block size-2.5 rounded-full" style={{ background: s.color }} />
             <span className="text-ink-dim">{s.label}</span>
             <span className="ml-auto pl-3 font-medium tabular-nums">{Math.round((s.value / total) * 100)} %</span>

@@ -477,6 +477,14 @@ function DataTools() {
       )}
 
       <hr className="my-4 border-white/8" />
+      <h3 className="mb-1 text-sm font-semibold">Limpiar intereses duplicados</h3>
+      <p className="mb-2 text-xs text-ink-dim">
+        Elimina transacciones de interés duplicadas generadas por sincronización con IDs no deterministas (bug corregido).
+        Preview muestra cuántos duplicados hay antes de borrar.
+      </p>
+      <InterestDedupPanel />
+
+      <hr className="my-4 border-white/8" />
       <h3 className="mb-1 text-sm font-semibold">Eliminar cuentas de demostración base</h3>
       <p className="mb-2 text-xs text-ink-dim">Quita las cuentas semilla (Corriente, Ahorro, Depósito 12m, Cuenta USD) que se regeneraban por el modelo inicial. Una vez eliminadas no volverán gracias a la limpieza en carga y sincronización.</p>
       <Btn variant="danger" onClick={purgeDemoAccounts}>🗑 Eliminar cuentas demo base</Btn>
@@ -493,5 +501,42 @@ function DataTools() {
         Restablecer datos demo
       </Btn>
     </Glass>
+  );
+}
+
+function InterestDedupPanel() {
+  const { state, dispatch } = useStore();
+  const [preview, setPreview] = useState(null);
+
+  const calcDuplicates = () => {
+    const autoInterestCats = new Set(["Intereses", "Impuestos"]);
+    const seen = new Map();
+    let count = 0;
+    for (const tx of (state.transactions || [])) {
+      if (!tx.auto || !autoInterestCats.has(tx.category)) continue;
+      const key = `${tx.accountId}|${tx.date}|${tx.description}|${tx.amount}`;
+      if (seen.has(key)) count++;
+      else seen.set(key, tx.id);
+    }
+    setPreview(count);
+  };
+
+  const clean = () => {
+    const count = preview ?? 0;
+    if (!confirm(`¿Eliminar ${count} transacciones de interés duplicadas? Los saldos se corregirán. Esta acción sincronizará los deletes a la nube.`)) return;
+    dispatch({ type: "clean_interest_duplicates" });
+    setPreview(null);
+  };
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <Btn onClick={calcDuplicates}>Vista previa</Btn>
+      {preview !== null && (
+        <>
+          <span className="text-xs text-ink-dim">{preview === 0 ? "Sin duplicados detectados." : `${preview} duplicados encontrados.`}</span>
+          {preview > 0 && <Btn variant="danger" onClick={clean}>🧹 Eliminar {preview} duplicados</Btn>}
+        </>
+      )}
+    </div>
   );
 }

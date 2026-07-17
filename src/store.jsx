@@ -416,6 +416,66 @@ function innerReducer(state, action) {
     case "reset":
       return accrueInterest(SEED);
 
+    case "approve_interest_anomaly": {
+      const { accountId, date } = action;
+      const anomaly = (state.pendingInterestAnomalies || []).find(a => a.accountId === accountId && a.date === date);
+      if (!anomaly) return state;
+      const acc = state.accounts.find(a => a.id === accountId);
+      if (!acc) return state;
+      const id = `int-${accountId}-approved-${date}`;
+      const tx = {
+        id, date, description: `Intereses ${acc.name} (aprobado manualmente)`,
+        amount: anomaly.gain, currency: acc.currency, category: "Intereses", accountId, auto: true,
+        _updatedAt: Date.now(),
+      };
+      const accounts = state.accounts.map(a =>
+        a.id === accountId ? { ...a, balance: Math.round((a.balance + anomaly.gain) * 100) / 100, lastAccrual: date, _updatedAt: Date.now() } : a
+      );
+      return {
+        ...state,
+        accounts,
+        transactions: [tx, ...state.transactions],
+        pendingInterestAnomalies: (state.pendingInterestAnomalies || []).filter(a => !(a.accountId === accountId && a.date === date)),
+      };
+    }
+
+    case "discard_interest_anomaly":
+      return {
+        ...state,
+        pendingInterestAnomalies: (state.pendingInterestAnomalies || []).filter(
+          a => !(a.accountId === action.accountId && a.date === action.date)
+        ),
+      };
+
+    case "clean_interest_duplicates": {
+      const autoInterestCats = new Set(["Intereses", "Impuestos"]);
+      const keep = new Set();
+      const dedupMap = new Map();
+      const toDelete = {};
+      for (const tx of state.transactions) {
+        if (!tx.auto || !autoInterestCats.has(tx.category)) { keep.add(tx.id); continue; }
+        const key = `${tx.accountId}|${tx.date}|${tx.description}|${tx.amount}`;
+        const existing = dedupMap.get(key);
+        if (!existing) { dedupMap.set(key, tx.id); keep.add(tx.id); }
+        else { toDelete[tx.id] = Date.now(); }
+      }
+      if (Object.keys(toDelete).length === 0) return state;
+      const deletedAmountByAccount = {};
+      for (const tx of state.transactions) {
+        if (toDelete[tx.id]) {
+          deletedAmountByAccount[tx.accountId] = (deletedAmountByAccount[tx.accountId] || 0) + tx.amount;
+        }
+      }
+      const accounts = state.accounts.map(a => {
+        const delta = deletedAmountByAccount[a.id];
+        if (!delta) return a;
+        return { ...a, balance: Math.round((a.balance - delta) * 100) / 100, _updatedAt: Date.now() };
+      });
+      const mergedDeleted = { ...(state.deletedTransactions || {}), ...toDelete };
+      const transactions = state.transactions.filter(t => !toDelete[t.id]);
+      return { ...state, accounts, transactions, deletedTransactions: mergedDeleted };
+    }
+
     default:
       return state;
   }
@@ -547,7 +607,7 @@ export function StoreProvider({ children }) {
             cloudReadyRef.current = true; // pull OK → ya es seguro subir cambios.
             dispatch({
               type: "restore",
-              state: migrate(accrueInterest(data.state)),
+              state: migrate(data.state),
             });
             setSyncStatus("synced");
           } else {

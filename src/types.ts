@@ -166,6 +166,15 @@ export type StatementPatterns = Record<string, StatementPattern>;
 
 // ---------- Estado global ----------
 
+export interface InterestAnomaly {
+  accountId: string;
+  accountName: string;
+  date: string;
+  gain: number;
+  cap: number;
+  days: number;
+}
+
 export interface AppState {
   settings: Settings;
   accounts: Account[];
@@ -183,6 +192,7 @@ export interface AppState {
   // Para que los deletes de transacciones no reaparezcan por merge de nube
   deletedTransactions?: Record<string, number>; // txId -> delete timestamp (ms)
   deletedAccountIds?: string[]; // IDs de cuentas explícitamente borradas por el usuario
+  pendingInterestAnomalies?: InterestAnomaly[]; // Intereses bloqueados por guard de razonabilidad (diagnóstico local)
 }
 
 // ---------- Acciones del reducer (discriminated union) ----------
@@ -222,7 +232,10 @@ export type Action =
   | { type: "learn_category_aliases"; aliases: Record<string, string> }
   | { type: "learn_statement_pattern"; key: string; pattern: Partial<StatementPattern> }
   | { type: "restore"; state: Partial<AppState> }
-  | { type: "reset" };
+  | { type: "reset" }
+  | { type: "approve_interest_anomaly"; accountId: string; date: string }
+  | { type: "discard_interest_anomaly"; accountId: string; date: string }
+  | { type: "clean_interest_duplicates" };
 
 // ---------- Selectores ----------
 

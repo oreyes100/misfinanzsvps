@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { useStore } from "../store.jsx";
 import { catColor, convert, fmtMoney, fmtPct, downloadReportCSV, downloadReportPDF } from "../utils.js";
@@ -54,6 +54,11 @@ export default function Reports() {
   const [gran, setGran] = useState('mes');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+  const [selectedPeriod, setSelectedPeriod] = useState(null);
+  const [drillCat, setDrillCat] = useState(null); // { type: 'income'|'expense', cat }
+
+  // Reset period/drill-down when granularity or dates change
+  useEffect(() => { setSelectedPeriod(null); setDrillCat(null); }, [gran, startDate, endDate]);
   const base = state.settings.baseCurrency;
   const toBase = (amount, currency) => convert(amount, currency, base, state.fx);
 
@@ -136,7 +141,6 @@ export default function Reports() {
   // Reporte comprensivo por granularidad (día/semana/mes/trimestre/etc) con filtro de fechas
   const comprehensiveReport = useMemo(() => {
     const txs = Array.isArray(state.transactions) ? state.transactions : [];
-    const fx = state.fx || {};
     const filtered = txs.filter(t => {
       if (!t || !t.date || t.category === 'Transferencia') return false;
       if (startDate && t.date < startDate) return false;
@@ -146,42 +150,52 @@ export default function Reports() {
     const groups = {};
     const incomeByCat = {};
     const expenseByCat = {};
+    const byGroup = {}; // periodKey → { incomeByCat, expenseByCat, txsByIncomeCat, txsByExpenseCat }
     let incomeTotal = 0;
     let expenseTotal = 0;
     for (const t of filtered) {
       const key = getGroupKey(t.date, gran);
       if (!groups[key]) groups[key] = { period: key, income: 0, expense: 0, count: 0 };
+      if (!byGroup[key]) byGroup[key] = { incomeByCat: {}, expenseByCat: {}, txsByIncomeCat: {}, txsByExpenseCat: {} };
       const eur = toBase(Math.abs(t.amount || 0), t.currency || base);
       if ((t.amount || 0) > 0) {
         groups[key].income += eur;
         incomeTotal += eur;
         incomeByCat[t.category] = (incomeByCat[t.category] || 0) + eur;
+        byGroup[key].incomeByCat[t.category] = (byGroup[key].incomeByCat[t.category] || 0) + eur;
+        if (!byGroup[key].txsByIncomeCat[t.category]) byGroup[key].txsByIncomeCat[t.category] = [];
+        byGroup[key].txsByIncomeCat[t.category].push(t);
       } else {
         groups[key].expense += eur;
         expenseTotal += eur;
         expenseByCat[t.category] = (expenseByCat[t.category] || 0) + eur;
+        byGroup[key].expenseByCat[t.category] = (byGroup[key].expenseByCat[t.category] || 0) + eur;
+        if (!byGroup[key].txsByExpenseCat[t.category]) byGroup[key].txsByExpenseCat[t.category] = [];
+        byGroup[key].txsByExpenseCat[t.category].push(t);
       }
       groups[key].count++;
     }
     const list = Object.values(groups).sort((a, b) => a.period.localeCompare(b.period));
-    return { 
-      groups: list, 
-      totalIncome: incomeTotal, 
-      totalExpense: expenseTotal, 
+    return {
+      groups: list,
+      totalIncome: incomeTotal,
+      totalExpense: expenseTotal,
       net: incomeTotal - expenseTotal,
       incomeByCat,
-      expenseByCat
+      expenseByCat,
+      byGroup,
+      filtered,
     };
   }, [state.transactions, state.fx, gran, startDate, endDate, base]);
 
   // Descargas profesionales completas (con desgloses, salud financiera y simulación de gráficas)
   const handleDownloadCSV = () => {
     const health = { savingsRate: data.savingsRate, emergencyMonths: data.emergencyMonths, avgExpense: data.avgExpense, avgIncome: data.avgIncome, recs: data.recs };
-    downloadReportCSV(comprehensiveReport, `reporte-${gran}-completo.csv`, gran, startDate, endDate, health);
+    downloadReportCSV(comprehensiveReport, `reporte-${gran}-completo.csv`, gran, startDate, endDate, health, comprehensiveReport.byGroup, comprehensiveReport.filtered);
   };
   const handleDownloadPDF = () => {
     const health = { savingsRate: data.savingsRate, emergencyMonths: data.emergencyMonths, avgExpense: data.avgExpense, avgIncome: data.avgIncome, recs: data.recs };
-    downloadReportPDF(comprehensiveReport, gran, startDate, endDate, health);
+    downloadReportPDF(comprehensiveReport, gran, startDate, endDate, health, comprehensiveReport.byGroup, comprehensiveReport.filtered);
   };
 
   const maxBar = Math.max(1, ...data.months.map((m) => Math.max(m.income, m.expense)));
@@ -327,8 +341,13 @@ export default function Reports() {
             </thead>
             <tbody>
               {comprehensiveReport.groups.map((g) => (
-                <tr key={g.period} className="border-t border-white/5">
-                  <td className="p-1 font-medium">{g.period}</td>
+                <tr
+                  key={g.period}
+                  className={`border-t border-white/5 cursor-pointer transition ${selectedPeriod === g.period ? 'bg-accent/20' : 'hover:bg-white/5'}`}
+                  onClick={() => { setSelectedPeriod(p => p === g.period ? null : g.period); setDrillCat(null); }}
+                  title="Clic para filtrar gráficas a este periodo"
+                >
+                  <td className="p-1 font-medium">{g.period} {selectedPeriod === g.period && <span className="text-accent ml-1">▶</span>}</td>
                   <td className="p-1 text-right text-gain">{fmtMoney(g.income, base)}</td>
                   <td className="p-1 text-right text-loss">{fmtMoney(g.expense, base)}</td>
                   <td className={`p-1 text-right ${g.income - g.expense >= 0 ? 'text-gain' : 'text-loss'}`}>
@@ -386,30 +405,93 @@ export default function Reports() {
         </div>
 
         {/* Gráficas de subtotales por categoría */}
-        <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <h4 className="font-semibold text-sm mb-1">Gráfica de Ingresos por Categoría</h4>
-            <PieChart 
-              slices={Object.entries(comprehensiveReport.incomeByCat || {}).map(([label, value]) => ({
-                label,
-                value,
-                color: catColor(label, state.categories)
-              }))} 
-              size={140} 
-            />
-          </div>
-          <div>
-            <h4 className="font-semibold text-sm mb-1">Gráfica de Gastos por Categoría</h4>
-            <PieChart 
-              slices={Object.entries(comprehensiveReport.expenseByCat || {}).map(([label, value]) => ({
-                label,
-                value,
-                color: catColor(label, state.categories)
-              }))} 
-              size={140} 
-            />
-          </div>
-        </div>
+        {(() => {
+          const periodLabel = selectedPeriod ? ` — ${selectedPeriod}` : ' — rango completo';
+          const pg = selectedPeriod && comprehensiveReport.byGroup[selectedPeriod];
+          const activeIncomeByCat = pg ? pg.incomeByCat : (comprehensiveReport.incomeByCat || {});
+          const activeExpenseByCat = pg ? pg.expenseByCat : (comprehensiveReport.expenseByCat || {});
+          const activeTxsByIncome = pg ? pg.txsByIncomeCat : null;
+          const activeTxsByExpense = pg ? pg.txsByExpenseCat : null;
+
+          return (
+            <>
+              <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <h4 className="font-semibold text-sm mb-1">Gráfica de Ingresos{periodLabel}</h4>
+                  <PieChart
+                    slices={Object.entries(activeIncomeByCat).map(([label, value]) => ({
+                      label, value, color: catColor(label, state.categories)
+                    }))}
+                    size={140}
+                    onSliceClick={(cat) => setDrillCat(d => d && d.type === 'income' && d.cat === cat ? null : { type: 'income', cat })}
+                  />
+                </div>
+                <div>
+                  <h4 className="font-semibold text-sm mb-1">Gráfica de Gastos{periodLabel}</h4>
+                  <PieChart
+                    slices={Object.entries(activeExpenseByCat).map(([label, value]) => ({
+                      label, value, color: catColor(label, state.categories)
+                    }))}
+                    size={140}
+                    onSliceClick={(cat) => setDrillCat(d => d && d.type === 'expense' && d.cat === cat ? null : { type: 'expense', cat })}
+                  />
+                </div>
+              </div>
+
+              {drillCat && (() => {
+                const txMap = drillCat.type === 'income' ? activeTxsByIncome : activeTxsByExpense;
+                const fallbackTxs = drillCat.type === 'income'
+                  ? comprehensiveReport.filtered.filter(t => t.amount > 0 && t.category === drillCat.cat)
+                  : comprehensiveReport.filtered.filter(t => t.amount < 0 && t.category === drillCat.cat);
+                const txList = txMap ? (txMap[drillCat.cat] || []) : fallbackTxs;
+                return (
+                  <div className="mt-3 rounded-lg border border-accent/30 bg-white/5 p-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <h4 className="font-semibold text-sm">
+                        {drillCat.cat}
+                        {selectedPeriod && <span className="ml-2 text-ink-dim font-normal">({selectedPeriod})</span>}
+                        <span className={`ml-2 text-xs ${drillCat.type === 'income' ? 'text-gain' : 'text-loss'}`}>
+                          {drillCat.type === 'income' ? 'Ingresos' : 'Gastos'}
+                        </span>
+                      </h4>
+                      <button onClick={() => setDrillCat(null)} className="text-ink-dim hover:text-ink text-sm px-1" title="Cerrar">✕</button>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="text-ink-dim border-b border-white/10">
+                            <th className="p-1 text-left">Fecha</th>
+                            <th className="p-1 text-left">Descripción</th>
+                            <th className="p-1 text-left">Cuenta</th>
+                            <th className="p-1 text-right">Monto</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {txList.length === 0 && (
+                            <tr><td colSpan={4} className="p-2 text-center text-ink-dim">Sin transacciones.</td></tr>
+                          )}
+                          {txList.map(t => {
+                            const acc = state.accounts.find(a => a.id === t.accountId);
+                            return (
+                              <tr key={t.id} className="border-t border-white/5">
+                                <td className="p-1 tabular-nums">{t.date}</td>
+                                <td className="p-1">{t.description}</td>
+                                <td className="p-1 text-ink-dim">{acc ? acc.name : t.accountId}</td>
+                                <td className={`p-1 text-right tabular-nums ${t.amount > 0 ? 'text-gain' : 'text-loss'}`}>
+                                  {fmtMoney(Math.abs(t.amount), t.currency || base)}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                );
+              })()}
+            </>
+          );
+        })()}
 
         {/* Controles en la parte inferior */}
         <div className="mt-4 border-t border-white/10 pt-3">

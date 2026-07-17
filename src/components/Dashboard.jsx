@@ -199,8 +199,32 @@ export default function Dashboard() {
 
   const cardAlerts = pendingCardPayments(state);
 
+  const interestAnomalies = state.pendingInterestAnomalies || [];
+
   return (
     <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 lg:grid-rows-[auto_auto_auto]">
+      {/* ---- Alerta de intereses fuera de rango (sanity guard) ---- */}
+      {interestAnomalies.map((a) => (
+        <Glass key={`${a.accountId}-${a.date}`} className="col-span-2 lg:col-span-4 !rounded-2xl border-yellow-500/40 !bg-yellow-500/10 !p-3" aria-label={`Interés inusual en ${a.accountName}`}>
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="text-xl" aria-hidden="true">⚠️</span>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold text-yellow-400">Interés inusual bloqueado · {a.accountName}</p>
+              <p className="text-xs text-ink-dim">
+                {a.date} · Calculado: {a.gain.toLocaleString("es-MX", { style: "currency", currency: "MXN" })} · Máximo esperado: {a.cap.toLocaleString("es-MX", { style: "currency", currency: "MXN" })} · Span: {a.days} días
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <Btn size="sm" onClick={() => dispatch({ type: "approve_interest_anomaly", accountId: a.accountId, date: a.date })}>
+                Aprobar y registrar
+              </Btn>
+              <Btn size="sm" variant="danger" onClick={() => dispatch({ type: "discard_interest_anomaly", accountId: a.accountId, date: a.date })}>
+                Descartar
+              </Btn>
+            </div>
+          </div>
+        </Glass>
+      ))}
       {/* ---- Avisos de pago de tarjeta (diarios hasta marcar pagado) ---- */}
       {cardAlerts.length > 0 && (
         <div className="col-span-2 space-y-2 lg:col-span-4">

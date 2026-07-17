@@ -1,6 +1,13 @@
 // interest.ts — Devengo de intereses (módulo puro, sin React)
-import type { Account, AppState, Transaction, AccrualFrequency } from "./types.ts";
-import { DAY_MS, daysBetween, todayISO, uid } from "./utils.ts";
+import type { Account, AppState, Transaction, AccrualFrequency, InterestAnomaly } from "./types.ts";
+import { DAY_MS, daysBetween, todayISO } from "./utils.ts";
+
+/** Máximo interés plausible: tasa_diaria_máxima × capital × días × factor_seguridad */
+export function interestSanityCap(acc: Account, days: number): number {
+  const maxRate = Math.max(acc.rate || 0, acc.rate1 || 0, acc.rate2 || 0);
+  if (maxRate <= 0) return Infinity;
+  return acc.balance * (maxRate / 360) * days * 2;
+}
 
 const r2 = (x: number): number => Math.round(x * 100) / 100;
 
@@ -32,7 +39,7 @@ interface AccrueCappedResult {
   txs: Transaction[];
 }
 
-function accrueCapped(acc: Account, now: string): AccrueCappedResult {
+function accrueCapped(acc: Account, now: string, existingIds: Set<string>): AccrueCappedResult {
   const txs: Transaction[] = [];
   let balance = acc.balance;
   const startBalance = acc.balance;
@@ -85,48 +92,70 @@ function accrueCapped(acc: Account, now: string): AccrueCappedResult {
     const nDeposits = (acc.weekendDeposits || 1) as 1 | 2 | 3;
     const isWeekendRelated = postDate !== now || [6, 0].includes(new Date(now + "T12:00:00").getDay());
     if (gain > 0.005) {
+      let gainCredited = false;
       if (nDeposits > 1 && isWeekendRelated) {
         const part = r2(gain / nDeposits);
         for (let k = 1; k <= nDeposits; k++) {
-          txs.push({
-            id: uid(), date: postDate,
-            description: `Intereses ${acc.name} · ${t.label} (${(t.rate * 100).toFixed(2)} % TAE) (depósito ${k}/${nDeposits})`,
-            amount: part, currency: acc.currency, category: "Intereses", accountId: acc.id, auto: true,
-          });
+          const id = `int-${acc.id}-t${t.n}-${postDate}-k${k}`;
+          if (!existingIds.has(id)) {
+            txs.push({
+              id, date: postDate,
+              description: `Intereses ${acc.name} · ${t.label} (${(t.rate * 100).toFixed(2)} % TAE) (depósito ${k}/${nDeposits})`,
+              amount: part, currency: acc.currency, category: "Intereses", accountId: acc.id, auto: true,
+            });
+            gainCredited = true;
+          }
         }
       } else {
-        txs.push({
-          id: uid(), date: postDate,
-          description: `Intereses ${acc.name} · ${t.label} (${(t.rate * 100).toFixed(2)} % TAE)`,
-          amount: gain, currency: acc.currency, category: "Intereses", accountId: acc.id, auto: true,
-        });
+        const id = `int-${acc.id}-t${t.n}-${postDate}-k1`;
+        if (!existingIds.has(id)) {
+          txs.push({
+            id, date: postDate,
+            description: `Intereses ${acc.name} · ${t.label} (${(t.rate * 100).toFixed(2)} % TAE)`,
+            amount: gain, currency: acc.currency, category: "Intereses", accountId: acc.id, auto: true,
+          });
+          gainCredited = true;
+        }
       }
-      balance = r2(balance + gain);
-      out[`gainAccrued${t.n}`] = r2(t.gainAcc + gain);
+      if (gainCredited) {
+        balance = r2(balance + gain);
+        out[`gainAccrued${t.n}`] = r2(t.gainAcc + gain);
+      }
     }
     if (isrRate > 0 && tax > 0.005) {
+      let taxCredited = false;
       if (nDeposits > 1 && isWeekendRelated) {
         const partTax = r2(tax / nDeposits);
         for (let k = 1; k <= nDeposits; k++) {
-          txs.push({
-            id: uid(), date: postDate,
-            description: `Impuesto intereses ${acc.name} · ${t.label} (${(isrRate * 100).toFixed(4)} % anual) (depósito ${k}/${nDeposits})`,
-            amount: -partTax, currency: acc.currency, category: "Impuestos", accountId: acc.id, auto: true,
-          });
+          const id = `isr-${acc.id}-t${t.n}-${postDate}-k${k}`;
+          if (!existingIds.has(id)) {
+            txs.push({
+              id, date: postDate,
+              description: `Impuesto intereses ${acc.name} · ${t.label} (${(isrRate * 100).toFixed(4)} % anual) (depósito ${k}/${nDeposits})`,
+              amount: -partTax, currency: acc.currency, category: "Impuestos", accountId: acc.id, auto: true,
+            });
+            taxCredited = true;
+          }
         }
       } else {
-        txs.push({
-          id: uid(), date: postDate,
-          description: `Impuesto intereses ${acc.name} · ${t.label} (${(isrRate * 100).toFixed(4)} % anual)`,
-          amount: -tax, currency: acc.currency, category: "Impuestos", accountId: acc.id, auto: true,
-        });
+        const id = `isr-${acc.id}-t${t.n}-${postDate}-k1`;
+        if (!existingIds.has(id)) {
+          txs.push({
+            id, date: postDate,
+            description: `Impuesto intereses ${acc.name} · ${t.label} (${(isrRate * 100).toFixed(4)} % anual)`,
+            amount: -tax, currency: acc.currency, category: "Impuestos", accountId: acc.id, auto: true,
+          });
+          taxCredited = true;
+        }
       }
-      balance = r2(balance - tax);
+      if (taxCredited) {
+        balance = r2(balance - tax);
+      }
     }
     out[`lastAccrual${t.n}`] = newLast;
   }
 
-  return { account: { ...acc, balance, lastAccrual: now, ...out } as Account, txs };
+  return { account: { ...acc, balance, lastAccrual: now, ...out, ...(txs.length > 0 ? { _updatedAt: Date.now() } : {}) } as Account, txs };
 }
 
 export const isCappedAccount = (a: Account): boolean =>
@@ -134,15 +163,17 @@ export const isCappedAccount = (a: Account): boolean =>
 
 export function accrueInterest(state: AppState): AppState {
   const now = todayISO();
+  const existingIds = new Set(state.transactions.map(t => t.id));
 
   // No skip global de fines de semana: cada cuenta decide el día de depósito vía weekendDepositDay
   // y si se pospone (si pref 'monday' en sábado, se emite el lunes).
   const accounts: Account[] = [];
   const newTx: Transaction[] = [];
+  const anomalies: InterestAnomaly[] = [];
 
   for (const acc of state.accounts) {
     if (isCappedAccount(acc)) {
-      const { account, txs } = accrueCapped(acc, now);
+      const { account, txs } = accrueCapped(acc, now, existingIds);
       accounts.push(account);
       newTx.push(...txs);
       continue;
@@ -178,53 +209,91 @@ export function accrueInterest(state: AppState): AppState {
         accounts.push(acc);
         continue;
       }
+      // Sanity guard: quarantine if gain exceeds mathematical cap (2× simple interest for the period)
+      const cap = interestSanityCap(acc, days);
+      if (gained > cap) {
+        anomalies.push({ accountId: acc.id, accountName: acc.name, date: postDate, gain: r2(gained), cap: r2(cap), days });
+        accounts.push({ ...acc, lastAccrual: now });
+        continue;
+      }
       const nDeposits = (acc.weekendDeposits || 1) as 1 | 2 | 3;
       const dowNow = new Date(now + "T12:00:00").getDay();
       const isWeekendRelated = (postDate !== now) || (dowNow === 6 || dowNow === 0);
-      let finalBalance = r2(balance);
       const isrRate = acc.isrRate || 0;
       const taxDivisor = acc.accrual === "daily" ? 365 : 12;
       const tax = r2(isrRate > 0 ? startBalance * (isrRate / taxDivisor) * periods : 0);
+      let anyInterestEmitted = false;
+      let anyTaxEmitted = false;
       if (nDeposits > 1 && isWeekendRelated) {
         const partGain = r2(gained / nDeposits);
         for (let k = 1; k <= nDeposits; k++) {
-          newTx.push({
-            id: uid(), date: postDate,
-            description: `Intereses ${acc.name} (${(acc.rate * 100).toFixed(2)} % TAE) (depósito ${k}/${nDeposits})`,
-            amount: partGain, currency: acc.currency, category: "Intereses", accountId: acc.id, auto: true,
-          });
+          const id = `int-${acc.id}-t1-${postDate}-k${k}`;
+          if (!existingIds.has(id)) {
+            newTx.push({
+              id, date: postDate,
+              description: `Intereses ${acc.name} (${(acc.rate * 100).toFixed(2)} % TAE) (depósito ${k}/${nDeposits})`,
+              amount: partGain, currency: acc.currency, category: "Intereses", accountId: acc.id, auto: true,
+            });
+            anyInterestEmitted = true;
+          }
         }
         if (isrRate > 0 && tax > 0.005) {
           const partTax = r2(tax / nDeposits);
           for (let k = 1; k <= nDeposits; k++) {
-            newTx.push({
-              id: uid(), date: postDate,
-              description: `Impuesto intereses ${acc.name} (${(isrRate * 100).toFixed(4)} % anual) (depósito ${k}/${nDeposits})`,
-              amount: -partTax, currency: acc.currency, category: "Impuestos", accountId: acc.id, auto: true,
-            });
+            const id = `isr-${acc.id}-t1-${postDate}-k${k}`;
+            if (!existingIds.has(id)) {
+              newTx.push({
+                id, date: postDate,
+                description: `Impuesto intereses ${acc.name} (${(isrRate * 100).toFixed(4)} % anual) (depósito ${k}/${nDeposits})`,
+                amount: -partTax, currency: acc.currency, category: "Impuestos", accountId: acc.id, auto: true,
+              });
+              anyTaxEmitted = true;
+            }
           }
         }
       } else {
-        newTx.push({
-          id: uid(), date: postDate,
-          description: `Intereses ${acc.name} (${(acc.rate * 100).toFixed(2)} % TAE)`,
-          amount: r2(gained), currency: acc.currency, category: "Intereses", accountId: acc.id, auto: true,
-        });
-        if (isrRate > 0 && tax > 0.005) {
+        const id = `int-${acc.id}-t1-${postDate}-k1`;
+        if (!existingIds.has(id)) {
           newTx.push({
-            id: uid(), date: postDate,
-            description: `Impuesto intereses ${acc.name} (${(isrRate * 100).toFixed(4)} % anual)`,
-            amount: -tax, currency: acc.currency, category: "Impuestos", accountId: acc.id, auto: true,
+            id, date: postDate,
+            description: `Intereses ${acc.name} (${(acc.rate * 100).toFixed(2)} % TAE)`,
+            amount: r2(gained), currency: acc.currency, category: "Intereses", accountId: acc.id, auto: true,
           });
+          anyInterestEmitted = true;
+        }
+        if (isrRate > 0 && tax > 0.005) {
+          const isrId = `isr-${acc.id}-t1-${postDate}-k1`;
+          if (!existingIds.has(isrId)) {
+            newTx.push({
+              id: isrId, date: postDate,
+              description: `Impuesto intereses ${acc.name} (${(isrRate * 100).toFixed(4)} % anual)`,
+              amount: -tax, currency: acc.currency, category: "Impuestos", accountId: acc.id, auto: true,
+            });
+            anyTaxEmitted = true;
+          }
         }
       }
-      if (tax > 0.005) finalBalance = r2(finalBalance - tax);
-      accounts.push({ ...acc, balance: finalBalance, lastAccrual: now });
+      if (anyInterestEmitted || anyTaxEmitted) {
+        let finalBalance = r2(balance);
+        if (anyTaxEmitted && tax > 0.005) finalBalance = r2(finalBalance - tax);
+        accounts.push({ ...acc, balance: finalBalance, lastAccrual: now, _updatedAt: Date.now() });
+      } else {
+        // IDs already existed — advance lastAccrual but keep balance
+        accounts.push({ ...acc, lastAccrual: now });
+      }
     } else {
       accounts.push(acc);
     }
   }
 
-  if (!newTx.length) return state;
-  return { ...state, accounts, transactions: [...newTx, ...state.transactions] };
+  if (!newTx.length && !anomalies.length) return state;
+  const pendingInterestAnomalies = anomalies.length
+    ? [...(state.pendingInterestAnomalies || []).filter(a => !anomalies.some(n => n.accountId === a.accountId && n.date === a.date)), ...anomalies]
+    : (state.pendingInterestAnomalies || []);
+  return {
+    ...state,
+    accounts,
+    transactions: newTx.length ? [...newTx, ...state.transactions] : state.transactions,
+    pendingInterestAnomalies,
+  };
 }

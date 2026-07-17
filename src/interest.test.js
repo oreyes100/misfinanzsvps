@@ -266,6 +266,91 @@ describe("addDaysISO", () => {
   });
 });
 
+// ---------- Idempotencia y determinismo (Move 3) ----------
+
+describe("accrueInterest · idempotencia y determinismo", () => {
+  const mockDate = (isoDate) => {
+    const realDate = Date;
+    global.Date = class extends realDate {
+      constructor(...args) { if (args.length === 0) super(isoDate + "T12:00:00"); else super(...args); }
+      static now() { return new realDate(isoDate + "T12:00:00").getTime(); }
+    };
+    return realDate;
+  };
+
+  it("segunda llamada en mismo día no genera transacciones nuevas", () => {
+    const realDate = mockDate("2026-07-20");
+    try {
+      const acc = {
+        id: "acc-idem", name: "Ahorro", type: "savings", currency: "EUR",
+        balance: 10000, rate: 0.0365, accrual: "daily",
+        lastAccrual: "2026-07-15",
+      };
+      const state1 = accrueInterest(stateWith(acc));
+      expect(state1.transactions.length).toBeGreaterThan(0);
+      const count1 = state1.transactions.length;
+      const state2 = accrueInterest(state1);
+      expect(state2.transactions.length).toBe(count1);
+    } finally {
+      global.Date = realDate;
+    }
+  });
+
+  it("IDs de transacciones de interés son deterministas", () => {
+    const realDate = mockDate("2026-07-20");
+    try {
+      const acc = {
+        id: "acc-det", name: "Ahorro", type: "savings", currency: "EUR",
+        balance: 10000, rate: 0.0365, accrual: "daily",
+        lastAccrual: "2026-07-15",
+      };
+      const state = stateWith(acc);
+      const result1 = accrueInterest(state);
+      const result2 = accrueInterest(state);
+      const ids1 = result1.transactions.map(t => t.id).sort();
+      const ids2 = result2.transactions.map(t => t.id).sort();
+      expect(ids1).toEqual(ids2);
+    } finally {
+      global.Date = realDate;
+    }
+  });
+
+  it("balance no se duplica en segunda llamada con IDs ya existentes", () => {
+    const realDate = mockDate("2026-07-20");
+    try {
+      const acc = {
+        id: "acc-bal", name: "Ahorro", type: "savings", currency: "EUR",
+        balance: 10000, rate: 0.0365, accrual: "daily",
+        lastAccrual: "2026-07-15",
+      };
+      const state1 = accrueInterest(stateWith(acc));
+      const balance1 = state1.accounts[0].balance;
+      const state2 = accrueInterest(state1);
+      const balance2 = state2.accounts[0].balance;
+      expect(balance2).toBe(balance1);
+    } finally {
+      global.Date = realDate;
+    }
+  });
+
+  it("IDs siguen formato determinista int-/isr-", () => {
+    const realDate = mockDate("2026-07-20");
+    try {
+      const acc = {
+        id: "acc-fmt", name: "Ahorro", type: "savings", currency: "EUR",
+        balance: 10000, rate: 0.0365, accrual: "daily",
+        lastAccrual: "2026-07-15",
+      };
+      const result = accrueInterest(stateWith(acc));
+      const intTx = result.transactions.find(t => t.category === "Intereses");
+      expect(intTx).toBeDefined();
+      expect(intTx.id).toMatch(/^int-acc-fmt-t1-\d{4}-\d{2}-\d{2}-k1$/);
+    } finally {
+      global.Date = realDate;
+    }
+  });
+});
+
 // ---------- Múltiples cuentas ----------
 
 describe("accrueInterest · múltiples cuentas", () => {
