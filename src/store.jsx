@@ -460,20 +460,12 @@ function innerReducer(state, action) {
         else { toDelete[tx.id] = Date.now(); }
       }
       if (Object.keys(toDelete).length === 0) return state;
-      const deletedAmountByAccount = {};
-      for (const tx of state.transactions) {
-        if (toDelete[tx.id]) {
-          deletedAmountByAccount[tx.accountId] = (deletedAmountByAccount[tx.accountId] || 0) + tx.amount;
-        }
-      }
-      const accounts = state.accounts.map(a => {
-        const delta = deletedAmountByAccount[a.id];
-        if (!delta) return a;
-        return { ...a, balance: Math.round((a.balance - delta) * 100) / 100, _updatedAt: Date.now() };
-      });
+      // NOTA: No ajustar saldos — los duplicados nunca acreditaron el balance
+      // (el merge conservaba la versión vieja del saldo; solo la primera tx acreditó).
+      // Restar el monto de los duplicados corrompería las cuentas.
       const mergedDeleted = { ...(state.deletedTransactions || {}), ...toDelete };
       const transactions = state.transactions.filter(t => !toDelete[t.id]);
-      return { ...state, accounts, transactions, deletedTransactions: mergedDeleted };
+      return { ...state, transactions, deletedTransactions: mergedDeleted };
     }
 
     default:

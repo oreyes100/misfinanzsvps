@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { accrueInterest, accrueCapped, isCappedAccount, addDaysISO } from "./interest";
+import { accrueInterest, accrueCapped, isCappedAccount, addDaysISO, payoutDatesBetween } from "./interest";
 
 // Helper: estado mínimo con una sola cuenta
 function stateWith(acc) {
@@ -348,6 +348,149 @@ describe("accrueInterest · idempotencia y determinismo", () => {
     } finally {
       global.Date = realDate;
     }
+  });
+});
+
+// ---------- payoutDatesBetween ----------
+
+describe("payoutDatesBetween · mensual con payoutDayOfMonth", () => {
+  it("devuelve [] cuando hoy es antes del día de pago del primer mes", () => {
+    // lastAccrual=2026-06-30, ahora=2026-07-15, payoutDayOfMonth=31 (último día)
+    // El próximo pago sería 2026-07-31, que es > 2026-07-15 → no hay fechas.
+    const acc = { id: "a", accrual: "monthly", payoutDayOfMonth: 31 };
+    expect(payoutDatesBetween("2026-06-30", "2026-07-15", acc)).toEqual([]);
+  });
+
+  it("devuelve [2026-07-31] cuando hoy es el último día de julio", () => {
+    // lastAccrual=2026-06-30, ahora=2026-07-31, pago el 31
+    const acc = { id: "a", accrual: "monthly", payoutDayOfMonth: 31 };
+    const dates = payoutDatesBetween("2026-06-30", "2026-07-31", acc);
+    expect(dates).toEqual(["2026-07-31"]);
+  });
+
+  it("catch-up: 2 pagos si lastAccrual lleva 2 meses de retraso", () => {
+    // lastAccrual=2026-05-31, ahora=2026-07-31, pago el 31 → debe haber 06-30 y 07-31
+    const acc = { id: "a", accrual: "monthly", payoutDayOfMonth: 31 };
+    const dates = payoutDatesBetween("2026-05-31", "2026-07-31", acc);
+    expect(dates).toEqual(["2026-06-30", "2026-07-31"]);
+  });
+
+  it("día de pago > días del mes → usa último día del mes (febrero)", () => {
+    // payoutDayOfMonth=31, febrero 2026 solo tiene 28 días → 2026-02-28
+    const acc = { id: "a", accrual: "monthly", payoutDayOfMonth: 31 };
+    const dates = payoutDatesBetween("2026-01-31", "2026-02-28", acc);
+    expect(dates).toEqual(["2026-02-28"]);
+  });
+
+  it("no incluye lastAccrual mismo día (intervalo abierto en izquierda)", () => {
+    // Si lastAccrual ya es el día de pago exacto, no debe re-emitir
+    const acc = { id: "a", accrual: "monthly", payoutDayOfMonth: 31 };
+    const dates = payoutDatesBetween("2026-07-31", "2026-07-31", acc);
+    expect(dates).toEqual([]);
+  });
+});
+
+describe("payoutDatesBetween · semanal con payoutWeekday", () => {
+  it("devuelve viernes (5) cuando hoy es viernes", () => {
+    // 2026-07-24 es viernes; lastAccrual=2026-07-20 (lunes)
+    const acc = { id: "a", accrual: "weekly", payoutWeekday: 5 };
+    const dates = payoutDatesBetween("2026-07-20", "2026-07-24", acc);
+    expect(dates).toEqual(["2026-07-24"]);
+  });
+
+  it("devuelve [] cuando hoy es jueves (antes del viernes)", () => {
+    // 2026-07-23 es jueves
+    const acc = { id: "a", accrual: "weekly", payoutWeekday: 5 };
+    const dates = payoutDatesBetween("2026-07-20", "2026-07-23", acc);
+    expect(dates).toEqual([]);
+  });
+
+  it("catch-up: 2 viernes si hay 2 semanas pendientes", () => {
+    const acc = { id: "a", accrual: "weekly", payoutWeekday: 5 };
+    // 2026-07-24 y 2026-07-31 son ambos viernes
+    const dates = payoutDatesBetween("2026-07-20", "2026-07-31", acc);
+    expect(dates).toEqual(["2026-07-24", "2026-07-31"]);
+  });
+});
+
+describe("accrueInterest · mensual con payoutDayOfMonth (seguro anti-Apple)", () => {
+  const mockDate = (isoDate) => {
+    const realDate = Date;
+    global.Date = class extends realDate {
+      constructor(...args) { if (args.length === 0) super(isoDate + "T12:00:00"); else super(...args); }
+      static now() { return new realDate(isoDate + "T12:00:00").getTime(); }
+    };
+    return realDate;
+  };
+
+  it("no emite tx si no ha llegado el día de pago", () => {
+    const realDate = mockDate("2026-07-15");
+    try {
+      const acc = {
+        id: "apple-test", name: "Apple", type: "investment", currency: "USD",
+        balance: 42000, rate: 0.034, accrual: "monthly", payoutDayOfMonth: 31,
+        lastAccrual: "2026-06-30",
+      };
+      const result = accrueInterest(stateWith(acc));
+      expect(result.transactions.length).toBe(0);
+      // lastAccrual debe quedar igual (sin avanzar hasta que llegue el día)
+      expect(result.accounts[0].lastAccrual).toBe("2026-06-30");
+    } finally { global.Date = realDate; }
+  });
+
+  it("emite exactamente 1 tx el día de pago (2026-07-31)", () => {
+    const realDate = mockDate("2026-07-31");
+    try {
+      const acc = {
+        id: "apple-test", name: "Apple", type: "investment", currency: "USD",
+        balance: 42000, rate: 0.034, accrual: "monthly", payoutDayOfMonth: 31,
+        lastAccrual: "2026-06-30",
+      };
+      const result = accrueInterest(stateWith(acc));
+      const intTxs = result.transactions.filter(t => t.category === "Intereses");
+      expect(intTxs.length).toBe(1);
+      expect(intTxs[0].id).toBe("int-apple-test-t1-2026-07-31-k1");
+      expect(intTxs[0].date).toBe("2026-07-31");
+      // monto ≈ 42000 × 0.034/12 = 119.00
+      expect(intTxs[0].amount).toBeGreaterThan(110);
+      expect(intTxs[0].amount).toBeLessThan(130);
+    } finally { global.Date = realDate; }
+  });
+
+  it("catch-up idempotente: 2 meses → 2 tx, segunda ejecución no agrega más", () => {
+    const realDate = mockDate("2026-07-31");
+    try {
+      const acc = {
+        id: "apple-catch", name: "Apple", type: "investment", currency: "USD",
+        balance: 42000, rate: 0.034, accrual: "monthly", payoutDayOfMonth: 31,
+        lastAccrual: "2026-05-31",
+      };
+      const state1 = accrueInterest(stateWith(acc));
+      const intTxs1 = state1.transactions.filter(t => t.category === "Intereses");
+      expect(intTxs1.length).toBe(2); // 2026-06-30 y 2026-07-31
+      expect(intTxs1.map(t => t.date).sort()).toEqual(["2026-06-30", "2026-07-31"]);
+      // Segunda ejecución: 0 tx nuevas (idempotente)
+      const state2 = accrueInterest(state1);
+      expect(state2.transactions.length).toBe(state1.transactions.length);
+    } finally { global.Date = realDate; }
+  });
+
+  it("regresión daily weekendDepositDay intacto (byte-idéntico)", () => {
+    // Verifica que la rama daily no fue tocada
+    const realDate = mockDate("2026-07-20");
+    try {
+      const acc = {
+        id: "acc-regr", name: "Ahorro", type: "savings", currency: "EUR",
+        balance: 10000, rate: 0.0365, accrual: "daily",
+        lastAccrual: "2026-07-15",
+      };
+      const result = accrueInterest(stateWith(acc));
+      expect(result.transactions.length).toBeGreaterThan(0);
+      const tx = result.transactions[0];
+      expect(tx.id).toMatch(/^int-acc-regr-t1-\d{4}-\d{2}-\d{2}-k1$/);
+      expect(tx.category).toBe("Intereses");
+      expect(tx.auto).toBe(true);
+    } finally { global.Date = realDate; }
   });
 });
 

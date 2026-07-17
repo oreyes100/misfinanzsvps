@@ -23,6 +23,54 @@ function getDepositDate(iso: string, acc?: Account): string {
   return iso;
 }
 
+/**
+ * Lista de fechas de pago en el intervalo (last, now] para cuentas con día
+ * de depósito explícito (mensual con payoutDayOfMonth, semanal con payoutWeekday).
+ * Devuelve [] si no hay fechas en el intervalo — en ese caso no se emite nada.
+ */
+export function payoutDatesBetween(last: string, now: string, acc: Account): string[] {
+  const dates: string[] = [];
+  const accrual = acc.accrual;
+
+  if (accrual === "monthly" && acc.payoutDayOfMonth != null) {
+    const d = acc.payoutDayOfMonth;
+    // Iterar mes a mes desde el mes de `last` hasta el mes de `now`
+    const start = new Date(last + "T12:00:00");
+    const end = new Date(now + "T12:00:00");
+    // Primer candidato: día de pago en el mes de start
+    let y = start.getFullYear();
+    let m = start.getMonth(); // 0-indexed
+    while (true) {
+      // Calcular el día real para este mes (d=31 o > último día del mes → último día)
+      const lastDayOfMonth = new Date(y, m + 1, 0).getDate();
+      const actualDay = d === 31 || d > lastDayOfMonth ? lastDayOfMonth : d;
+      const candidate = new Date(y, m, actualDay, 12, 0, 0);
+      if (candidate > end) break;
+      const iso = candidate.toISOString().slice(0, 10);
+      if (iso > last && iso <= now) dates.push(iso);
+      m++;
+      if (m > 11) { m = 0; y++; }
+      // Safety: no más de 120 meses (10 años)
+      if (dates.length > 120 || (y > end.getFullYear() + 1)) break;
+    }
+  } else if (accrual === "weekly" && acc.payoutWeekday != null) {
+    const targetDow = acc.payoutWeekday; // 0=Dom…6=Sáb
+    const start = new Date(last + "T12:00:00");
+    const end = new Date(now + "T12:00:00");
+    // Primer candidato: primer día después de start con el día correcto
+    let cur = new Date(start.getTime() + DAY_MS); // strictly after last
+    while (cur <= end) {
+      if (cur.getDay() === targetDow) {
+        dates.push(cur.toISOString().slice(0, 10));
+      }
+      cur = new Date(cur.getTime() + DAY_MS);
+      if (dates.length > 520) break; // ~10 años de semanas
+    }
+  }
+
+  return dates;
+}
+
 interface AccrueTier {
   n: 1 | 2;
   rate: number;
@@ -183,16 +231,81 @@ export function accrueInterest(state: AppState): AppState {
     const days = daysBetween(acc.lastAccrual, now);
     if (days <= 0) { accounts.push(acc); continue; }
 
+    // ── Ruta con día de depósito explícito (mensual payoutDayOfMonth, semanal payoutWeekday) ──
+    const hasExplicitPayout =
+      (acc.accrual === "monthly" && acc.payoutDayOfMonth != null) ||
+      (acc.accrual === "weekly"  && acc.payoutWeekday != null);
+
+    if (hasExplicitPayout) {
+      const payDates = payoutDatesBetween(acc.lastAccrual, now, acc);
+      if (payDates.length === 0) { accounts.push(acc); continue; } // aún no llega el día
+
+      const isrRate = acc.isrRate || 0;
+      const periodicRate = acc.accrual === "weekly" ? acc.rate / 52 : acc.rate / 12;
+      const periodDays   = acc.accrual === "weekly" ? 7 : 30;
+      let newBalance = acc.balance;
+      let lastEmitted = acc.lastAccrual;
+      let anyEmitted = false;
+
+      for (const payDate of payDates) {
+        const gain = r2(acc.balance * periodicRate);
+        const cap  = interestSanityCap({ ...acc, lastAccrual: lastEmitted }, periodDays);
+        if (gain > cap) {
+          anomalies.push({ accountId: acc.id, accountName: acc.name, date: payDate, gain, cap, days: periodDays });
+          lastEmitted = payDate;
+          continue;
+        }
+        const intId = `int-${acc.id}-t1-${payDate}-k1`;
+        if (!existingIds.has(intId) && gain > 0.005) {
+          newTx.push({ id: intId, date: payDate,
+            description: `Intereses ${acc.name} (${(acc.rate * 100).toFixed(2)} % TAE)`,
+            amount: gain, currency: acc.currency, category: "Intereses", accountId: acc.id, auto: true });
+          anyEmitted = true;
+          newBalance = r2(newBalance + gain);
+        }
+        if (isrRate > 0) {
+          const tax = r2(acc.balance * (isrRate / (acc.accrual === "weekly" ? 52 : 12)));
+          if (tax > 0.005) {
+            const isrId = `isr-${acc.id}-t1-${payDate}-k1`;
+            if (!existingIds.has(isrId)) {
+              newTx.push({ id: isrId, date: payDate,
+                description: `Impuesto intereses ${acc.name} (${(isrRate * 100).toFixed(4)} % anual)`,
+                amount: -tax, currency: acc.currency, category: "Impuestos", accountId: acc.id, auto: true });
+              anyEmitted = true;
+              newBalance = r2(newBalance - tax);
+            }
+          }
+        }
+        lastEmitted = payDate;
+      }
+
+      if (anyEmitted) {
+        accounts.push({ ...acc, balance: newBalance, lastAccrual: lastEmitted, _updatedAt: Date.now() });
+      } else {
+        accounts.push({ ...acc, lastAccrual: lastEmitted });
+      }
+      continue;
+    }
+
+    // ── Ruta sin día de depósito explícito (comportamiento histórico) ──
     const startBalance = acc.balance;
     let balance = acc.balance;
     let gained = 0;
     let periods = 0;
 
     if (acc.accrual === "daily") {
+      // ⚠️ ZONA PROHIBIDA — no modificar esta rama (weekendDepositDay intacto)
       periods = days;
       const grown = balance * Math.pow(1 + acc.rate / 365, days);
       gained = grown - balance;
       balance = grown;
+    } else if (acc.accrual === "weekly") {
+      periods = Math.floor(days / 7);
+      if (periods > 0) {
+        const grown = balance * Math.pow(1 + acc.rate / 52, periods);
+        gained = grown - balance;
+        balance = grown;
+      }
     } else if (acc.accrual === "monthly") {
       periods = Math.floor(days / 30);
       if (periods > 0) {
@@ -220,7 +333,7 @@ export function accrueInterest(state: AppState): AppState {
       const dowNow = new Date(now + "T12:00:00").getDay();
       const isWeekendRelated = (postDate !== now) || (dowNow === 6 || dowNow === 0);
       const isrRate = acc.isrRate || 0;
-      const taxDivisor = acc.accrual === "daily" ? 365 : 12;
+      const taxDivisor = acc.accrual === "daily" ? 365 : acc.accrual === "weekly" ? 52 : 12;
       const tax = r2(isrRate > 0 ? startBalance * (isrRate / taxDivisor) * periods : 0);
       let anyInterestEmitted = false;
       let anyTaxEmitted = false;

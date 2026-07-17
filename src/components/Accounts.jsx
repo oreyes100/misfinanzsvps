@@ -20,6 +20,8 @@ function AccountModal({ account, onClose }) {
           isrRate: account.isrRate || 0,
           weekendDepositDay: account.weekendDepositDay || 'monday',
           weekendDeposits: account.weekendDeposits || 1,
+          payoutDayOfMonth: account.payoutDayOfMonth ?? 31,
+          payoutWeekday: account.payoutWeekday ?? 1,
         }
       : {
           name: "", type: "checking", currency: state.settings.baseCurrency, balance: "", rate: 0, accrual: "none",
@@ -29,6 +31,8 @@ function AccountModal({ account, onClose }) {
           isrRate: 0,
           weekendDepositDay: 'monday',
           weekendDeposits: 1,
+          payoutDayOfMonth: 31,
+          payoutWeekday: 1,
         }
   );
   const [error, setError] = useState("");
@@ -74,6 +78,18 @@ function AccountModal({ account, onClose }) {
     if (hasInterest || isCappable) {
       payload.weekendDepositDay = form.weekendDepositDay || 'monday';
       payload.weekendDeposits = parseInt(form.weekendDeposits, 10) || 1;
+      const accrualForPayout = useTiers ? null : payload.accrual;
+      if (accrualForPayout === "monthly") {
+        payload.payoutDayOfMonth = parseInt(form.payoutDayOfMonth, 10) || 31;
+        payload.payoutWeekday = undefined;
+      } else if (accrualForPayout === "weekly") {
+        payload.payoutWeekday = parseInt(form.payoutWeekday, 10);
+        payload.payoutDayOfMonth = undefined;
+      } else {
+        // daily o none: limpiar campos de payout explícito
+        payload.payoutDayOfMonth = undefined;
+        payload.payoutWeekday = undefined;
+      }
     }
     if (form.type === "credit") {
       payload.cutDay = Math.min(31, Math.max(1, parseInt(form.cutDay, 10) || 0)) || null;
@@ -227,10 +243,34 @@ function AccountModal({ account, onClose }) {
                 <select className={inputCls} value={form.accrual} onChange={(e) => set("accrual", e.target.value)}>
                   <option value="none">Sin abono</option>
                   <option value="daily">Diario</option>
+                  <option value="weekly">Semanal</option>
                   <option value="monthly">Mensual</option>
                 </select>
               </Field>
             </div>
+            {form.accrual === "monthly" && (
+              <Field label="¿Qué día del mes deposita el banco?" hint="El sistema solo registrará intereses ese día. Ej: 31 = último día del mes.">
+                <select className={inputCls} value={form.payoutDayOfMonth} onChange={(e) => set("payoutDayOfMonth", parseInt(e.target.value, 10))}>
+                  {Array.from({ length: 28 }, (_, i) => i + 1).map(d => (
+                    <option key={d} value={d}>Día {d}</option>
+                  ))}
+                  <option value={31}>Último día del mes</option>
+                </select>
+              </Field>
+            )}
+            {form.accrual === "weekly" && (
+              <Field label="¿Qué día de la semana deposita el banco?">
+                <select className={inputCls} value={form.payoutWeekday} onChange={(e) => set("payoutWeekday", parseInt(e.target.value, 10))}>
+                  <option value={1}>Lunes</option>
+                  <option value={2}>Martes</option>
+                  <option value={3}>Miércoles</option>
+                  <option value={4}>Jueves</option>
+                  <option value={5}>Viernes</option>
+                  <option value={6}>Sábado</option>
+                  <option value={0}>Domingo</option>
+                </select>
+              </Field>
+            )}
             <p className="mt-2 text-xs text-ink-dim">
               {form.rate > 0 && form.accrual !== "none"
                 ? <>Las ganancias se registrarán solas en Movimientos. Estimado: <strong className="text-gain">≈ {fmtMoney(monthlyEst, form.currency)}/mes</strong>.</>
@@ -243,7 +283,7 @@ function AccountModal({ account, onClose }) {
                   onChange={(e) => set("isrRate", (parseFloat(e.target.value) || 0) / 100)} />
               </Field>
             )}
-            {(hasInterest || isCappable) && (
+            {(hasInterest || isCappable) && form.accrual === "daily" && (
               <div className="mt-2 grid grid-cols-2 gap-2">
                 <Field label="Día depósito int. fin de semana" hint="Algunos bancos abonan sábado, otros lunes.">
                   <select className={inputCls} value={form.weekendDepositDay} onChange={(e) => set("weekendDepositDay", e.target.value)}>

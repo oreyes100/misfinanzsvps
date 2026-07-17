@@ -443,22 +443,12 @@ function innerReducer(state: AppState, action: Action): AppState {
 
       if (Object.keys(toDelete).length === 0) return state;
 
-      // Recalculate account balances: subtract amounts of deleted txs
-      const deletedAmountByAccount: Record<string, number> = {};
-      for (const tx of state.transactions) {
-        if (toDelete[tx.id]) {
-          deletedAmountByAccount[tx.accountId] = (deletedAmountByAccount[tx.accountId] || 0) + tx.amount;
-        }
-      }
-      const accounts = state.accounts.map(a => {
-        const delta = deletedAmountByAccount[a.id];
-        if (!delta) return a;
-        return { ...a, balance: Math.round((a.balance - delta) * 100) / 100, _updatedAt: Date.now() };
-      });
-
+      // No adjusting balances — duplicates never credited the balance
+      // (merge kept the old account version; only the first tx credited it).
+      // Subtracting duplicate amounts would corrupt all account balances.
       const mergedDeleted = { ...(state.deletedTransactions || {}), ...toDelete };
-      const transactions = state.transactions.filter(t => !toDelete[t.id]);
-      return { ...state, accounts, transactions, deletedTransactions: mergedDeleted };
+      const transactions = state.transactions.filter((t: Transaction) => !toDelete[t.id]);
+      return { ...state, transactions, deletedTransactions: mergedDeleted };
     }
 
     default:

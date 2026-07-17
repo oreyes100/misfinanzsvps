@@ -23,7 +23,7 @@ export type AccountType =
   | "credit"
   | "auto_loan";
 
-export type AccrualFrequency = "none" | "daily" | "monthly";
+export type AccrualFrequency = "none" | "daily" | "weekly" | "monthly";
 
 export interface Account {
   id: string;
@@ -53,6 +53,9 @@ export interface Account {
   // Reglas de depósito de intereses de fin de semana (configurable por banco/cuenta)
   weekendDepositDay?: 'saturday' | 'monday';
   weekendDeposits?: 1 | 2 | 3; // 1 = junto, 2 o 3 = depósitos separados el mismo día
+  // Día de pago explícito para devengo mensual/semanal (no aplica a daily)
+  payoutDayOfMonth?: number; // 1–28 = día exacto; 31 = último día del mes
+  payoutWeekday?: number;    // 0=domingo … 6=sábado
   // Tarjetas de crédito
   payDay?: number;
   lastPaidCycle?: string;
