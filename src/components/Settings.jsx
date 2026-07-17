@@ -68,12 +68,19 @@ function CloudSync() {
             <code className="flex-1 truncate rounded-xl border border-white/12 bg-white/6 px-3 py-2 text-xs">{sync.id}</code>
             <Btn variant="ghost" onClick={copy} className="shrink-0 !py-2 text-xs">{copied ? "✓ Copiado" : "Copiar"}</Btn>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <Btn variant="danger" onClick={() => { if (confirm("¿Desactivar la sincronización en este dispositivo? Los datos en la nube no se borran.")) sync.disable(); }} className="text-xs">
               Desactivar
             </Btn>
             <Btn onClick={() => sync.forcePush && sync.forcePush()} className="text-xs">
-              Subir ahora
+              ⬆️ Subir ahora
+            </Btn>
+            <Btn variant="ghost" onClick={() => {
+              if (confirm("¿Reemplazar datos locales con la nube? Se eliminarán duplicados. Datos locales no sincronizados se perderán.")) {
+                sync.forcePull && sync.forcePull();
+              }
+            }} className="text-xs">
+              ⬇️ Bajar desde nube
             </Btn>
             {sync.status === 'error' && (
               <Btn onClick={() => sync.retry && sync.retry()} className="text-xs">

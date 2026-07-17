@@ -699,6 +699,38 @@ export function StoreProvider({ children }) {
       lastPushedRef.current = null; // forzar incluso si parece igual
       pushNow(syncId).catch(() => setSyncStatus("error"));
     },
+    // Bajar estado cloud y REEMPLAZAR local (hydrate, no merge).
+    // Usa este botón cuando Mac muestra datos viejos/duplicados que el celular ya limpió.
+    // hydrate aplica tombstones pero no hace accrueInterest (evita re-introducir duplicados).
+    forcePull: async () => {
+      if (!syncId) return;
+      setSyncStatus("pulling");
+      pullingRef.current = true;
+      try {
+        const url = `${API_BASE}/api/sync?id=${encodeURIComponent(syncId)}&t=${Date.now()}`;
+        const r = await fetch(url, { cache: "no-store" });
+        if (!r.ok) { setSyncStatus("error"); return; }
+        const data = await r.json();
+        if (data.found && data.state) {
+          dispatch({ type: "hydrate", state: migrate(data.state) });
+          dispatch({ type: "clean_interest_duplicates" });
+          setSyncStatus("synced");
+          // Subir estado ya limpio para que la nube también tenga esta versión
+          setTimeout(() => {
+            cloudReadyRef.current = true;
+            lastPushedRef.current = null;
+            pushNow(syncId).catch(() => {});
+          }, 600);
+        } else {
+          setSyncStatus("synced");
+        }
+      } catch {
+        setSyncStatus("error");
+      } finally {
+        pullingRef.current = false;
+        cloudReadyRef.current = true;
+      }
+    },
     retry: () => setSyncRetry(n => n + 1),
   }), [syncId, syncStatus, pushNow]);
 
