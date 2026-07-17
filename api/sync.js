@@ -1,4 +1,5 @@
 import { get, put } from "@vercel/blob";
+import { mergeStates } from "./_merge.js";
 
 const ID_RE = /^[a-z0-9-]{16,64}$/i;
 const MAX_BYTES = 1_000_000;
@@ -66,7 +67,23 @@ export default async function handler(req, res) {
     if (!body || typeof body.state !== "object" || Array.isArray(body.state)) {
       return res.status(400).json({ error: "Estado inválido." });
     }
-    const payload = JSON.stringify({ state: body.state, updatedAt: Date.now() });
+    // Merge on write: leer estado existente y unir antes de escribir.
+    // Evita que un cliente con estado parcial (APK viejo, tab con datos stale,
+    // flush ciego en pagehide) borre datos que él no tenía. Ventana de carrera
+    // ~100 ms entre GET y PUT — el pull periódico auto-repara pérdidas raras.
+    let finalState = body.state;
+    let mergedFlag = false;
+    try {
+      const existing = await get(key, { access: "private", useCache: false });
+      if (existing) {
+        const prev = JSON.parse(await new Response(existing.stream).text());
+        if (prev && prev.state) {
+          finalState = mergeStates(prev.state, body.state);
+          mergedFlag = true;
+        }
+      }
+    } catch { /* sin blob previo o error de lectura: escribir incoming tal cual */ }
+    const payload = JSON.stringify({ state: finalState, updatedAt: Date.now() });
     if (Buffer.byteLength(payload) > MAX_BYTES) {
       return res.status(413).json({ error: "Estado demasiado grande." });
     }
@@ -77,7 +94,7 @@ export default async function handler(req, res) {
         allowOverwrite: true,
         contentType: "application/json",
       });
-      return res.status(200).json({ ok: true });
+      return res.status(200).json({ ok: true, merged: mergedFlag });
     } catch {
       return res.status(500).json({ error: "Error guardando en el almacenamiento." });
     }

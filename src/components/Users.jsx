@@ -15,6 +15,7 @@ export default function Users({ session }) {
   const [msg, setMsg] = useState("");
   const [pwUser, setPwUser] = useState(null);   // username con el editor de contraseña abierto
   const [pwValue, setPwValue] = useState("");
+  const [pwActor, setPwActor] = useState("");   // contraseña actual del admin que autoriza
   const [pwMsg, setPwMsg] = useState("");
 
   if (session?.role !== "admin") {
@@ -56,6 +57,7 @@ export default function Users({ session }) {
   const openPw = (name) => {
     setPwUser((cur) => (cur === name ? null : name));
     setPwValue("");
+    setPwActor("");
     setPwMsg("");
   };
 
@@ -63,10 +65,16 @@ export default function Users({ session }) {
     e.preventDefault();
     setPwMsg("");
     try {
-      const updated = await changePassword(pwUser, pwValue);
+      // El servidor exige autorización real: usuario cambiando su propia contraseña
+      // (currentPassword) o admin autorizando (actorUsername + actorPassword).
+      const auth = pwUser === session.username
+        ? { currentPassword: pwActor }
+        : { actorUsername: session.username, actorPassword: pwActor };
+      const updated = await changePassword(pwUser, pwValue, auth);
       setUsers(updated);
       setPwMsg(`✓ Contraseña de "${pwUser}" actualizada.`);
       setPwValue("");
+      setPwActor("");
       setPwUser(null);
     } catch (err) {
       setPwMsg(`⚠ ${err.message}`);
@@ -100,19 +108,35 @@ export default function Users({ session }) {
             </div>
 
             {pwUser === u.username && (
-              <form onSubmit={savePw} className="mt-2 flex flex-wrap gap-2 border-t border-white/8 pt-2">
+              <form onSubmit={savePw} className="mt-2 space-y-2 border-t border-white/8 pt-2">
                 <input
-                  className={`${inputCls} min-w-44 flex-1`}
+                  className={`${inputCls} w-full`}
                   type="password"
-                  value={pwValue}
-                  onChange={(e) => setPwValue(e.target.value)}
-                  placeholder={`Nueva contraseña para ${u.username}…`}
-                  autoComplete="new-password"
-                  aria-label={`Nueva contraseña para ${u.username}`}
+                  value={pwActor}
+                  onChange={(e) => setPwActor(e.target.value)}
+                  placeholder={u.username === session.username
+                    ? "Tu contraseña actual…"
+                    : `Tu contraseña de administrador (${session.username})…`}
+                  autoComplete="current-password"
+                  aria-label="Contraseña de autorización"
                   required
+                  minLength={6}
                 />
-                <Btn type="submit" className="shrink-0 !py-2 text-xs">Guardar</Btn>
-                <Btn variant="ghost" type="button" className="shrink-0 !py-2 text-xs" onClick={() => setPwUser(null)}>Cancelar</Btn>
+                <div className="flex flex-wrap gap-2">
+                  <input
+                    className={`${inputCls} min-w-44 flex-1`}
+                    type="password"
+                    value={pwValue}
+                    onChange={(e) => setPwValue(e.target.value)}
+                    placeholder={`Nueva contraseña para ${u.username}…`}
+                    autoComplete="new-password"
+                    aria-label={`Nueva contraseña para ${u.username}`}
+                    required
+                    minLength={6}
+                  />
+                  <Btn type="submit" className="shrink-0 !py-2 text-xs">Guardar</Btn>
+                  <Btn variant="ghost" type="button" className="shrink-0 !py-2 text-xs" onClick={() => setPwUser(null)}>Cancelar</Btn>
+                </div>
               </form>
             )}
           </li>

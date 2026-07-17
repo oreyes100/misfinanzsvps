@@ -253,24 +253,41 @@ export async function createUser({ username, password, sections, accounts }) {
   return users;
 }
 
-export async function changePassword(username, newPassword) {
+/**
+ * Cambia la contraseña en el servidor autorizando con la contraseña REAL
+ * (no con el eco del hash almacenado). Repara el 403 perpetuo que ocurría
+ * cuando el hash local divergía del hash en nube.
+ * auth = { currentPassword } | { actorUsername, actorPassword }
+ */
+export async function changePassword(username, newPassword, auth = {}) {
   if (!newPassword || newPassword.length < 6) throw new Error("La contraseña debe tener al menos 6 caracteres.");
+  const uname = String(username || "").trim();
+  if (!uname) throw new Error("Usuario requerido.");
+  const r = await fetch(`${API_BASE}/api/users`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      action: "change_password",
+      username: uname,
+      newPassword,
+      currentPassword: auth.currentPassword,
+      actorUsername: auth.actorUsername,
+      actorPassword: auth.actorPassword,
+    }),
+  });
+  if (r.status === 403) throw new Error("Credenciales incorrectas para autorizar el cambio.");
+  if (r.status === 404) throw new Error("Usuario no encontrado en la nube.");
+  if (!r.ok) throw new Error("No se pudo cambiar la contraseña (error de servidor).");
+  const data = await r.json();
+  if (!data.ok || !data.user || !data.user.salt) throw new Error("Respuesta de servidor inválida.");
+  // Actualiza caché local con salt del server y hash recalculado desde la
+  // contraseña nueva. Sin esto el usuario tendría que re-loguear.
   const users = loadUsers();
-  const u = users.find((x) => x.username.toLowerCase() === username.toLowerCase().trim());
-  if (!u) throw new Error("Usuario no encontrado.");
-  // Capture old credentials BEFORE updating — server still has old hash and
-  // authorizeWrite(existing_OLD, actor_NEW) would fail with 403 otherwise.
-  const actorForPush = { username: u.username, hash: u.hash };
-  u.salt = generateSalt();
-  u.hash = await hashPassword(newPassword, u.salt);
+  const idx = users.findIndex((x) => x.username.toLowerCase() === uname.toLowerCase());
+  const cached = { ...data.user, hash: await hashPassword(newPassword, data.user.salt) };
+  if (idx >= 0) users[idx] = { ...users[idx], ...cached };
+  else users.push(cached);
   saveUsers(users);
-  try {
-    await fetch(`${API_BASE}/api/users`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ users, actor: actorForPush }),
-    });
-  } catch { /* best-effort; local is already updated */ }
   return users;
 }
 

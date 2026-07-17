@@ -113,6 +113,32 @@ export default async function handler(req, res) {
       }
     }
 
+    // Cambio de contraseña autorizado por CONTRASEÑA real (no por eco del hash
+    // almacenado). Repara el 403 perpetuo que ocurría cuando el hash local
+    // divergía del hash en nube tras un cambio fallido previo.
+    if (body.action === "change_password") {
+      try {
+        const users = await readUsers();
+        const target = users.find((u) => u.username.toLowerCase() === String(body.username || "").toLowerCase().trim());
+        if (!target) return res.status(404).json({ error: "Usuario no encontrado." });
+        if (!body.newPassword || String(body.newPassword).length < 6) return res.status(400).json({ error: "Contraseña muy corta (mínimo 6 caracteres)." });
+        // Autoriza: el propio usuario con su contraseña actual, o un admin con la suya.
+        let authorized = verifyCredential(target, body.currentPassword);
+        if (!authorized && body.actorUsername) {
+          const admin = users.find((u) => u.username.toLowerCase() === String(body.actorUsername).toLowerCase().trim() && (u.role === "admin" || u.sections === "all"));
+          authorized = !!admin && verifyCredential(admin, body.actorPassword);
+        }
+        if (!authorized) return res.status(403).json({ error: "Credenciales incorrectas." });
+        target.salt = crypto.randomBytes(16).toString("base64");
+        target.hash = pbkdf2(body.newPassword, target.salt);
+        await writeUsers(users);
+        const { hash, ...safe } = target;
+        return res.status(200).json({ ok: true, user: safe });
+      } catch {
+        return res.status(500).json({ error: "Error al cambiar la contraseña." });
+      }
+    }
+
     // Setup inicial: solo permitido si la nube NO tiene usuarios (evita que
     // cualquiera cree un admin paralelo cuando ya hay cuentas).
     if (body.action === "setup") {
@@ -136,9 +162,19 @@ export default async function handler(req, res) {
         if (!authorizeWrite(existing, body.actor)) {
           return res.status(403).json({ error: "No autorizado para modificar usuarios." });
         }
-        const payload = JSON.stringify({ users: body.users, updatedAt: Date.now() });
+        // Healing: si un dispositivo emisor tiene la caché saneada de nube
+        // (usuarios sin hash/salt), NO permitir que sobrescriba borrando
+        // credenciales — reponer desde `existing`. Sin esto, un cliente que
+        // pulló y luego pushea puede destruir contraseñas ajenas.
+        const byName = new Map(existing.map((u) => [u.username.toLowerCase().trim(), u]));
+        const healed = body.users.map((u) => {
+          if (u && u.hash && u.salt) return u;
+          const prev = byName.get(String((u && u.username) || "").toLowerCase().trim());
+          return prev && prev.hash && prev.salt ? { ...u, hash: prev.hash, salt: prev.salt } : u;
+        });
+        const payload = JSON.stringify({ users: healed, updatedAt: Date.now() });
         if (Buffer.byteLength(payload) > MAX_BYTES) return res.status(413).json({ error: "Lista demasiado grande." });
-        await writeUsers(body.users);
+        await writeUsers(healed);
         return res.status(200).json({ ok: true });
       } catch {
         return res.status(500).json({ error: "Error guardando usuarios." });
