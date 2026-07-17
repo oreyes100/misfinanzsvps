@@ -417,7 +417,7 @@ Responde SOLO con un objeto JSON válido (sin texto extra):
   }
 }
 
-export function downloadReportCSV(report: any, filename: string, gran: string, startDate: string, endDate: string, health: any, byGroup?: any, filtered?: any[]) {
+export function downloadReportCSV(report: any, filename: string, gran: string, startDate: string, endDate: string, health: any, byGroup?: any, filtered?: any[], fx?: FXRates, baseCur?: Currency) {
   let csv = `# MIS FINAZAS — REPORTE FINANCIERO PERSONAL\n`;
   csv += `# Generado: ${new Date().toISOString()}\n`;
   csv += `# Período: ${startDate || '—'} — ${endDate || '—'} | Agrupación: ${gran}\n`;
@@ -466,21 +466,29 @@ export function downloadReportCSV(report: any, filename: string, gran: string, s
   }
 
   if (byGroup && Object.keys(byGroup).length > 0) {
+    // Monto en divisa base: los totales del reporte están convertidos, el detalle debe cuadrar con ellos.
+    const toB = (t: any): number => fx && baseCur ? convert(Math.abs(t.amount || 0), t.currency || baseCur, baseCur, fx) : Math.abs(t.amount || 0);
     csv += `\n## DETALLE DE TRANSACCIONES POR PERÍODO Y CATEGORÍA\n`;
-    csv += `Periodo,Categoría,Tipo,Fecha,Descripción,Monto\n`;
+    csv += `# Monto (base) está convertido a la divisa base — esta columna suma igual que los totales del reporte.\n`;
+    csv += `Periodo,Categoría,Tipo,Fecha,Descripción,Divisa,Monto original,Monto (base${baseCur ? ' ' + baseCur : ''})\n`;
+    let sumIncBase = 0, sumExpBase = 0;
     for (const period of Object.keys(byGroup).sort()) {
       const pg = byGroup[period];
       for (const [cat, txs] of Object.entries(pg.txsByIncomeCat || {})) {
         for (const t of txs as any[]) {
-          csv += `${csvCell(period)},${csvCell(cat)},Ingreso,${csvCell(t.date)},${csvCell(t.description)},${csvCell(Math.abs(t.amount).toFixed(2))}\n`;
+          const b = toB(t); sumIncBase += b;
+          csv += `${csvCell(period)},${csvCell(cat)},Ingreso,${csvCell(t.date)},${csvCell(t.description)},${csvCell(t.currency || baseCur || '')},${csvCell(Math.abs(t.amount).toFixed(2))},${csvCell(b.toFixed(2))}\n`;
         }
       }
       for (const [cat, txs] of Object.entries(pg.txsByExpenseCat || {})) {
         for (const t of txs as any[]) {
-          csv += `${csvCell(period)},${csvCell(cat)},Gasto,${csvCell(t.date)},${csvCell(t.description)},${csvCell(Math.abs(t.amount).toFixed(2))}\n`;
+          const b = toB(t); sumExpBase += b;
+          csv += `${csvCell(period)},${csvCell(cat)},Gasto,${csvCell(t.date)},${csvCell(t.description)},${csvCell(t.currency || baseCur || '')},${csvCell(Math.abs(t.amount).toFixed(2))},${csvCell(b.toFixed(2))}\n`;
         }
       }
     }
+    csv += `SUMA DETALLE,,Ingreso,,,,,${sumIncBase.toFixed(2)}\n`;
+    csv += `SUMA DETALLE,,Gasto,,,,,${sumExpBase.toFixed(2)}\n`;
   }
 
   csv += `\n# NOTA: Este CSV es datos tabulares. Abre el PDF para gráficas visuales, KPIs ejecutivos y formato profesional de reporte financiero.\n`;
@@ -488,7 +496,7 @@ export function downloadReportCSV(report: any, filename: string, gran: string, s
   downloadBlob(csv, filename, 'text/csv;charset=utf-8;');
 }
 
-export function downloadReportPDF(report: any, granularity: string, startDate: string, endDate: string, health: any, byGroup?: any, _filtered?: any[]) {
+export function downloadReportPDF(report: any, granularity: string, startDate: string, endDate: string, health: any, byGroup?: any, _filtered?: any[], fx?: FXRates, baseCur?: Currency) {
   const title = `MIS FINANZAS — Reporte Financiero Personal`;
   const subtitle = `Estado de Resultados y Análisis por Categorías · ${granularity}`;
   const range = `${startDate || '—'} a ${endDate || '—'}`;
@@ -669,32 +677,41 @@ ${health ? `<div class="section">
 
 ${(() => {
   if (!byGroup || Object.keys(byGroup).length === 0) return '';
+  // Monto base convertido: el detalle debe cuadrar con los totales del reporte (que están en divisa base).
+  const toB = (t: any): number => fx && baseCur ? convert(Math.abs(t.amount || 0), t.currency || baseCur, baseCur, fx) : Math.abs(t.amount || 0);
   let rows = '';
   let count = 0;
+  let sumIncBase = 0, sumExpBase = 0;
   const MAX = 500;
   for (const period of Object.keys(byGroup).sort()) {
     const pg = byGroup[period];
     for (const [cat, txs] of Object.entries(pg.txsByIncomeCat || {})) {
       for (const t of txs as any[]) {
-        if (count >= MAX) break;
-        rows += `<tr><td>${period}</td><td>${cat}</td><td class="gain">Ingreso</td><td>${t.date}</td><td>${t.description || ''}</td><td class="num gain">${fmt(Math.abs(t.amount))}</td></tr>`;
+        const b = toB(t); sumIncBase += b;
+        if (count >= MAX) continue;
+        rows += `<tr><td>${period}</td><td>${cat}</td><td class="gain">Ingreso</td><td>${t.date}</td><td>${t.description || ''}</td><td>${t.currency || baseCur || ''}</td><td class="num">${fmt(Math.abs(t.amount))}</td><td class="num gain">${fmt(b)}</td></tr>`;
         count++;
       }
     }
     for (const [cat, txs] of Object.entries(pg.txsByExpenseCat || {})) {
       for (const t of txs as any[]) {
-        if (count >= MAX) break;
-        rows += `<tr><td>${period}</td><td>${cat}</td><td class="loss">Gasto</td><td>${t.date}</td><td>${t.description || ''}</td><td class="num loss">${fmt(Math.abs(t.amount))}</td></tr>`;
+        const b = toB(t); sumExpBase += b;
+        if (count >= MAX) continue;
+        rows += `<tr><td>${period}</td><td>${cat}</td><td class="loss">Gasto</td><td>${t.date}</td><td>${t.description || ''}</td><td>${t.currency || baseCur || ''}</td><td class="num">${fmt(Math.abs(t.amount))}</td><td class="num loss">${fmt(b)}</td></tr>`;
         count++;
       }
     }
-    if (count >= MAX) break;
   }
-  const truncNote = count >= MAX ? `<div class="muted" style="font-size:8px;margin-top:4px;">Mostrando primeras ${MAX} transacciones. Detalle completo en el CSV.</div>` : '';
+  const truncNote = count >= MAX ? `<div class="muted" style="font-size:8px;margin-top:4px;">Mostrando primeras ${MAX} transacciones. Detalle completo en el CSV. Las sumas del pie incluyen TODO el rango.</div>` : '';
   return `<h2>Detalle de Transacciones por Período y Categoría</h2>
+<div class="muted" style="font-size:8px;">"Monto (base)" está convertido a la divisa base${baseCur ? ` (${baseCur})` : ''} — esa columna suma igual que los totales del reporte.</div>
 <table style="font-size:8.5px;">
-<thead><tr><th>Período</th><th>Categoría</th><th>Tipo</th><th>Fecha</th><th>Descripción</th><th class="num">Monto</th></tr></thead>
-<tbody>${rows || '<tr><td colspan="6" class="muted">Sin transacciones en el rango</td></tr>'}</tbody>
+<thead><tr><th>Período</th><th>Categoría</th><th>Tipo</th><th>Fecha</th><th>Descripción</th><th>Divisa</th><th class="num">Monto orig.</th><th class="num">Monto (base)</th></tr></thead>
+<tbody>${rows || '<tr><td colspan="8" class="muted">Sin transacciones en el rango</td></tr>'}</tbody>
+<tfoot>
+<tr style="font-weight:700;background:#f1f5f9;"><td colspan="7">SUMA DETALLE — Ingresos (base)</td><td class="num gain">${fmt(sumIncBase)}</td></tr>
+<tr style="font-weight:700;background:#f1f5f9;"><td colspan="7">SUMA DETALLE — Gastos (base)</td><td class="num loss">${fmt(sumExpBase)}</td></tr>
+</tfoot>
 </table>${truncNote}`;
 })()}
 

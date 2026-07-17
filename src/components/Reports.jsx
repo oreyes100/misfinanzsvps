@@ -191,11 +191,11 @@ export default function Reports() {
   // Descargas profesionales completas (con desgloses, salud financiera y simulación de gráficas)
   const handleDownloadCSV = () => {
     const health = { savingsRate: data.savingsRate, emergencyMonths: data.emergencyMonths, avgExpense: data.avgExpense, avgIncome: data.avgIncome, recs: data.recs };
-    downloadReportCSV(comprehensiveReport, `reporte-${gran}-completo.csv`, gran, startDate, endDate, health, comprehensiveReport.byGroup, comprehensiveReport.filtered);
+    downloadReportCSV(comprehensiveReport, `reporte-${gran}-completo.csv`, gran, startDate, endDate, health, comprehensiveReport.byGroup, comprehensiveReport.filtered, state.fx, base);
   };
   const handleDownloadPDF = () => {
     const health = { savingsRate: data.savingsRate, emergencyMonths: data.emergencyMonths, avgExpense: data.avgExpense, avgIncome: data.avgIncome, recs: data.recs };
-    downloadReportPDF(comprehensiveReport, gran, startDate, endDate, health, comprehensiveReport.byGroup, comprehensiveReport.filtered);
+    downloadReportPDF(comprehensiveReport, gran, startDate, endDate, health, comprehensiveReport.byGroup, comprehensiveReport.filtered, state.fx, base);
   };
 
   const maxBar = Math.max(1, ...data.months.map((m) => Math.max(m.income, m.expense)));
@@ -463,12 +463,13 @@ export default function Reports() {
                             <th className="p-1 text-left">Fecha</th>
                             <th className="p-1 text-left">Descripción</th>
                             <th className="p-1 text-left">Cuenta</th>
-                            <th className="p-1 text-right">Monto</th>
+                            <th className="p-1 text-right">Monto orig.</th>
+                            <th className="p-1 text-right">Monto ({base})</th>
                           </tr>
                         </thead>
                         <tbody>
                           {txList.length === 0 && (
-                            <tr><td colSpan={4} className="p-2 text-center text-ink-dim">Sin transacciones.</td></tr>
+                            <tr><td colSpan={5} className="p-2 text-center text-ink-dim">Sin transacciones.</td></tr>
                           )}
                           {txList.map(t => {
                             const acc = state.accounts.find(a => a.id === t.accountId);
@@ -477,13 +478,26 @@ export default function Reports() {
                                 <td className="p-1 tabular-nums">{t.date}</td>
                                 <td className="p-1">{t.description}</td>
                                 <td className="p-1 text-ink-dim">{acc ? acc.name : t.accountId}</td>
-                                <td className={`p-1 text-right tabular-nums ${t.amount > 0 ? 'text-gain' : 'text-loss'}`}>
+                                <td className="p-1 text-right tabular-nums text-ink-dim">
                                   {fmtMoney(Math.abs(t.amount), t.currency || base)}
+                                </td>
+                                <td className={`p-1 text-right tabular-nums ${t.amount > 0 ? 'text-gain' : 'text-loss'}`}>
+                                  {fmtMoney(toBase(Math.abs(t.amount), t.currency || base), base)}
                                 </td>
                               </tr>
                             );
                           })}
                         </tbody>
+                        {txList.length > 0 && (
+                          <tfoot>
+                            <tr className="border-t border-white/10 font-semibold">
+                              <td colSpan={4} className="p-1">Suma ({txList.length} tx)</td>
+                              <td className={`p-1 text-right tabular-nums ${drillCat.type === 'income' ? 'text-gain' : 'text-loss'}`}>
+                                {fmtMoney(txList.reduce((s, t) => s + toBase(Math.abs(t.amount), t.currency || base), 0), base)}
+                              </td>
+                            </tr>
+                          </tfoot>
+                        )}
                       </table>
                     </div>
                   </div>
