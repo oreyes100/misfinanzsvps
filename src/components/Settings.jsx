@@ -81,6 +81,9 @@ function CloudSync() {
               </Btn>
             )}
           </div>
+          <p className="text-[10px] text-ink-dim/50 tabular-nums">
+            Bundle: {typeof __BUILD_TIME__ !== "undefined" ? new Date(__BUILD_TIME__).toLocaleString("es-MX") : "desconocido"}
+          </p>
         </div>
       )}
     </Glass>

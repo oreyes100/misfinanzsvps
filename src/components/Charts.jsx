@@ -87,8 +87,8 @@ export function BarChart({ bars, height = 96, color = "#2ee6a8", fmt = (v) => v.
   );
 }
 
-/** Donut SVG. `slices` = [{ label, value, color }]. `onSliceClick(label)` optional. */
-export function PieChart({ slices, size = 150, totalLabel, onSliceClick }) {
+/** Donut SVG. `slices` = [{ label, value, color }]. `onSliceClick(label)` optional. `fmtValue(v)` optional — shows amount beside %. */
+export function PieChart({ slices, size = 150, totalLabel, onSliceClick, fmtValue }) {
   const total = slices.reduce((s, x) => s + x.value, 0);
   if (total <= 0) {
     return <p className="text-sm text-ink-dim">Sin gastos este mes todavía.</p>;
@@ -148,7 +148,9 @@ export function PieChart({ slices, size = 150, totalLabel, onSliceClick }) {
           >
             <span className="inline-block size-2.5 rounded-full" style={{ background: s.color }} />
             <span className="text-ink-dim">{s.label}</span>
-            <span className="ml-auto pl-3 font-medium tabular-nums">{Math.round((s.value / total) * 100)} %</span>
+            <span className="ml-auto pl-3 font-medium tabular-nums">
+              {Math.round((s.value / total) * 100)} %{fmtValue ? ` · ${fmtValue(s.value)}` : ""}
+            </span>
           </li>
         ))}
       </ul>

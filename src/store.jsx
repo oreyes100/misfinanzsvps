@@ -3,6 +3,7 @@ import { API_BASE, BASE_FX, DAY_MS, DEFAULT_CATEGORIES, categorize, cleanOrphanT
 import { accrueInterest } from "./interest.js";
 import { migrate } from "./migrations.js";
 import useFX from "./useFX.js";
+import { mergeSyncStates } from "./merge.js";
 
 export { accrueInterest };
 
@@ -535,10 +536,20 @@ export function StoreProvider({ children }) {
   const pushNow = useCallback(async (id) => {
     setSyncStatus("pushing");
     const snapshot = syncableRef.current;
+    let merged = JSON.parse(snapshot);
+    try {
+      const getR = await fetch(`${API_BASE}/api/sync?id=${encodeURIComponent(id)}&t=${Date.now()}`, { cache: "no-store" });
+      if (getR.ok) {
+        const cloudData = await getR.json();
+        if (cloudData.found && cloudData.state) {
+          merged = mergeSyncStates(merged, cloudData.state);
+        }
+      }
+    } catch { /* red flaky: proceed with local */ }
     const r = await fetch(`${API_BASE}/api/sync?id=${encodeURIComponent(id)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ state: JSON.parse(snapshot) }),
+      body: JSON.stringify({ state: merged }),
     });
     if (!r.ok) throw new Error(`sync push ${r.status}`);
     lastPushedRef.current = snapshot;
@@ -631,7 +642,7 @@ export function StoreProvider({ children }) {
     return () => clearTimeout(t);
   }, [syncable, syncId, pushNow]);
 
-  // Auto-pull más agresivo: al volver a la app (visibilidad o foco) fuerza pull fresco de la nube
+  // Auto-pull: al volver a la app (visibilidad o foco) fuerza pull fresco de la nube.
   useEffect(() => {
     if (!syncId) return;
     const doPull = () => {
@@ -645,6 +656,17 @@ export function StoreProvider({ children }) {
       document.removeEventListener('visibilitychange', onVis);
       window.removeEventListener('focus', onFocus);
     };
+  }, [syncId]);
+
+  // Pull periódico cada 5 min mientras la pestaña esté visible (detecta cambios de otro dispositivo).
+  useEffect(() => {
+    if (!syncId) return;
+    const t = setInterval(() => {
+      if (document.visibilityState === 'visible' && !pullingRef.current) {
+        setSyncRetry(n => n + 1);
+      }
+    }, 5 * 60 * 1000);
+    return () => clearInterval(t);
   }, [syncId]);
 
   const sync = useMemo(() => ({

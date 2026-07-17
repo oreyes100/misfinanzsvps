@@ -1,9 +1,33 @@
 import { useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useStore } from "../store.jsx";
-import { catColor, fmtDate, fmtMoney, groupedAccounts } from "../utils.js";
+import { catColor, fmtDate, fmtMoney, groupedAccounts, todayISO } from "../utils.js";
 import { TransactionModal } from "./Modals.jsx";
 import { Btn, Glass, Money, inputCls } from "./UI.jsx";
+
+const DATE_PRESETS = [
+  { id: "all", label: "Todo" },
+  { id: "today", label: "Hoy" },
+  { id: "week", label: "Semana" },
+  { id: "month", label: "Mes" },
+  { id: "custom", label: "Día…" },
+];
+
+function periodBounds(filter, customDate) {
+  const today = todayISO();
+  if (filter === "today") return [today, today];
+  if (filter === "week") {
+    const d = new Date(`${today}T12:00:00`);
+    const mon = new Date(d);
+    mon.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+    const sun = new Date(mon);
+    sun.setDate(mon.getDate() + 6);
+    return [mon.toISOString().slice(0, 10), sun.toISOString().slice(0, 10)];
+  }
+  if (filter === "month") return [today.slice(0, 7) + "-01", today];
+  if (filter === "custom" && customDate) return [customDate, customDate];
+  return [null, null];
+}
 
 export default function Transactions() {
   const { state } = useStore();
@@ -11,6 +35,8 @@ export default function Transactions() {
   const [cat, setCat] = useState("Todas");
   const [acctId, setAcctId] = useState("Todas");
   const [editing, setEditing] = useState(null); // "new" | transacción
+  const [dateFilter, setDateFilter] = useState("all");
+  const [customDate, setCustomDate] = useState("");
 
   const cats = useMemo(
     () => ["Todas", ...new Set(state.transactions.map((t) => t.category))],
@@ -41,15 +67,19 @@ export default function Transactions() {
     return map;
   }, [sorted, state.accounts]);
 
+  const [dateFrom, dateTo] = useMemo(() => periodBounds(dateFilter, customDate), [dateFilter, customDate]);
+
   const list = useMemo(
     () =>
       sorted.filter(
         (t) =>
           (cat === "Todas" || t.category === cat) &&
           (acctId === "Todas" || t.accountId === acctId) &&
+          (!dateFrom || t.date >= dateFrom) &&
+          (!dateTo || t.date <= dateTo) &&
           (t.description.toLowerCase().includes(query.toLowerCase()) || (t.notes || "").toLowerCase().includes(query.toLowerCase()))
       ),
-    [sorted, query, cat, acctId]
+    [sorted, query, cat, acctId, dateFrom, dateTo]
   );
 
   const accName = (id) => {
@@ -62,6 +92,28 @@ export default function Transactions() {
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <h2 className="mr-auto text-base font-semibold">Movimientos</h2>
         <Btn onClick={() => setEditing("new")} className="!py-1.5 text-xs">+ Nuevo</Btn>
+      </div>
+
+      {/* Filtros de período */}
+      <div className="mb-2 flex flex-wrap items-center gap-1">
+        {DATE_PRESETS.map((p) => (
+          <button
+            key={p.id}
+            onClick={() => setDateFilter(p.id)}
+            className={`rounded-full px-3 py-1 text-xs font-medium transition ${dateFilter === p.id ? "bg-accent text-base-950" : "bg-white/8 text-ink-dim hover:bg-white/15"}`}
+          >
+            {p.label}
+          </button>
+        ))}
+        {dateFilter === "custom" && (
+          <input
+            type="date"
+            className={`${inputCls} !w-36 shrink-0`}
+            value={customDate}
+            onChange={(e) => setCustomDate(e.target.value)}
+            aria-label="Fecha específica"
+          />
+        )}
       </div>
 
       <div className="mb-3 flex flex-wrap gap-2">

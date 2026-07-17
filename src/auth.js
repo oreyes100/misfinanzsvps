@@ -258,10 +258,19 @@ export async function changePassword(username, newPassword) {
   const users = loadUsers();
   const u = users.find((x) => x.username.toLowerCase() === username.toLowerCase().trim());
   if (!u) throw new Error("Usuario no encontrado.");
+  // Capture old credentials BEFORE updating — server still has old hash and
+  // authorizeWrite(existing_OLD, actor_NEW) would fail with 403 otherwise.
+  const actorForPush = { username: u.username, hash: u.hash };
   u.salt = generateSalt();
   u.hash = await hashPassword(newPassword, u.salt);
   saveUsers(users);
-  await pushCloudUsers(users);
+  try {
+    await fetch(`${API_BASE}/api/users`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ users, actor: actorForPush }),
+    });
+  } catch { /* best-effort; local is already updated */ }
   return users;
 }
 

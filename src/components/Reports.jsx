@@ -3,7 +3,7 @@ import { motion } from "framer-motion";
 import { useStore } from "../store.jsx";
 import { catColor, convert, fmtMoney, fmtPct, downloadReportCSV, downloadReportPDF } from "../utils.js";
 import { Glass, Btn, inputCls } from "./UI.jsx";
-import { PieChart } from "./Charts.jsx";
+import { BarChart, PieChart } from "./Charts.jsx";
 
 const PERIODS = [
   { id: 3, label: "3 meses" },
@@ -423,6 +423,7 @@ export default function Reports() {
                       label, value, color: catColor(label, state.categories)
                     }))}
                     size={140}
+                    fmtValue={(v) => fmtMoney(v, base)}
                     onSliceClick={(cat) => setDrillCat(d => d && d.type === 'income' && d.cat === cat ? null : { type: 'income', cat })}
                   />
                 </div>
@@ -433,8 +434,23 @@ export default function Reports() {
                       label, value, color: catColor(label, state.categories)
                     }))}
                     size={140}
+                    fmtValue={(v) => fmtMoney(v, base)}
                     onSliceClick={(cat) => setDrillCat(d => d && d.type === 'expense' && d.cat === cat ? null : { type: 'expense', cat })}
                   />
+                  {Object.keys(activeExpenseByCat).length > 0 && (
+                    <div className="mt-3">
+                      <h4 className="font-semibold text-xs mb-1 text-ink-dim">Barras de gastos{periodLabel}</h4>
+                      <BarChart
+                        bars={Object.entries(activeExpenseByCat)
+                          .sort((a, b) => b[1] - a[1])
+                          .map(([label, value]) => ({ label, value, title: `${label}: ${fmtMoney(value, base)}` }))}
+                        color="#ff5c7a"
+                        fmt={(v) => fmtMoney(v, base)}
+                        label="Gastos por categoría"
+                        height={100}
+                      />
+                    </div>
+                  )}
                 </div>
               </div>
 
