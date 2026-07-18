@@ -223,6 +223,28 @@ describe("reducer · add/update/delete_account", () => {
     expect(next.accounts.find((a) => a.id === "acc-usd")).toBeUndefined();
   });
 
+  it("elimina cuenta real (no demo) y agrega tombstone", () => {
+    const withReal = reducer(state, {
+      type: "add_account",
+      account: { id: "real-inv", name: "DIDIINV1", type: "investment", currency: "MXN", balance: 5000, rate: 0, accrual: "none" },
+    });
+    const next = reducer(withReal, { type: "delete_account", accountId: "real-inv" });
+    expect(next.accounts.find((a) => a.id === "real-inv")).toBeUndefined();
+    expect(next.deletedAccountIds).toContain("real-inv");
+  });
+
+  it("no re-agrega cuenta real borrada en restore desde nube", () => {
+    const withReal = reducer(state, {
+      type: "add_account",
+      account: { id: "real-inv", name: "DIDIINV1", type: "investment", currency: "MXN", balance: 5000, rate: 0, accrual: "none" },
+    });
+    const deleted = reducer(withReal, { type: "delete_account", accountId: "real-inv" });
+    expect(deleted.deletedAccountIds).toContain("real-inv");
+    const cloudWithReal = { ...withReal, _syncVersion: 99 };
+    const restored = reducer(deleted, { type: "restore", state: cloudWithReal });
+    expect(restored.accounts.find((a) => a.id === "real-inv")).toBeUndefined();
+  });
+
   it("no re-agrega cuentas demo borradas en restore desde nube", () => {
     // Borramos una demo
     let next = reducer(state, { type: "delete_account", accountId: "acc-ahorro" });
@@ -548,5 +570,41 @@ describe("reducer · restore", () => {
     };
     const next = reducer(state, { type: "restore", state: cloudState });
     expect(next.accounts.find((a) => a.id === "acc-eur").balance).toBe(9999);
+  });
+});
+
+describe("clean_interest_duplicates · no modifica saldos", () => {
+  it("elimina duplicados sin tocar balances (balance permanece igual)", () => {
+    const state = cleanState();
+    const BASE_BALANCE = 1000;
+    state.accounts = [
+      { id: "acc-clean", name: "Ahorro", type: "savings", currency: "EUR",
+        balance: BASE_BALANCE, rate: 0.034, accrual: "monthly", lastAccrual: "2026-06-30" },
+    ];
+    // 1 tx legítima + 2 duplicadas exactas (misma descripción, monto, cuenta, fecha)
+    state.transactions = [
+      { id: "legit-1", date: "2026-06-01", description: "Gasto", amount: -50, currency: "EUR",
+        category: "Alimentación", accountId: "acc-clean", auto: false },
+      { id: "int-dup-a", date: "2026-06-30", description: "Intereses Ahorro (3.40 % TAE)", amount: 2.83,
+        currency: "EUR", category: "Intereses", accountId: "acc-clean", auto: true },
+      { id: "int-dup-b", date: "2026-06-30", description: "Intereses Ahorro (3.40 % TAE)", amount: 2.83,
+        currency: "EUR", category: "Intereses", accountId: "acc-clean", auto: true },
+      { id: "int-dup-c", date: "2026-06-30", description: "Intereses Ahorro (3.40 % TAE)", amount: 2.83,
+        currency: "EUR", category: "Intereses", accountId: "acc-clean", auto: true },
+    ];
+
+    const next = reducer(state, { type: "clean_interest_duplicates" });
+
+    // Debe quedar la tx legítima + solo la PRIMERA de las duplicadas (int-dup-a)
+    expect(next.transactions.length).toBe(2);
+    expect(next.transactions.map(t => t.id).sort()).toEqual(["int-dup-a", "legit-1"]);
+
+    // deletedTransactions debe contener los dos duplicados borrados
+    expect(Object.keys(next.deletedTransactions)).toHaveLength(2);
+    expect(next.deletedTransactions["int-dup-b"]).toBeDefined();
+    expect(next.deletedTransactions["int-dup-c"]).toBeDefined();
+
+    // balance DEBE QUEDAR EXACTAMENTE IGUAL — los duplicados nunca acreditaron el balance
+    expect(next.accounts[0].balance).toBe(BASE_BALANCE);
   });
 });

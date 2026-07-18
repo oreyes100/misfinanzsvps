@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { biometricSession, hasBiometricCredential, isBiometricAvailable, login, needsSetupCloud, setupAdmin, verifyBiometric } from "../auth.js";
+import { API_BASE } from "../utils.js";
 import { Btn, inputCls } from "./UI.jsx";
 
 const BG_VIDEO = "/finance-bg.mp4";
@@ -54,6 +55,99 @@ function SetupForm({ onDone }) {
   );
 }
 
+function RegisterForm({ onBack }) {
+  const [step, setStep] = useState("request"); // "request" | "verify" | "done"
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [code, setCode] = useState("");
+  const [createdUsername, setCreatedUsername] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const submitRequest = async (e) => {
+    e.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      const r = await fetch(`${API_BASE}/api/signup`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "request", email, password }),
+      });
+      const data = await r.json();
+      if (!r.ok) { setError(data.error || "Error al enviar el correo."); return; }
+      setStep("verify");
+    } catch {
+      setError("Error de conexión.");
+    }
+    setBusy(false);
+  };
+
+  const submitVerify = async (e) => {
+    e.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      const r = await fetch(`${API_BASE}/api/signup`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "verify", email, code }),
+      });
+      const data = await r.json();
+      if (!r.ok) { setError(data.error || "Código incorrecto."); return; }
+      setCreatedUsername(data.username);
+      setStep("done");
+    } catch {
+      setError("Error de conexión.");
+    }
+    setBusy(false);
+  };
+
+  if (step === "done") {
+    return (
+      <div className="space-y-3 text-center">
+        <p className="text-2xl">✓</p>
+        <p className="text-sm font-medium">Cuenta creada</p>
+        <p className="text-xs text-ink-dim">Usuario: <strong>{createdUsername}</strong></p>
+        <p className="text-xs text-ink-dim">Tienes acceso a las cuentas de demostración.</p>
+        <Btn className="w-full !py-2.5" onClick={onBack}>Ir a iniciar sesión</Btn>
+      </div>
+    );
+  }
+
+  if (step === "verify") {
+    return (
+      <form onSubmit={submitVerify} className="space-y-3">
+        <p className="text-sm text-ink-dim">Ingresa el código de 6 dígitos que enviamos a <strong>{email}</strong>.</p>
+        <div>
+          <label className="mb-1 block text-xs font-medium text-ink-dim">Código de verificación</label>
+          <input className={inputCls} value={code} onChange={(e) => setCode(e.target.value)} inputMode="numeric" maxLength={6} required autoFocus placeholder="123456" />
+        </div>
+        {error && <p className="text-xs font-medium text-loss" role="alert">{error}</p>}
+        <Btn type="submit" className="w-full !py-2.5" disabled={busy}>{busy ? "Verificando…" : "Verificar"}</Btn>
+        <Btn variant="ghost" className="w-full" type="button" onClick={() => { setStep("request"); setError(""); }}>← Volver</Btn>
+      </form>
+    );
+  }
+
+  return (
+    <form onSubmit={submitRequest} className="space-y-3">
+      <p className="text-sm text-ink-dim">Crea una cuenta gratuita con acceso a las cuentas de demostración.</p>
+      <div>
+        <label className="mb-1 block text-xs font-medium text-ink-dim">Correo electrónico</label>
+        <input className={inputCls} type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoFocus autoComplete="email" />
+      </div>
+      <div>
+        <label className="mb-1 block text-xs font-medium text-ink-dim">Contraseña</label>
+        <input className={inputCls} type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={6} autoComplete="new-password" />
+      </div>
+      {error && <p className="text-xs font-medium text-loss" role="alert">{error}</p>}
+      <Btn type="submit" className="w-full !py-2.5" disabled={busy}>{busy ? "Enviando código…" : "Enviar código de verificación"}</Btn>
+      <Btn variant="ghost" className="w-full" type="button" onClick={onBack}>← Volver al login</Btn>
+    </form>
+  );
+}
+
 export default function Login({ onLogin }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -61,6 +155,7 @@ export default function Login({ onLogin }) {
   const [busy, setBusy] = useState(false);
   const [setup, setSetup] = useState(false);
   const [checking, setChecking] = useState(true);
+  const [showRegister, setShowRegister] = useState(false);
   const canBio = isBiometricAvailable() && hasBiometricCredential();
 
   useEffect(() => {
@@ -128,7 +223,9 @@ export default function Login({ onLogin }) {
           <p className="mt-1 text-sm text-ink-dim">Tu patrimonio, bajo control.</p>
         </div>
 
-        {setup ? (
+        {showRegister ? (
+          <RegisterForm onBack={() => setShowRegister(false)} />
+        ) : setup ? (
           <SetupForm onDone={onLogin} />
         ) : (
           <form onSubmit={submit} className="space-y-3">
@@ -155,8 +252,16 @@ export default function Login({ onLogin }) {
           </form>
         )}
 
-        {!setup && (
+        {!setup && !showRegister && (
           <>
+            <button
+              type="button"
+              onClick={() => setShowRegister(true)}
+              className="mt-3 w-full text-center text-[10px] text-ink-dim/70 underline hover:text-ink-dim"
+            >
+              ¿No tienes cuenta? Crear cuenta de demostración
+            </button>
+
             <button
               type="button"
               onClick={() => {

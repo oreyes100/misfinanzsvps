@@ -326,12 +326,14 @@ export default function Accounts() {
   }, {});
 
   const remove = (a) => {
-    if (confirm(`¿Eliminar la cuenta «${a.name}»? Sus movimientos se conservan en el historial.`)) {
-      dispatch({ type: "delete_account", accountId: a.id });
-      // Force push immediately so cloud and future loads/pulls don't bring the demo account back
-      if (sync && typeof sync.forcePush === "function" && sync.id) {
-        setTimeout(() => { try { sync.forcePush(); } catch {} }, 60);
-      }
+    const txCount = state.transactions.filter((t) => t.accountId === a.id).length;
+    const msg = txCount === 0
+      ? `¿Eliminar la cuenta «${a.name}»?\nNo tiene movimientos asociados.`
+      : `La cuenta «${a.name}» tiene ${txCount} movimiento${txCount !== 1 ? "s" : ""}.\n¿Eliminar la cuenta y sus ${txCount} movimiento${txCount !== 1 ? "s" : ""}?`;
+    if (!confirm(msg)) return;
+    dispatch({ type: "delete_account", accountId: a.id });
+    if (sync && typeof sync.forcePush === "function" && sync.id) {
+      setTimeout(() => { try { sync.forcePush(); } catch {} }, 60);
     }
   };
 

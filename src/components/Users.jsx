@@ -12,6 +12,7 @@ export default function Users({ session }) {
   const [sections, setSections] = useState(["inicio", "movimientos"]);
   const [accountIds, setAccountIds] = useState([]);
   const [allAccounts, setAllAccounts] = useState(false);
+  const [adminPw, setAdminPw] = useState("");
   const [msg, setMsg] = useState("");
   const [pwUser, setPwUser] = useState(null);   // username con el editor de contraseña abierto
   const [pwValue, setPwValue] = useState("");
@@ -40,9 +41,10 @@ export default function Users({ session }) {
         password,
         sections,
         accounts: allAccounts ? "all" : accountIds,
+        actorPassword: adminPw,
       });
       setUsers(updated);
-      setUsername(""); setPassword(""); setSections(["inicio", "movimientos"]); setAccountIds([]); setAllAccounts(false);
+      setUsername(""); setPassword(""); setSections(["inicio", "movimientos"]); setAccountIds([]); setAllAccounts(false); setAdminPw("");
       setMsg("✓ Usuario creado.");
     } catch (err) {
       setMsg(`⚠ ${err.message}`);
@@ -195,6 +197,10 @@ export default function Users({ session }) {
             </div>
           )}
         </fieldset>
+
+        <Field label="Tu contraseña de administrador" hint="Para autorizar la creación en la nube.">
+          <input className={inputCls} type="password" value={adminPw} onChange={(e) => setAdminPw(e.target.value)} required autoComplete="current-password" minLength={6} />
+        </Field>
 
         {msg && <p className="text-xs font-medium" role="status">{msg}</p>}
         <Btn type="submit" className="!py-2 text-sm">Crear usuario</Btn>

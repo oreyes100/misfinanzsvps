@@ -154,6 +154,32 @@ export default async function handler(req, res) {
       }
     }
 
+    // Crea un usuario nuevo autorizado por contraseña real del admin.
+    // Reemplaza el pushCloudUsers silencioso que fallaba con 403 cuando el hash local divergía.
+    if (body.action === "create_user") {
+      try {
+        const existing = await readUsers();
+        const adminEntry = existing.find(
+          (u) => u.username.toLowerCase() === String(body.actorUsername || "").toLowerCase().trim() &&
+            (u.role === "admin" || u.sections === "all")
+        );
+        if (!adminEntry || !verifyCredential(adminEntry, body.actorPassword)) {
+          return res.status(403).json({ error: "Credenciales de administrador incorrectas." });
+        }
+        const u = body.user || {};
+        const uname = String(u.username || "").trim();
+        if (!uname || !u.hash || !u.salt) return res.status(400).json({ error: "Usuario inválido." });
+        if (existing.some((x) => x.username.toLowerCase().trim() === uname.toLowerCase())) {
+          return res.status(409).json({ error: "Ese nombre de usuario ya existe." });
+        }
+        existing.push({ ...u, username: uname });
+        await writeUsers(existing);
+        return res.status(200).json({ ok: true });
+      } catch {
+        return res.status(500).json({ error: "Error creando usuario." });
+      }
+    }
+
     // Guardado de la lista (createUser/changePassword/deleteUser tras login).
     // Requiere prueba de admin cuando ya hay usuarios.
     if (Array.isArray(body.users)) {

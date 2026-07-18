@@ -43,7 +43,7 @@ export function mergeStates(existing, incoming) {
     ...existing, ...incoming,
     _syncVersion: Math.max(existing._syncVersion || 0, incoming._syncVersion || 0),
     settings: { ...(existing.settings || {}), ...(incoming.settings || {}) },
-    accounts: mergeById(existing.accounts, incoming.accounts),
+    accounts: mergeById(existing.accounts, incoming.accounts).filter((a) => !deletedAccountIds.includes(a.id)),
     transactions, deletedTransactions, deletedAccountIds,
     scheduled: mergeById(existing.scheduled, incoming.scheduled),
     categories: mergeById(existing.categories, incoming.categories),

@@ -240,16 +240,28 @@ export function currentSession() {
   }
 }
 
-export async function createUser({ username, password, sections, accounts }) {
+export async function createUser({ username, password, sections, accounts, actorPassword }) {
   const users = loadUsers();
   if (users.some((u) => u.username.toLowerCase() === username.toLowerCase().trim())) {
     throw new Error("Ese nombre de usuario ya existe.");
   }
   const salt = generateSalt();
   const hash = await hashPassword(password, salt);
-  users.push({ username: username.trim(), hash, salt, role: "user", sections, accounts, created: new Date().toISOString() });
+  const newUser = { username: username.trim(), hash, salt, role: "user", sections, accounts, created: new Date().toISOString() };
+  // Authorize via real admin password (avoids silent 403 from hash-echo approach).
+  const sess = JSON.parse(sessionStorage.getItem(SESSION_KEY) || "null");
+  const actorUsername = sess?.username;
+  if (!actorUsername || !actorPassword) throw new Error("Se requiere la contraseña de administrador.");
+  const r = await fetch(`${API_BASE}/api/users`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "create_user", user: newUser, actorUsername, actorPassword }),
+  });
+  if (r.status === 403) throw new Error("Contraseña de administrador incorrecta.");
+  if (r.status === 409) throw new Error("Ese nombre de usuario ya existe en la nube.");
+  if (!r.ok) throw new Error("No se pudo crear el usuario en la nube.");
+  users.push(newUser);
   saveUsers(users);
-  await pushCloudUsers(users);
   return users;
 }
 

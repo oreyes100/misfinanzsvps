@@ -230,9 +230,7 @@ function innerReducer(state: AppState, action: Action): AppState {
 
     case "delete_account": {
       const aid = action.accountId;
-      const deletedAccountIds = DEMO_ACCOUNT_IDS.includes(aid)
-        ? [...new Set([...(state.deletedAccountIds || []), aid])]
-        : (state.deletedAccountIds || []);
+      const deletedAccountIds = [...new Set([...(state.deletedAccountIds || []), aid])];
       return {
         ...state,
         accounts: state.accounts.filter((a) => a.id !== aid),

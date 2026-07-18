@@ -112,4 +112,30 @@ describe("mergeStates", () => {
     expect(out.settings.spendLimit).toBe(1000);
     expect(out.settings.baseCurrency).toBe("USD");
   });
+
+  it("filtra cuentas borradas en merge (tombstone de cuenta real)", () => {
+    const existing = {
+      accounts: [{ id: "real-inv", balance: 5000, _updatedAt: 1 }],
+      transactions: [],
+      deletedAccountIds: ["real-inv"],
+    };
+    const incoming = {
+      accounts: [{ id: "real-inv", balance: 5000, _updatedAt: 2 }, { id: "other", balance: 100, _updatedAt: 1 }],
+      transactions: [],
+      deletedAccountIds: [],
+    };
+    const out = mergeStates(existing, incoming);
+    expect(out.accounts.find((a) => a.id === "real-inv")).toBeUndefined();
+    expect(out.accounts.find((a) => a.id === "other")).toBeDefined();
+    expect(out.deletedAccountIds).toContain("real-inv");
+  });
+
+  it("une deletedAccountIds de ambos lados y los aplica", () => {
+    const existing = { accounts: [{ id: "a1" }, { id: "a2" }], transactions: [], deletedAccountIds: ["a1"] };
+    const incoming = { accounts: [{ id: "a1" }, { id: "a2" }], transactions: [], deletedAccountIds: ["a2"] };
+    const out = mergeStates(existing, incoming);
+    expect(out.deletedAccountIds).toContain("a1");
+    expect(out.deletedAccountIds).toContain("a2");
+    expect(out.accounts).toHaveLength(0);
+  });
 });

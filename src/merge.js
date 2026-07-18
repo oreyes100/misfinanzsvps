@@ -35,7 +35,7 @@ export function mergeSyncStates(local, cloud) {
     ...local,
     _syncVersion: Math.max(local._syncVersion || 0, cloud._syncVersion || 0),
     settings: { ...(local.settings || {}), ...(cloud.settings || {}) },
-    accounts: mergeByID(local.accounts, cloud.accounts),
+    accounts: mergeByID(local.accounts, cloud.accounts).filter((a) => !mergedDeletedAccountIds.includes(a.id)),
     transactions: mergedTxs,
     scheduled: mergeByID(local.scheduled, cloud.scheduled),
     deletedTransactions: mergedDeleted,
