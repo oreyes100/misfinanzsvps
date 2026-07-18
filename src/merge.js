@@ -44,12 +44,18 @@ export function mergeSyncStates(local, cloud) {
     transferAliases: { ...(local.transferAliases || {}), ...(cloud.transferAliases || {}) },
     categoryAliases: { ...(local.categoryAliases || {}), ...(cloud.categoryAliases || {}) },
     statementPatterns: { ...(local.statementPatterns || {}), ...(cloud.statementPatterns || {}) },
-    assets: cloud.assets ? {
-      ...(local.assets || {}),
-      ...cloud.assets,
-      crypto: mergeByID((local.assets || {}).crypto || [], cloud.assets.crypto || []),
-      realEstate: mergeByID((local.assets || {}).realEstate || [], cloud.assets.realEstate || []),
-      depreciating: mergeByID((local.assets || {}).depreciating || [], cloud.assets.depreciating || []),
-    } : local.assets,
+    assets: (() => {
+      const mergedDeletedAssetIds = [...new Set([...(local.deletedAssetIds || []), ...(cloud.deletedAssetIds || [])])];
+      const merged = cloud.assets ? {
+        ...(local.assets || {}),
+        ...cloud.assets,
+        crypto: mergeByID((local.assets || {}).crypto || [], cloud.assets.crypto || []),
+        realEstate: mergeByID((local.assets || {}).realEstate || [], cloud.assets.realEstate || []),
+        depreciating: mergeByID((local.assets || {}).depreciating || [], cloud.assets.depreciating || []),
+      } : local.assets;
+      if (!mergedDeletedAssetIds.length) return merged;
+      return { ...merged, crypto: (merged.crypto || []).filter((c) => !mergedDeletedAssetIds.includes(c.id)), realEstate: (merged.realEstate || []).filter((r) => !mergedDeletedAssetIds.includes(r.id)), depreciating: (merged.depreciating || []).filter((d) => !mergedDeletedAssetIds.includes(d.id)) };
+    })(),
+    deletedAssetIds: [...new Set([...(local.deletedAssetIds || []), ...(cloud.deletedAssetIds || [])])],
   };
 }

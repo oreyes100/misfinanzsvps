@@ -275,8 +275,10 @@ function innerReducer(state, action) {
       return { ...state, assets: { ...state.assets, crypto } };
     }
 
-    case "delete_crypto":
-      return { ...state, assets: { ...state.assets, crypto: state.assets.crypto.filter((c) => c.id !== action.id) } };
+    case "delete_crypto": {
+      const deletedAssetIds = [...new Set([...(state.deletedAssetIds || []), action.id])];
+      return { ...state, assets: { ...state.assets, crypto: state.assets.crypto.filter((c) => c.id !== action.id) }, deletedAssetIds };
+    }
 
     case "add_realestate": {
       const item = { id: uid(), source: "Valoración manual", _updatedAt: Date.now(), ...action.item };
@@ -297,7 +299,8 @@ function innerReducer(state, action) {
       if (realEstate.length && !realEstate.some((r) => r.featured)) {
         realEstate = realEstate.map((r, i) => ({ ...r, featured: i === 0 }));
       }
-      return { ...state, assets: { ...state.assets, realEstate } };
+      const deletedAssetIdsRE = [...new Set([...(state.deletedAssetIds || []), action.id])];
+      return { ...state, assets: { ...state.assets, realEstate }, deletedAssetIds: deletedAssetIdsRE };
     }
 
     case "set_featured_realestate": {
@@ -315,8 +318,10 @@ function innerReducer(state, action) {
       const depreciating = (state.assets.depreciating || []).map((d) => (d.id === action.id ? { ...d, ...action.patch } : d));
       return { ...state, assets: { ...state.assets, depreciating } };
     }
-    case "delete_depreciating":
-      return { ...state, assets: { ...state.assets, depreciating: (state.assets.depreciating || []).filter((d) => d.id !== action.id) } };
+    case "delete_depreciating": {
+      const deletedAssetIdsD = [...new Set([...(state.deletedAssetIds || []), action.id])];
+      return { ...state, assets: { ...state.assets, depreciating: (state.assets.depreciating || []).filter((d) => d.id !== action.id) }, deletedAssetIds: deletedAssetIdsD };
+    }
 
     // ---- Tarjetas de crédito: marcar pago hecho del ciclo actual ----
     case "mark_card_paid": {
@@ -404,7 +409,13 @@ function innerReducer(state, action) {
         deletedTransactions: mergedDeleted,
         deletedAccountIds: mergedDeletedAccountIds,
         categories: mergeByID(state.categories, s.categories, "id"),
-        assets: s.assets ? { ...state.assets, ...s.assets, crypto: mergeByID(state.assets.crypto, s.assets.crypto, "id"), realEstate: mergeByID(state.assets.realEstate, s.assets.realEstate, "id"), depreciating: mergeByID(state.assets.depreciating || [], s.assets.depreciating || [], "id") } : state.assets,
+        assets: (() => {
+          const mergedAssets = s.assets ? { ...state.assets, ...s.assets, crypto: mergeByID(state.assets.crypto, s.assets.crypto, "id"), realEstate: mergeByID(state.assets.realEstate, s.assets.realEstate, "id"), depreciating: mergeByID(state.assets.depreciating || [], s.assets.depreciating || [], "id") } : state.assets;
+          const delAsset = [...new Set([...(state.deletedAssetIds || []), ...(s.deletedAssetIds || [])])];
+          if (!delAsset.length) return mergedAssets;
+          return { ...mergedAssets, crypto: mergedAssets.crypto.filter((c) => !delAsset.includes(c.id)), realEstate: mergedAssets.realEstate.filter((r) => !delAsset.includes(r.id)), depreciating: (mergedAssets.depreciating || []).filter((d) => !delAsset.includes(d.id)) };
+        })(),
+        deletedAssetIds: [...new Set([...(state.deletedAssetIds || []), ...(s.deletedAssetIds || [])])],
         transferAliases: { ...state.transferAliases, ...(s.transferAliases || {}) },
         categoryAliases: { ...state.categoryAliases, ...(s.categoryAliases || {}) },
         statementPatterns: { ...state.statementPatterns, ...(s.statementPatterns || {}) },
@@ -487,6 +498,15 @@ function load() {
     if (merged.deletedTransactions) {
       merged.transactions = (merged.transactions || []).filter((t) => !merged.deletedTransactions[t.id]);
     }
+    const delAssets = merged.deletedAssetIds || [];
+    if (delAssets.length && merged.assets) {
+      merged.assets = {
+        ...merged.assets,
+        crypto: (merged.assets.crypto || []).filter((c) => !delAssets.includes(c.id)),
+        realEstate: (merged.assets.realEstate || []).filter((r) => !delAssets.includes(r.id)),
+        depreciating: (merged.assets.depreciating || []).filter((d) => !delAssets.includes(d.id)),
+      };
+    }
     return migrate(accrueInterest(merged));
   } catch {
     return accrueInterest(SEED);
@@ -497,8 +517,8 @@ const SYNC_KEY = "mis-finazas-sync-id";
 
 /** Partes del estado que viajan a la nube (precios/FX en vivo se quedan fuera). */
 function syncableSlice(state) {
-  const { settings, accounts, assets, transactions, scheduled, categories, transferAliases, categoryAliases, statementPatterns, _syncVersion, deletedTransactions, deletedAccountIds } = state;
-  return { settings, accounts, assets, transactions, scheduled, categories, transferAliases, categoryAliases, statementPatterns, _syncVersion, deletedTransactions, deletedAccountIds };
+  const { settings, accounts, assets, transactions, scheduled, categories, transferAliases, categoryAliases, statementPatterns, _syncVersion, deletedTransactions, deletedAccountIds, deletedAssetIds } = state;
+  return { settings, accounts, assets, transactions, scheduled, categories, transferAliases, categoryAliases, statementPatterns, _syncVersion, deletedTransactions, deletedAccountIds, deletedAssetIds };
 }
 
 export function StoreProvider({ children }) {
@@ -523,7 +543,7 @@ export function StoreProvider({ children }) {
   // "ayer guardé la tasa escalonada y hoy no estaba".
   const cloudReadyRef = useRef(!syncId);
   const syncable = useMemo(() => JSON.stringify(syncableSlice(state)), [
-    state.settings, state.accounts, state.assets, state.transactions, state.scheduled, state.categories, state.transferAliases, state.categoryAliases, state.statementPatterns, state._syncVersion, state.deletedTransactions, state.deletedAccountIds,
+    state.settings, state.accounts, state.assets, state.transactions, state.scheduled, state.categories, state.transferAliases, state.categoryAliases, state.statementPatterns, state._syncVersion, state.deletedTransactions, state.deletedAccountIds, state.deletedAssetIds,
   ]);
   const syncableRef = useRef(syncable);
   syncableRef.current = syncable;

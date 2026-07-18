@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { useStore } from "../store.jsx";
 import { hasBiometricCredential, isBiometricAvailable, registerBiometric, removeBiometric } from "../auth.js";
-import { CURRENCIES, DASHBOARD_CARDS, cardOn, downloadBackup, downloadCSV, fmtMoney, parseBackup, findPotentialDuplicateGroups, analyzeDuplicateValidity, DEMO_ACCOUNT_IDS } from "../utils.js";
+import { CURRENCIES, DASHBOARD_CARDS, cardOn, downloadBackup, downloadCSV, fmtMoney, parseBackup, findPotentialDuplicateGroups, findInterestAnomalyGroups, analyzeDuplicateValidity, DEMO_ACCOUNT_IDS } from "../utils.js";
 import { Btn, Field, Glass, inputCls } from "./UI.jsx";
 import Users from "./Users.jsx";
 
@@ -341,6 +341,8 @@ function DataTools() {
   const [msg, setMsg] = useState(null); // { tone, text }
   const fileRef = useRef(null);
   const [dupGroups, setDupGroups] = useState([]);
+  const [interestAnomalyGroups, setInterestAnomalyGroups] = useState([]);
+  const [dupAnalysisDone, setDupAnalysisDone] = useState(false);
   const [analyzingDups, setAnalyzingDups] = useState(false);
   const [orphanTxs, setOrphanTxs] = useState([]);
 
@@ -348,6 +350,7 @@ function DataTools() {
 
   const analyzeDuplicates = async () => {
     setAnalyzingDups(true);
+    setDupAnalysisDone(false);
     try {
       const txs = Array.isArray(state.transactions) ? state.transactions : [];
       if (txs.length === 0) {
@@ -355,14 +358,18 @@ function DataTools() {
         setAnalyzingDups(false);
         return;
       }
+      // Duplicados exactos (misma desc+fecha+monto+cuenta)
       const groups = findPotentialDuplicateGroups(txs);
       const analyzed = [];
       for (const g of groups) {
         const analysis = await analyzeDuplicateValidity(g, state.settings?.geminiKey);
         analyzed.push({ txs: g, ...analysis });
       }
+      // Anomalías de interés (múltiples depósitos el mismo día en la misma cuenta)
+      const anomalies = findInterestAnomalyGroups(txs, state.accounts || []);
       setDupGroups(analyzed);
-      flash('gain', `Análisis completado: ${analyzed.length} grupos de duplicados potenciales.`);
+      setInterestAnomalyGroups(anomalies);
+      setDupAnalysisDone(true);
     } catch (err) {
       console.error('Error analizando duplicados:', err);
       flash('loss', 'Error analizando duplicados: ' + (err?.message || 'desconocido'));
@@ -372,14 +379,27 @@ function DataTools() {
 
   const removeDuplicateGroup = (group) => {
     if (!confirm(`¿Eliminar los duplicados de este grupo (mantener 1 transacción)?`)) return;
-    // keep the first (by id)
     const sorted = [...group.txs].sort((a, b) => a.id.localeCompare(b.id));
-    const keepId = sorted[0].id;
     const toDelete = sorted.slice(1).map((t) => t.id);
     toDelete.forEach((id) => dispatch({ type: 'delete_transaction', id }));
     flash('gain', `Eliminados ${toDelete.length} duplicados.`);
-    // refresh groups
     setDupGroups(prev => prev.filter((g) => g !== group));
+    if (sync?.forcePush) setTimeout(() => { try { sync.forcePush(); } catch {} }, 80);
+  };
+
+  const removeInterestAnomaly = (group) => {
+    if (!confirm(`¿Eliminar ${group.txs.length - 1} transacciones de interés sobrantes del ${group.date} en ${group.accName}? Se conservará 1.`)) return;
+    // Conservar la de monto mayor (catch-up legítimo) si hay solo 1 positivo > dailyCap/txCount
+    // Eliminar todas excepto la primera por fecha y luego monto
+    const positives = group.txs.filter((t) => t.amount > 0).sort((a, b) => b.amount - a.amount);
+    const negatives = group.txs.filter((t) => t.amount <= 0);
+    // Mantener 1 positivo (el de mayor monto, que suele ser el catch-up principal)
+    const keepPos = positives[0];
+    const toDelete = [...positives.slice(1), ...negatives].map((t) => t.id);
+    toDelete.forEach((id) => dispatch({ type: 'delete_transaction', id }));
+    flash('gain', `Eliminadas ${toDelete.length} txs de interés sobrantes del ${group.date}.`);
+    setInterestAnomalyGroups(prev => prev.filter((g) => g !== group));
+    if (sync?.forcePush) setTimeout(() => { try { sync.forcePush(); } catch {} }, 80);
   };
 
   const findOrphans = () => {
@@ -470,30 +490,53 @@ function DataTools() {
 
       <hr className="my-4 border-white/8" />
       <h3 className="mb-1 text-sm font-semibold">Limpiador inteligente de duplicados</h3>
-      <p className="mb-2 text-xs text-ink-dim">Detecta transacciones con misma descripción + fecha + monto + cuenta. Usa IA (si configuras Gemini) para decidir si es válida (ej. intereses de fin de semana registrados el lunes) o error. Elimina solo los duplicados erróneos.</p>
+      <p className="mb-2 text-xs text-ink-dim">Detecta (1) transacciones idénticas (misma descripción+fecha+monto+cuenta) y (2) días con demasiados depósitos de interés en la misma cuenta.</p>
       <Btn onClick={analyzeDuplicates} disabled={analyzingDups}>
-        {analyzingDups ? 'Analizando con IA...' : 'Analizar duplicados potenciales'}
+        {analyzingDups ? 'Analizando...' : 'Analizar duplicados potenciales'}
       </Btn>
 
-      {dupGroups.length > 0 && (
-        <div className="mt-3 space-y-2 text-xs">
-          {dupGroups.map((g, i) => (
-            <div key={i} className="rounded border border-white/10 p-2 bg-white/5">
-              <div className="font-medium">Grupo {i+1}: {g.txs.length} transacciones idénticas</div>
-              <ul className="ml-2 list-disc">
-                {g.txs.slice(0,3).map((t) => <li key={t.id}>{t.date} — {t.description.slice(0,30)} — {fmtMoney(t.amount, t.currency)}</li>)}
-                {g.txs.length > 3 && <li>... y {g.txs.length-3} más</li>}
-              </ul>
-              <div className={`mt-1 ${g.isValid ? 'text-gain' : 'text-loss'}`}>
-                IA: {g.isValid ? '✅ Válida (repetida legítima)' : '❌ Duplicado erróneo'} — {g.reason} (confianza {Math.round((g.confidence||0)*100)}%)
-              </div>
-              {!g.isValid && (
-                <Btn variant="danger" className="mt-1 text-xs" onClick={() => removeDuplicateGroup(g)}>
-                  Eliminar duplicados (mantener 1)
-                </Btn>
-              )}
+      {dupAnalysisDone && (
+        <div className="mt-3 space-y-3 text-xs">
+          {dupGroups.length === 0 && interestAnomalyGroups.length === 0 && (
+            <p className="text-gain">✓ Sin duplicados detectados ({(state.transactions||[]).length} transacciones analizadas).</p>
+          )}
+          {dupGroups.length > 0 && (
+            <div className="space-y-2">
+              <p className="font-medium text-loss">Duplicados exactos ({dupGroups.length} grupos):</p>
+              {dupGroups.map((g, i) => (
+                <div key={i} className="rounded border border-white/10 p-2 bg-white/5">
+                  <div className="font-medium">Grupo {i+1}: {g.txs.length} transacciones idénticas</div>
+                  <ul className="ml-2 list-disc">
+                    {g.txs.slice(0,3).map((t) => <li key={t.id}>{t.date} — {t.description.slice(0,30)} — {fmtMoney(t.amount, t.currency)}</li>)}
+                    {g.txs.length > 3 && <li>... y {g.txs.length-3} más</li>}
+                  </ul>
+                  <div className={`mt-1 ${g.isValid ? 'text-gain' : 'text-loss'}`}>
+                    {g.isValid ? '✅ Repetición legítima' : '❌ Duplicado erróneo'} — {g.reason}
+                  </div>
+                  <Btn variant="danger" className="mt-1 text-xs" onClick={() => removeDuplicateGroup(g)}>
+                    Eliminar duplicados (mantener 1)
+                  </Btn>
+                </div>
+              ))}
             </div>
-          ))}
+          )}
+          {interestAnomalyGroups.length > 0 && (
+            <div className="space-y-2">
+              <p className="font-medium text-loss">Intereses anómalos ({interestAnomalyGroups.length} días con exceso):</p>
+              {interestAnomalyGroups.map((g, i) => (
+                <div key={i} className="rounded border border-white/10 p-2 bg-white/5">
+                  <div className="font-medium">{g.accName} — {g.date}: {g.txs.length} txs (suma +{fmtMoney(g.sum, 'MXN')}, cap ~{fmtMoney(g.cap, 'MXN')})</div>
+                  <ul className="ml-2 list-disc">
+                    {g.txs.slice(0,5).map((t) => <li key={t.id}>{fmtMoney(t.amount, t.currency)} — {t.description.slice(0,35)}</li>)}
+                    {g.txs.length > 5 && <li>... y {g.txs.length-5} más</li>}
+                  </ul>
+                  <Btn variant="danger" className="mt-1 text-xs" onClick={() => removeInterestAnomaly(g)}>
+                    Limpiar (mantener depósito mayor)
+                  </Btn>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

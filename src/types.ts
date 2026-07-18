@@ -195,6 +195,7 @@ export interface AppState {
   // Para que los deletes de transacciones no reaparezcan por merge de nube
   deletedTransactions?: Record<string, number>; // txId -> delete timestamp (ms)
   deletedAccountIds?: string[]; // IDs de cuentas explícitamente borradas por el usuario
+  deletedAssetIds?: string[]; // IDs de assets (crypto/realEstate/depreciating) borrados por el usuario
   pendingInterestAnomalies?: InterestAnomaly[]; // Intereses bloqueados por guard de razonabilidad (diagnóstico local)
 }
 

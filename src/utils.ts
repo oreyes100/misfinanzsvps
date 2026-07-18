@@ -372,6 +372,41 @@ export function findPotentialDuplicateGroups(transactions: any[]) {
   return Object.values(map).filter((g: any[]) => g.length > 1);
 }
 
+/** Detecta días con demasiadas txs automáticas de interés para una cuenta.
+ *  Agrupa por accountId|date y marca el grupo si la suma del día excede el cap matemático. */
+export function findInterestAnomalyGroups(transactions: any[], accounts: any[]) {
+  const accMap: Record<string, any> = {};
+  for (const a of accounts) accMap[a.id] = a;
+
+  const dailyCap = (acc: any, days: number = 1) => {
+    const maxRate = Math.max(acc.rate || 0, acc.rate1 || 0, acc.rate2 || 0);
+    if (maxRate <= 0 || !acc.balance) return Infinity;
+    return acc.balance * (maxRate / 360) * days * 2;
+  };
+
+  const byDay: Record<string, any[]> = {};
+  for (const t of transactions) {
+    if (!t.auto || !['Intereses', 'Impuestos'].includes(t.category)) continue;
+    const key = `${t.accountId}|${t.date}`;
+    if (!byDay[key]) byDay[key] = [];
+    byDay[key].push(t);
+  }
+
+  const groups = [];
+  for (const [key, txs] of Object.entries(byDay)) {
+    const [accId, date] = key.split('|');
+    const acc = accMap[accId];
+    const positives = txs.filter((t: any) => t.amount > 0);
+    if (positives.length < 2) continue; // solo 1 depósito positivo → normal
+    const sum = positives.reduce((s: number, t: any) => s + t.amount, 0);
+    const cap = acc ? dailyCap(acc, 4) : 0; // 4 días máx para fin de semana largo
+    if (sum > cap || positives.length > 3) {
+      groups.push({ txs, date, accId, accName: acc?.name || accId, sum, cap });
+    }
+  }
+  return groups;
+}
+
 async function callGeminiForDuplicateAnalysis(prompt: string, key: string) {
   const body = {
     contents: [{ parts: [{ text: prompt }] }],
@@ -389,12 +424,11 @@ async function callGeminiForDuplicateAnalysis(prompt: string, key: string) {
 
 export async function analyzeDuplicateValidity(txs: any[], geminiKey: string | null | undefined) {
   if (!geminiKey) {
-    const cat = txs[0]?.category || '';
-    const isInterestLike = cat === 'Intereses' || cat === 'Impuestos';
+    // Sin IA: duplicados exactos (misma desc+fecha+monto+cuenta) NUNCA son válidos — ocurren por bug de sync
     return {
-      isValid: isInterestLike,
-      reason: isInterestLike ? 'Coincide con patrón de intereses o impuestos (análisis por reglas locales)' : 'No es un patrón típico de repetición válida',
-      confidence: isInterestLike ? 0.75 : 0.5
+      isValid: false,
+      reason: 'Duplicado exacto (misma descripción, fecha, monto y cuenta). Probable error de sincronización.',
+      confidence: 0.85
     };
   }
   const prompt = `Eres un experto en finanzas personales y contabilidad. Estas transacciones tienen exactamente la misma descripción, fecha, monto y cuenta. Determina si es una transacción legítima que ocurre más de una vez el mismo día (por ejemplo, intereses generados durante el fin de semana que se registran el lunes con el mismo monto) o si es un duplicado erróneo causado por un bug de sincronización o respaldo.

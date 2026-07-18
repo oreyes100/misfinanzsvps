@@ -33,18 +33,25 @@ export function mergeStates(existing, incoming) {
   let transactions = mergeById(existing.transactions, incoming.transactions)
     .filter((t) => !deletedTransactions[t.id]);
   transactions = dedupeAutoInterest(transactions);
-  const assets = incoming.assets ? {
+  const deletedAssetIds = [...new Set([...(existing.deletedAssetIds || []), ...(incoming.deletedAssetIds || [])])];
+  const rawAssets = incoming.assets ? {
     ...(existing.assets || {}), ...incoming.assets,
     crypto: mergeById((existing.assets || {}).crypto, (incoming.assets || {}).crypto),
     realEstate: mergeById((existing.assets || {}).realEstate, (incoming.assets || {}).realEstate),
     depreciating: mergeById((existing.assets || {}).depreciating, (incoming.assets || {}).depreciating),
   } : existing.assets;
+  const assets = deletedAssetIds.length ? {
+    ...rawAssets,
+    crypto: (rawAssets.crypto || []).filter((c) => !deletedAssetIds.includes(c.id)),
+    realEstate: (rawAssets.realEstate || []).filter((r) => !deletedAssetIds.includes(r.id)),
+    depreciating: (rawAssets.depreciating || []).filter((d) => !deletedAssetIds.includes(d.id)),
+  } : rawAssets;
   return {
     ...existing, ...incoming,
     _syncVersion: Math.max(existing._syncVersion || 0, incoming._syncVersion || 0),
     settings: { ...(existing.settings || {}), ...(incoming.settings || {}) },
     accounts: mergeById(existing.accounts, incoming.accounts).filter((a) => !deletedAccountIds.includes(a.id)),
-    transactions, deletedTransactions, deletedAccountIds,
+    transactions, deletedTransactions, deletedAccountIds, deletedAssetIds,
     scheduled: mergeById(existing.scheduled, incoming.scheduled),
     categories: mergeById(existing.categories, incoming.categories),
     transferAliases: { ...(existing.transferAliases || {}), ...(incoming.transferAliases || {}) },

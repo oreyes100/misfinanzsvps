@@ -4,6 +4,12 @@ import { useStore } from "../store.jsx";
 import { convert, fmtMoney, fmtPct } from "../utils.js";
 import { Btn, Field, Glass, Modal, inputCls } from "./UI.jsx";
 
+function forcePushAfterDelete(sync) {
+  if (sync?.id && typeof sync.forcePush === "function") {
+    setTimeout(() => { try { sync.forcePush(); } catch {} }, 80);
+  }
+}
+
 const CRYPTO_SYMBOLS = ["BTC", "ETH"];
 
 function gainTone(v) {
@@ -200,7 +206,7 @@ function DepreciatingModal({ item, onClose }) {
 }
 
 export default function Assets() {
-  const { state, dispatch } = useStore();
+  const { state, dispatch, sync } = useStore();
   const base = state.settings.baseCurrency;
   const inBase = (eur) => convert(eur, "EUR", base, state.fx);
   const [reModal, setReModal] = useState(null); // "new" | item
@@ -214,10 +220,10 @@ export default function Assets() {
   const depTotal = (state.assets.depreciating || []).reduce((s, d) => s + d.valueEUR, 0);
 
   const removeRE = (r) => {
-    if (confirm(`¿Eliminar «${r.name}»?`)) dispatch({ type: "delete_realestate", id: r.id });
+    if (confirm(`¿Eliminar «${r.name}»?`)) { dispatch({ type: "delete_realestate", id: r.id }); forcePushAfterDelete(sync); }
   };
   const removeCrypto = (c) => {
-    if (confirm(`¿Eliminar ${c.symbol}?`)) dispatch({ type: "delete_crypto", id: c.id });
+    if (confirm(`¿Eliminar ${c.symbol}?`)) { dispatch({ type: "delete_crypto", id: c.id }); forcePushAfterDelete(sync); }
   };
 
   const saveGold = () => {
@@ -308,7 +314,7 @@ export default function Assets() {
                 </div>
                 <div className="flex gap-1.5">
                   <Btn variant="ghost" className="!px-2.5 !py-1.5 text-xs" onClick={() => setDepModal(d)} aria-label={`Editar ${d.name}`}>✏️</Btn>
-                  <Btn variant="danger" className="!px-2.5 !py-1.5 text-xs" onClick={() => { if (confirm(`¿Eliminar «${d.name}»?`)) dispatch({ type: "delete_depreciating", id: d.id }); }} aria-label={`Eliminar ${d.name}`}>🗑</Btn>
+                  <Btn variant="danger" className="!px-2.5 !py-1.5 text-xs" onClick={() => { if (confirm(`¿Eliminar «${d.name}»?`)) { dispatch({ type: "delete_depreciating", id: d.id }); forcePushAfterDelete(sync); } }} aria-label={`Eliminar ${d.name}`}>🗑</Btn>
                 </div>
               </li>
             );

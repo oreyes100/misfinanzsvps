@@ -275,8 +275,10 @@ function innerReducer(state: AppState, action: Action): AppState {
       return { ...state, assets: { ...state.assets, crypto } };
     }
 
-    case "delete_crypto":
-      return { ...state, assets: { ...state.assets, crypto: state.assets.crypto.filter((c) => c.id !== action.id) } };
+    case "delete_crypto": {
+      const deletedAssetIds = [...new Set([...(state.deletedAssetIds || []), action.id])];
+      return { ...state, assets: { ...state.assets, crypto: state.assets.crypto.filter((c) => c.id !== action.id) }, deletedAssetIds };
+    }
 
     case "add_realestate": {
       const item = { id: uid(), source: "Valoración manual", _updatedAt: Date.now(), ...action.item };
@@ -295,7 +297,8 @@ function innerReducer(state: AppState, action: Action): AppState {
       if (realEstate.length && !realEstate.some((r) => r.featured)) {
         realEstate = realEstate.map((r, i) => ({ ...r, featured: i === 0 }));
       }
-      return { ...state, assets: { ...state.assets, realEstate } };
+      const deletedAssetIdsRE = [...new Set([...(state.deletedAssetIds || []), action.id])];
+      return { ...state, assets: { ...state.assets, realEstate }, deletedAssetIds: deletedAssetIdsRE };
     }
 
     case "set_featured_realestate": {
@@ -313,8 +316,10 @@ function innerReducer(state: AppState, action: Action): AppState {
       const depreciating = (state.assets.depreciating || []).map((d) => (d.id === action.id ? { ...d, ...action.patch } : d));
       return { ...state, assets: { ...state.assets, depreciating } };
     }
-    case "delete_depreciating":
-      return { ...state, assets: { ...state.assets, depreciating: (state.assets.depreciating || []).filter((d) => d.id !== action.id) } };
+    case "delete_depreciating": {
+      const deletedAssetIdsD = [...new Set([...(state.deletedAssetIds || []), action.id])];
+      return { ...state, assets: { ...state.assets, depreciating: (state.assets.depreciating || []).filter((d) => d.id !== action.id) }, deletedAssetIds: deletedAssetIdsD };
+    }
 
     case "mark_card_paid": {
       const accounts = state.accounts.map((a) =>
