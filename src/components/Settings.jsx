@@ -17,6 +17,7 @@ function CloudSync() {
   const { sync } = useStore();
   const [code, setCode] = useState("");
   const [copied, setCopied] = useState(false);
+  const [changingCode, setChangingCode] = useState(false);
   const [label, tone] = SYNC_LABEL[sync.status] || SYNC_LABEL.off;
 
   const copy = async () => {
@@ -61,33 +62,59 @@ function CloudSync() {
         </div>
       ) : (
         <div className="space-y-3">
-          <p className="text-sm text-ink-dim">
-            Tu código de sincronización (introdúcelo en otro dispositivo para ver los mismos datos):
+          <p className="text-xs text-ink-dim">
+            Copia este código en tus otros dispositivos para ver los mismos datos. El botón ☁️ en la barra sincroniza al instante.
           </p>
           <div className="flex items-center gap-2">
             <code className="flex-1 truncate rounded-xl border border-white/12 bg-white/6 px-3 py-2 text-xs">{sync.id}</code>
             <Btn variant="ghost" onClick={copy} className="shrink-0 !py-2 text-xs">{copied ? "✓ Copiado" : "Copiar"}</Btn>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <Btn variant="danger" onClick={() => { if (confirm("¿Desactivar la sincronización en este dispositivo? Los datos en la nube no se borran.")) sync.disable(); }} className="text-xs">
-              Desactivar
-            </Btn>
-            <Btn onClick={() => sync.forcePush && sync.forcePush()} className="text-xs">
-              ⬆️ Subir ahora
-            </Btn>
-            <Btn variant="ghost" onClick={() => {
-              if (confirm("¿Reemplazar datos locales con la nube? Se eliminarán duplicados. Datos locales no sincronizados se perderán.")) {
-                sync.forcePull && sync.forcePull();
-              }
-            }} className="text-xs">
-              ⬇️ Bajar desde nube
-            </Btn>
-            {sync.status === 'error' && (
-              <Btn onClick={() => sync.retry && sync.retry()} className="text-xs">
-                Reintentar
+
+          {changingCode ? (
+            <form
+              className="flex gap-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (!sync.link(code)) { alert("Código inválido. Revisa que esté completo."); return; }
+                setCode(""); setChangingCode(false);
+              }}
+            >
+              <input
+                className={`${inputCls} flex-1`}
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+                placeholder="Pega el código del otro dispositivo…"
+                autoFocus
+              />
+              <Btn type="submit" className="shrink-0 !py-2 text-xs">Conectar</Btn>
+              <Btn variant="ghost" type="button" className="shrink-0 !py-2 text-xs" onClick={() => { setCode(""); setChangingCode(false); }}>Cancelar</Btn>
+            </form>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              <Btn onClick={() => sync.forcePush && sync.forcePush()} className="text-xs">
+                ↕ Sincronizar ahora
               </Btn>
-            )}
-          </div>
+              <Btn variant="ghost" onClick={() => {
+                if (confirm("¿Reemplazar datos locales con la nube? Úsalo si otro dispositivo tiene datos más recientes.")) {
+                  sync.forcePull && sync.forcePull();
+                }
+              }} className="text-xs">
+                ⬇ Forzar bajada
+              </Btn>
+              <Btn variant="ghost" onClick={() => setChangingCode(true)} className="text-xs">
+                🔗 Cambiar código
+              </Btn>
+              <Btn variant="danger" onClick={() => { if (confirm("¿Desactivar la sincronización en este dispositivo? Los datos en la nube no se borran.")) sync.disable(); }} className="text-xs">
+                Desactivar
+              </Btn>
+            </div>
+          )}
+
+          {sync.status === 'error' && (
+            <Btn onClick={() => sync.retry && sync.retry()} className="text-xs w-full">
+              ⚠ Error de conexión — Reintentar
+            </Btn>
+          )}
           <p className="text-[10px] text-ink-dim/50 tabular-nums">
             Bundle: {typeof __BUILD_TIME__ !== "undefined" ? new Date(__BUILD_TIME__).toLocaleString("es-MX") : "desconocido"}
           </p>

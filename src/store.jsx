@@ -523,7 +523,7 @@ export function StoreProvider({ children }) {
   // "ayer guardé la tasa escalonada y hoy no estaba".
   const cloudReadyRef = useRef(!syncId);
   const syncable = useMemo(() => JSON.stringify(syncableSlice(state)), [
-    state.settings, state.accounts, state.assets, state.transactions, state.scheduled, state.categories, state.transferAliases, state.categoryAliases, state._syncVersion, state.deletedTransactions,
+    state.settings, state.accounts, state.assets, state.transactions, state.scheduled, state.categories, state.transferAliases, state.categoryAliases, state.statementPatterns, state._syncVersion, state.deletedTransactions, state.deletedAccountIds,
   ]);
   const syncableRef = useRef(syncable);
   syncableRef.current = syncable;
@@ -688,13 +688,16 @@ export function StoreProvider({ children }) {
       setSyncId(null);
       setSyncStatus("off");
     },
-    // Forzar subida inmediata de datos actuales a la nube (ignora guards para forzar push de datos frescos/importados)
-    forcePush: () => {
+    // Forzar subida + bajada completa: push local→nube, luego pull nube→local.
+    // Garantiza convergencia bidireccional en un solo clic.
+    forcePush: async () => {
       if (!syncId) return;
       cloudReadyRef.current = true;
       skipPushRef.current = false;
       lastPushedRef.current = null; // forzar incluso si parece igual
-      pushNow(syncId).catch(() => setSyncStatus("error"));
+      await pushNow(syncId).catch(() => setSyncStatus("error"));
+      // Pull posterior para traer cambios de otros dispositivos al estado local
+      if (!pullingRef.current) setSyncRetry((n) => n + 1);
     },
     // Bajar estado cloud y REEMPLAZAR local (hydrate, no merge).
     // Usa este botón cuando Mac muestra datos viejos/duplicados que el celular ya limpió.

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { StoreProvider, useStore } from "./store.jsx";
 import { canAccess, currentSession, hasBiometricCredential, logout } from "./auth.js";
@@ -30,6 +30,11 @@ function Shell({ session, onLogout }) {
   const { state, sync } = useStore();
   const firstTab = Object.keys(VIEWS).find((id) => canAccess(session, id)) ?? "inicio";
   const [tab, setTab] = useState(firstTab);
+
+  // Pull inmediato al entrar (la sesión acaba de iniciar, nube puede tener cambios de otros dispositivos)
+  useEffect(() => {
+    if (sync?.id && sync?.retry) sync.retry();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const View = canAccess(session, tab) ? VIEWS[tab] : null;
 
   const syncIcon = !sync?.id ? '' :
@@ -57,19 +62,11 @@ function Shell({ session, onLogout }) {
         <div className="flex items-center gap-2">
           <SecurityBadge biometric={hasBiometricCredential()} />
           {sync?.id && (
-            <button 
-              onClick={() => {
-                if (!sync) return;
-                if (sync.status === 'error') {
-                  sync.retry?.();
-                }
-                if (sync.status !== 'synced' && sync.status !== 'pushing' && sync.status !== 'pulling') {
-                  sync.forcePush?.();
-                }
-              }}
+            <button
+              onClick={() => { if (sync) sync.forcePush?.(); }}
               disabled={sync.status === 'pushing' || sync.status === 'pulling'}
               className={`text-[10px] px-1.5 py-0.5 rounded bg-white/10 ${syncColor} font-mono tabular-nums hover:bg-white/20 active:bg-white/30 transition-colors cursor-pointer disabled:opacity-70 disabled:cursor-not-allowed`}
-              title={`Sync: ${sync.status} • ${sync.id} (clic para sincronizar si no está sincronizado)`}
+              title="Clic para sincronizar ahora"
             >
               {syncIcon} {sync.status}
             </button>
