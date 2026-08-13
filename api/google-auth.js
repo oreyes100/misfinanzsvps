@@ -9,9 +9,9 @@
 // Requiere variables de entorno GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET.
 // redirect_uri = https://<dominio>/api/google-auth (debe estar registrado en
 // Google Cloud Console).
-import { allowedOrigin, cors } from "./lib/cors.js";
-import { validSyncCode } from "./lib/state-store.js";
-import { getGoogleTokens, saveGoogleTokens } from "./lib/google-tokens.js";
+import { allowedOrigin, cors } from "../lib/cors.js";
+import { validSyncCode } from "../lib/state-store.js";
+import { getGoogleTokens, saveGoogleTokens } from "../lib/google-tokens.js";
 
 const SCOPES = {
   drive: "https://www.googleapis.com/auth/drive.readonly",

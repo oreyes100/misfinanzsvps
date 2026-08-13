@@ -9,10 +9,10 @@
 //
 // Principio (heredado de Cuentas): la aprobación humana es obligatoria. El bot
 // nunca asienta sin el botón ✅.
-import { readJSON, writeJSON } from "./lib/blob-json.js";
-import { classifyImage } from "./lib/ai.js";
-import { loadSyncState, updateSyncState, addProposedTransactions, learnAccountAliases, validSyncCode } from "./lib/state-store.js";
-import { sendMessage, answerCallbackQuery, editMessageReplyMarkup, getFile, downloadFile, inlineKeyboard, webhookInfo } from "./lib/telegram.js";
+import { readJSON, writeJSON } from "../lib/blob-json.js";
+import { classifyImage } from "../lib/ai.js";
+import { loadSyncState, updateSyncState, addProposedTransactions, learnAccountAliases, validSyncCode } from "../lib/state-store.js";
+import { sendMessage, answerCallbackQuery, editMessageReplyMarkup, getFile, downloadFile, inlineKeyboard, webhookInfo } from "../lib/telegram.js";
 
 const bindingKey = (chatId) => `telegram/bindings/${String(chatId).replace(/[^0-9-]/g, "")}.json`;
 const proposalKey = (chatId, msgId) => `telegram/proposals/${String(chatId).replace(/[^0-9-]/g, "")}/${msgId}.json`;

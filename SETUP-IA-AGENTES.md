@@ -13,7 +13,7 @@ Endpoints nuevos (Vercel Functions):
 | `api/telegram.js` | Webhook del bot: foto → propuesta + botones ✅/❌ |
 | `api/telegram-config.js` | Vincula chat↔syncCode, token del bot, prueba y setWebhook |
 
-Módulos compartidos: `api/lib/{cors,blob-json,accounts,ai,state-store,google-tokens,telegram}.js`.
+Módulos compartidos: `lib/{cors,blob-json,accounts,ai,state-store,google-tokens,telegram}.js`.
 
 ---
 

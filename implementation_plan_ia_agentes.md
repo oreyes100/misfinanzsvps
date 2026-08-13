@@ -28,11 +28,11 @@
 ### Server (`api/`)
 | Archivo | Responsabilidad |
 |---|---|
-| `api/lib/blob-json.js` | readJSON/writeJSON privados sobre Vercel Blob |
-| `api/lib/cors.js` | CORS idéntico a sync.js (origin allowlist) |
-| `api/lib/accounts.js` | Normalización + resolución de cuentas por pista (banco, *dígitos) |
-| `api/lib/ai.js` | Motor IA multi-proveedor (gemini / openai / anthropic) para imágenes + post-proceso a cuentas |
-| `api/lib/state-store.js` | load/update estado sync + `addProposedTransactions` (balance-aware) |
+| `lib/blob-json.js` | readJSON/writeJSON privados sobre Vercel Blob |
+| `lib/cors.js` | CORS idéntico a sync.js (origin allowlist) |
+| `lib/accounts.js` | Normalización + resolución de cuentas por pista (banco, *dígitos) |
+| `lib/ai.js` | Motor IA multi-proveedor (gemini / openai / anthropic) para imágenes + post-proceso a cuentas |
+| `lib/state-store.js` | load/update estado sync + `addProposedTransactions` (balance-aware) |
 | `api/google-import.js` | POST: lista imágenes (Drive pública / Drive API / Photos API), clasifica por lotes, guarda batch en Blob; GET: leer batch |
 | `api/google-auth.js` | OAuth2 Google (Drive/Photos): generación de URL, callback de intercambio de tokens, guardado seguro por syncCode |
 | `api/telegram.js` | Webhook del bot: mensaje foto/PDF → propuesta + teclado ✅/❌; callback_query → aprobar/descartar |

@@ -10,7 +10,7 @@ export default defineConfig({
   },
   test: {
     environment: "node",
-    include: ["src/**/*.test.{js,jsx}", "api/lib/**/*.test.js"],
+    include: ["src/**/*.test.{js,jsx}", "lib/**/*.test.js"],
   },
   server: {
     // En desarrollo, la API serverless vive en producción (Vercel).

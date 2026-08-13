@@ -9,11 +9,11 @@
 //
 // Por límites del plan (Hobby: timeout de función), el POST procesa un bloque por
 // llamada (`limit`, por defecto 6). El cliente repite con `start` hasta `done`.
-import { readJSON, writeJSON } from "./lib/blob-json.js";
-import { allowedOrigin, cors } from "./lib/cors.js";
-import { classifyImage } from "./lib/ai.js";
-import { validSyncCode } from "./lib/state-store.js";
-import { ensureGoogleTokens } from "./lib/google-tokens.js";
+import { readJSON, writeJSON } from "../lib/blob-json.js";
+import { allowedOrigin, cors } from "../lib/cors.js";
+import { classifyImage } from "../lib/ai.js";
+import { validSyncCode } from "../lib/state-store.js";
+import { ensureGoogleTokens } from "../lib/google-tokens.js";
 
 const IMG_MIME = /^(image\/(jpe?g|png|webp|gif|heic|heif)|application\/pdf)$/;
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;

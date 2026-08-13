@@ -6,10 +6,10 @@
 //
 // El "secreto" del chat es su syncCode: solo quien lo posee puede leer/escribir
 // el vínculo (mismo modelo de propiedad que el estado de la nube).
-import { readJSON, writeJSON } from "./lib/blob-json.js";
-import { allowedOrigin, cors } from "./lib/cors.js";
-import { validSyncCode } from "./lib/state-store.js";
-import { sendMessage, registerWebhook } from "./lib/telegram.js";
+import { readJSON, writeJSON } from "../lib/blob-json.js";
+import { allowedOrigin, cors } from "../lib/cors.js";
+import { validSyncCode } from "../lib/state-store.js";
+import { sendMessage, registerWebhook } from "../lib/telegram.js";
 
 const bindingKey = (chatId) => `telegram/bindings/${String(chatId).replace(/[^0-9-]/g, "")}.json`;
 

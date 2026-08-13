@@ -43,7 +43,7 @@ cierra la ventana).
 
 ## Proveedores IA
 
-`api/lib/ai.js` soporta `gemini` (gratis), `openai` (gpt-4o-mini) y `anthropic`
+`lib/ai.js` soporta `gemini` (gratis), `openai` (gpt-4o-mini) y `anthropic`
 (claude-3-5-haiku-latest), elegibles en la UI. Errores normalizados:
 `invalid_key`, `forbidden`, `quota`, `model_missing`, `overloaded`, `network`,
 `no_key`. La key puede venir del body (Ajustes) o de env del servidor.
@@ -54,4 +54,4 @@ cierra la ventana).
 - El `syncCode` es la llave de propiedad: solo quien lo posee lee/escribe su batch.
 - Máx. 8 MB por archivo, 200 por lote; bloques de 6 para caber en el timeout Hobby.
 
-> Fuente: `api/google-import.js`, `api/google-auth.js`, `api/lib/ai.js`, `api/lib/accounts.js`, `src/components/IaImport.jsx`
+> Fuente: `api/google-import.js`, `api/google-auth.js`, `lib/ai.js`, `lib/accounts.js`, `src/components/IaImport.jsx`

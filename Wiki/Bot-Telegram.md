@@ -53,4 +53,4 @@ la contabilidad sin el botón ✅ (la aprobación es obligatoria y ocurre en Tel
 - «Sin cuenta asignada» al aprobar → configurar cuenta por defecto o editar la imagen.
 - Errores de IA normalizados (quota/forbidden/model_missing) se devuelven en el chat.
 
-> Fuente: `api/telegram.js`, `api/telegram-config.js`, `api/lib/telegram.js`, `api/lib/state-store.js`, `src/components/TelegramAgent.jsx`
+> Fuente: `api/telegram.js`, `api/telegram-config.js`, `lib/telegram.js`, `lib/state-store.js`, `src/components/TelegramAgent.jsx`
