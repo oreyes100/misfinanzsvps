@@ -12,7 +12,7 @@
 import { suggestAccountForImage } from "./accounts.js";
 
 const MODEL_DEFAULTS = {
-  gemini: ["gemini-2.5-flash", "gemini-2.0-flash"],
+  gemini: ["gemini-flash-latest", "gemini-2.5-flash", "gemini-2.0-flash"],
   openai: ["gpt-4o-mini"],
   anthropic: ["claude-3-5-haiku-latest"],
 };
@@ -97,7 +97,11 @@ async function callGemini(mime, base64, prompt, apiKey, models) {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
     let res;
     try {
-      res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-goog-api-key": apiKey },
+        body: JSON.stringify(body),
+      });
     } catch (e) {
       const err = new Error(`API de IA sin conexión: ${e.message}`);
       err.aiCode = "network";

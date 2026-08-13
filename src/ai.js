@@ -3,7 +3,7 @@ export const AI_PROVIDERS = [
   {
     id: "gemini",
     name: "Google Gemini",
-    model: "gemini-2.5-flash",
+    model: "gemini-flash-latest",
     free: true,
     color: "#4285F4",
     keyField: "geminiKey",

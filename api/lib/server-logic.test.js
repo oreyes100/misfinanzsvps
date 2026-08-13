@@ -139,9 +139,12 @@ describe("ai · clasificación de errores y proveedores", () => {
     expect(normalizeProvider("OPENAI")).toBe("openai");
     expect(normalizeProvider("nope")).toBe("gemini");
   });
-  it("modelsFor prioriza el pedido y completa con defaults", () => {
+  it("modelsFor prioriza el pedido y completa con defaults (alias latest primero)", () => {
     const models = modelsFor("gemini", "gemini-2.5-flash");
     expect(models[0]).toBe("gemini-2.5-flash");
+    expect(models[0]).not.toBe("gemini-2.0-flash");
+    expect(models).toContain("gemini-flash-latest");
     expect(models).toContain("gemini-2.0-flash");
+    expect(modelsFor("gemini")[0]).toBe("gemini-flash-latest");
   });
 });
