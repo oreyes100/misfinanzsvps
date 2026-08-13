@@ -83,11 +83,21 @@ describe("accrueInterest · modelo simple (monthly)", () => {
       lastAccrual: "2026-03-25", // ~3 meses → 3 periodos de 30 días
     };
     const state = stateWith(acc);
-    const result = accrueInterest(state);
-    const updated = result.accounts[0];
-    // 6000 * ((1 + 0.041/12)^3 - 1)
-    const expected = 6000 * (Math.pow(1 + 0.041 / 12, 3) - 1);
-    expect(updated.balance).toBeCloseTo(6000 + Math.round(expected * 100) / 100, 0);
+    // Mock today (2026-06-25) para que hayan exactamente 3 periodos de 30 días.
+    const realDate = Date;
+    global.Date = class extends realDate {
+      constructor(...args) { if (args.length === 0) super("2026-06-25T12:00:00"); else super(...args); }
+      static now() { return new realDate("2026-06-25T12:00:00").getTime(); }
+    };
+    try {
+      const result = accrueInterest(state);
+      const updated = result.accounts[0];
+      // 6000 * ((1 + 0.041/12)^3 - 1)
+      const expected = 6000 * (Math.pow(1 + 0.041 / 12, 3) - 1);
+      expect(updated.balance).toBeCloseTo(6000 + Math.round(expected * 100) / 100, 0);
+    } finally {
+      global.Date = realDate;
+    }
   });
 
   it("no devenga si no hay periodos completos", () => {
@@ -96,8 +106,18 @@ describe("accrueInterest · modelo simple (monthly)", () => {
       balance: 6000, rate: 0.041, accrual: "monthly",
       lastAccrual: "2026-06-20", // 5 días → 0 periodos
     };
-    const result = accrueInterest(stateWith(acc));
-    expect(result.accounts[0].balance).toBe(6000);
+    // Mock today (2026-06-25) para que solo pasen 5 días desde el último abono.
+    const realDate = Date;
+    global.Date = class extends realDate {
+      constructor(...args) { if (args.length === 0) super("2026-06-25T12:00:00"); else super(...args); }
+      static now() { return new realDate("2026-06-25T12:00:00").getTime(); }
+    };
+    try {
+      const result = accrueInterest(stateWith(acc));
+      expect(result.accounts[0].balance).toBe(6000);
+    } finally {
+      global.Date = realDate;
+    }
   });
 });
 

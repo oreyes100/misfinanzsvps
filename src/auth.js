@@ -12,6 +12,7 @@ export const ALL_SECTIONS = [
   { id: "auditoria", label: "Auditoría" },
   { id: "asistente", label: "Asistente IA" },
   { id: "congregacion", label: "Congregación (Cuentas)" },
+  { id: "importar", label: "Importar (IA)" },
   { id: "ajustes", label: "Ajustes" },
 ];
 

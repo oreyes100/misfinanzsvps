@@ -14,6 +14,7 @@ import { SecurityBadge } from "./components/UI.jsx";
 
 const Assistant = lazy(() => import("./components/Assistant.jsx"));
 const Auditoria = lazy(() => import("./components/Auditoria.jsx"));
+const Importar = lazy(() => import("./components/IaImport.jsx"));
 
 const VIEWS = {
   inicio: Dashboard,
@@ -23,6 +24,7 @@ const VIEWS = {
   auditoria: Auditoria,
   asistente: Assistant,
   congregacion: Congregacion,
+  importar: Importar,
   ajustes: Settings,
 };
 

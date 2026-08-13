@@ -1,8 +1,10 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useStore } from "../store.jsx";
 import { hasBiometricCredential, isBiometricAvailable, registerBiometric, removeBiometric } from "../auth.js";
 import { CURRENCIES, DASHBOARD_CARDS, cardOn, downloadBackup, downloadCSV, fmtMoney, parseBackup, findPotentialDuplicateGroups, findInterestAnomalyGroups, analyzeDuplicateValidity, DEMO_ACCOUNT_IDS } from "../utils.js";
+import { AI_PROVIDERS, aiProviderById } from "../ai.js";
 import { Btn, Field, Glass, inputCls } from "./UI.jsx";
+import TelegramAgent from "./TelegramAgent.jsx";
 import Users from "./Users.jsx";
 
 const SYNC_LABEL = {
@@ -193,6 +195,8 @@ export default function Settings({ session }) {
 
       <AIEngine />
 
+      <TelegramAgent />
+
       <CloudSync />
 
       <DataTools />
@@ -289,49 +293,73 @@ function BiometricSettings({ session }) {
 
 function AIEngine() {
   const { state, dispatch } = useStore();
-  const [key, setKey] = useState(state.settings.geminiKey || "");
+  const sel = state.settings.aiProvider || "gemini";
+  const prov = aiProviderById(sel);
+  const storedKey = state.settings[prov.keyField] || "";
+  const [key, setKey] = useState(storedKey);
   const [saved, setSaved] = useState(false);
-  const configured = !!state.settings.geminiKey;
+  const configured = !!storedKey;
+
+  useEffect(() => setKey(state.settings[aiProviderById(state.settings.aiProvider || "gemini").keyField] || ""), [sel]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const save = (e) => {
     e.preventDefault();
-    dispatch({ type: "update_settings", patch: { geminiKey: key.trim() || null } });
+    dispatch({ type: "update_settings", patch: { aiProvider: sel, [prov.keyField]: key.trim() || null } });
     setSaved(true);
     setTimeout(() => setSaved(false), 2500);
   };
 
   return (
-    <Glass aria-label="Motor de IA para escaneo">
+    <Glass aria-label="Motor de IA">
       <div className="mb-1 flex items-center justify-between">
-        <h2 className="text-base font-semibold">Motor de IA para escaneo (Gemini)</h2>
+        <h2 className="text-base font-semibold">Motor de IA para escaneo</h2>
         <span className={`text-xs ${configured ? "text-gain" : "text-ink-dim"}`} role="status">
           {configured ? "● Activo" : "○ Sin configurar"}
         </span>
       </div>
       <p className="mb-3 text-xs text-ink-dim">
-        Con una API key gratuita de Google Gemini, el escaneo de recibos, capturas bancarias y
-        transferencias usa visión por IA (mucho más preciso que el OCR local). Consigue la tuya en{" "}
-        <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer" className="text-accent-soft underline">aistudio.google.com/apikey</a>.
-        Se guarda en tu configuración y las imágenes se envían directamente a Google.
+        Con una API key de IA, el escaneo de recibos, capturas bancarias y transferencias usa visión por IA
+        (mucho más preciso que el OCR local). Se guarda en tu configuración y las imágenes se envían al proveedor elegido:{" "}
+        {prov.blurb}
       </p>
-      <form className="flex flex-wrap gap-2" onSubmit={save}>
-        <input
-          className={`${inputCls} min-w-52 flex-1`}
-          type="password"
-          autoComplete="off"
-          value={key}
-          onChange={(e) => setKey(e.target.value)}
-          placeholder="AIza…"
-          aria-label="API key de Gemini"
-        />
-        <Btn type="submit" onClick={save} className="shrink-0">{configured ? "Actualizar" : "Guardar"}</Btn>
-        {configured && (
-          <Btn variant="danger" className="shrink-0 text-xs" onClick={() => { setKey(""); dispatch({ type: "update_settings", patch: { geminiKey: null } }); }}>
-            Quitar
-          </Btn>
-        )}
-      </form>
-      {saved && <p role="status" className="mt-2 text-sm text-gain">✓ Guardado. El escaneo ya usa IA.</p>}
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label="Proveedor">
+          <select className={inputCls} value={sel} onChange={(e) => dispatch({ type: "update_settings", patch: { aiProvider: e.target.value } })}>
+            {AI_PROVIDERS.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+        </Field>
+        <div className="text-sm">
+          <span className="mb-1 block text-ink-dim">API key de {prov.name}</span>
+          <form className="flex gap-2" onSubmit={save}>
+            <input
+              className={`${inputCls} flex-1`}
+              type="password"
+              autoComplete="off"
+              value={key}
+              onChange={(e) => setKey(e.target.value)}
+              placeholder={prov.keyHint}
+              aria-label={`API key de ${prov.name}`}
+            />
+            <Btn type="submit" className="shrink-0">{configured ? "Actualizar" : "Guardar"}</Btn>
+          </form>
+          <span className="mt-1 block text-xs text-ink-dim/80">
+            {configured ? `Configurada${key && key !== storedKey ? " (sin guardar)" : ""}.` : "Déjala vacía para usar la clave del servidor, si la hay."}
+          </span>
+        </div>
+      </div>
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+        <a href={prov.keyUrl} target="_blank" rel="noreferrer" className="text-xs text-accent-soft underline">
+          Conseguir API key de {prov.name} ↗
+        </a>
+        <div className="flex gap-2">
+          {configured && (
+            <Btn variant="danger" className="text-xs" onClick={() => { setKey(""); dispatch({ type: "update_settings", patch: { [prov.keyField]: null } }); }}>
+              Quitar
+            </Btn>
+          )}
+        </div>
+      </div>
+      {saved && <p role="status" className="mt-2 text-sm text-gain">✓ Guardado. El escaneo ya usa IA ({prov.name}).</p>}
     </Glass>
   );
 }

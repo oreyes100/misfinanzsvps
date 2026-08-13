@@ -23,6 +23,8 @@ source: Wiki/ + src/components/ + store.jsx
 
 ## 🤖 IA Integrada
 - [[MCP-Config]] — Configuración MCP (Filesystem, GitHub, Context7, Playwright)
+- [[IA-Importacion-Cuentas]] — Drive/Photos → OCR multi-proveedor → revisión de propuestas por cuenta
+- [[Bot-Telegram]] — Webhook de recibos con propuesta + botones ✅/❌ (aprobación obligatoria)
 - *Pendiente*: `IA-Categorizacion.md` — utils.js: categorize() por keywords + confidence scoring
 - *Pendiente*: `IA-Asistente.md` — Assistant.jsx: human-in-the-loop, preview actions, voice, OCR
 - *Pendiente*: `IA-Voz-OCR.md` — Web Speech API (es-ES) + tesseract.js receipt scanning
@@ -50,7 +52,11 @@ source: Wiki/ + src/components/ + store.jsx
 | Dashboard | `src/components/Dashboard.jsx` | Bento Grid asimétrico |
 | Asistente IA | `src/components/Assistant.jsx` | Chat + voice + preview + OCR |
 | Cuentas | `src/components/Accounts.jsx` | CRUD + TAE + accrual config |
+| Importar (IA) | `src/components/IaImport.jsx` | Drive/Photos → revisión → registro |
+| Bot Telegram | `src/components/TelegramAgent.jsx` | Vinculación + webhook del bot |
 | Sync API | `api/sync.js` | GET/POST Vercel Function |
+| Import API | `api/google-import.js` | Batch + clasificación por bloques |
+| Bot API | `api/telegram.js` + `api/telegram-config.js` | Webhook + setWebhook |
 | Config Vite | `vite.config.js` | Proxy `/api` → prod |
 
 ---
