@@ -1,0 +1,15 @@
+{
+  "name": "misfinanzas-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "API local (SQLite) para Mis Finanzas — reemplaza las Vercel Functions + Blob",
+  "scripts": {
+    "start": "node server.mjs",
+    "migrate": "node migrate.mjs",
+    "migrate:live": "node migrate.mjs --live"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.9.1"
+  }
+}

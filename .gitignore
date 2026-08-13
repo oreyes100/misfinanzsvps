@@ -14,3 +14,8 @@ Cuentas/server.js.broken.bak
 Cuentas/*.conversation.json
 .DS_Store
 Cuentas.zip
+
+# Motor local SQLite (server) — datos y binarios no versionables
+backup/
+server/data/
+server/node_modules/
