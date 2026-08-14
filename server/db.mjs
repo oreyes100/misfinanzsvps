@@ -127,7 +127,10 @@ export function replaceUsers(db, users) {
 export function getSyncDoc(db, code) {
   const row = db.prepare("SELECT * FROM sync_docs WHERE sync_code = ?").get(code);
   if (!row) return null;
-  return { state: JSON.parse(row.state_json), updatedAt: row.updated_at };
+  // state_json guarda { state: <estado>, updatedAt } (misma forma que Vercel Blob).
+  // Desenrollamos para devolver `state` = estado real, igual que api/sync.js.
+  const parsed = JSON.parse(row.state_json || "{}");
+  return { state: parsed.state ?? null, updatedAt: parsed.updatedAt ?? row.updated_at };
 }
 
 function normalizeDoc(db, code, state) {
