@@ -119,7 +119,7 @@ async function handleUsers(req, res, rawBody) {
         const users = getUsers(db);
         const user = users.find((u) => u.username.toLowerCase() === String(body.username || "").toLowerCase().trim());
         if (verifyCredential(user, body.password)) {
-           const { hash, salt, ...safe } = user;
+           const { hash, ...safe } = user;
           return sendJson(res, 200, { ok: true, user: safe });
         }
         return sendJson(res, 200, { ok: false });
@@ -143,7 +143,7 @@ async function handleUsers(req, res, rawBody) {
         target.salt = crypto.randomBytes(16).toString("base64");
         target.hash = pbkdf2(body.newPassword, target.salt);
         replaceUsers(db, users);
-        const { hash, salt, ...safe } = target;
+        const { hash, ...safe } = target;
         return sendJson(res, 200, { ok: true, user: safe });
       } catch {
         return sendJson(res, 500, { error: "Error al cambiar la contraseña." });
@@ -216,7 +216,7 @@ async function handleSync(req, res, rawBody) {
   const id = String(req.url.split("?")[0].split("/").pop() || "");
   const query = new URLSearchParams(req.url.split("?")[1] || "");
   // el código viene como ?id=... (la ruta es /api/sync)
-  const code = String(query.get("id") || id || "");
+  const code = String(query.get("id") || id || "").toLowerCase();
   if (!ID_RE.test(code)) return sendJson(res, 400, { error: "Código de sincronización inválido." });
 
   if (req.method === "GET") {
