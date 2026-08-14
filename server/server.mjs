@@ -7,6 +7,7 @@ import http from "node:http";
 import crypto from "node:crypto";
 import { openDb, initSchema, getUsers, replaceUsers, getSyncDoc, putSyncDoc, getPendings, writePendings, DATA_DIR } from "./db.mjs";
 import { mergeStates } from "../api/_merge.js";
+import { handleGoogleImport, handleGoogleAuth, handleTelegramConfig, handleTelegram } from "./extra.js";
 import { mkdirSync } from "node:fs";
 
 mkdirSync(DATA_DIR, { recursive: true });
@@ -333,6 +334,52 @@ async function handleSignup(req, res, rawBody) {
 }
 
 // ---------- router ----------
+function safeBody(raw) {
+  if (!raw || typeof raw !== "object") return {};
+  if (Array.isArray(raw)) return raw;
+  return raw;
+}
+async function readBodyAllowEmpty(req) {
+  const len = parseInt(req.headers["content-length"] || "0", 10);
+  if (!len) return null;
+  return readBody(req);
+}
+async function routeExtra(handler, req, res, db) {
+  const isJson = (req.headers["content-type"] || "").includes("application/json");
+  let rawBody = null;
+  if (req.method === "POST") {
+    rawBody = isJson ? await readBody(req) : await readRaw(req);
+  }
+  let r;
+  try { r = await handler(req, res, rawBody, db); }
+  catch (e) {
+    if (e.message === "bad_json") return sendJson(res, 400, { error: "JSON inválido." });
+    if (e.message === "too_large") return sendJson(res, 413, { error: "Cuerpo demasiado grande." });
+    console.error("[server] extra error:", e);
+    return sendJson(res, 500, { error: "Error interno." });
+  }
+  const status = r.status || 200;
+  const headers = r.headers || {};
+  if (typeof r.body === "string") {
+    res.writeHead(status, { "Content-Type": headers["Content-Type"] || "text/plain; charset=utf-8" });
+    res.end(r.body);
+  } else if (r.body === "" || r.body === null || r.body === undefined) {
+    res.writeHead(status);
+    res.end();
+  } else {
+    for (const k of Object.keys(headers)) res.setHeader(k, headers[k]);
+    sendJson(res, status, r.body);
+  }
+}
+async function readRaw(req, limit = MAX_BYTES) {
+  return new Promise((resolve, reject) => {
+    const chunks = []; let size = 0;
+    req.on("data", (c) => { size += c.length; if (size > limit) { reject(new Error("too_large")); req.destroy(); return; } chunks.push(c); });
+    req.on("end", () => resolve(Buffer.concat(chunks)));
+    req.on("error", reject);
+  });
+}
+
 const server = http.createServer(async (req, res) => {
   const urlPath = req.url.split("?")[0];
   const origin = allowedOrigin(req);
@@ -351,6 +398,10 @@ const server = http.createServer(async (req, res) => {
     if (urlPath === "/api/users") return await handleUsers(req, res, req.method === "POST" ? await readBody(req) : null);
     if (urlPath === "/api/sync") return await handleSync(req, res, req.method === "POST" ? await readBody(req) : null);
     if (urlPath === "/api/signup") return await handleSignup(req, res, await readBody(req));
+    if (urlPath === "/api/google-import") return await routeExtra(handleGoogleImport, req, res, db);
+    if (urlPath === "/api/google-auth") return await routeExtra(handleGoogleAuth, req, res, db);
+    if (urlPath === "/api/telegram") return await routeExtra(handleTelegram, req, res, db);
+    if (urlPath === "/api/telegram-config") return await routeExtra(handleTelegramConfig, req, res, db);
     return sendJson(res, 404, { error: "No encontrado." });
   } catch (e) {
     if (e.message === "bad_json") return sendJson(res, 400, { error: "JSON inválido." });
