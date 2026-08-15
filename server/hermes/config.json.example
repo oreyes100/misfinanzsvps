@@ -1,0 +1,12 @@
+{
+  "syncCode": "pon-aqui-el-sync-code",
+  "dbPath": "/home/devops/mis-finanzas/server/data/misfinanzas.db",
+  "watchDir": "/home/devops/obsidian-vault/images/inbox",
+  "processedDir": "/home/devops/obsidian-vault/images/processed",
+  "reviewDir": "/home/devops/obsidian-vault/images/review",
+  "journalFile": "/home/devops/hermes-agent/journal.jsonl",
+  "pollIntervalMs": 15000,
+  "maxAuditRounds": 3,
+  "folderAccountMap": {},
+  "geminiKey": null
+}

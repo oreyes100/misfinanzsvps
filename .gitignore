@@ -19,3 +19,6 @@ Cuentas.zip
 backup/
 server/data/
 server/node_modules/
+
+# Agente Hermes - configuracion local con datos personales
+server/hermes/config.json
