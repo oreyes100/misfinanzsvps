@@ -14,8 +14,9 @@ import { fileURLToPath } from "node:url";
 import { openDb } from "../db.mjs";
 import { aiExtractFromFile } from "./gemini.mjs";
 import { ocrImage } from "./ocr.mjs";
+import { parseOcrText } from "./local.mjs";
 import * as apply from "./apply.mjs";
-import { reviewStatement, reconcileEndingBalance } from "./review.mjs";
+import { reviewStatement, reviewStatementLocal, reconcileEndingBalance } from "./review.mjs";
 import { appendJournal, readJournal } from "./journal.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -34,6 +35,7 @@ function loadConfig() {
     pollIntervalMs: 15000,
     maxAuditRounds: 3,
     folderAccountMap: {},
+    bankAccountMap: {},
     geminiKey: null,
     ocrUrl: null,
   };
@@ -91,6 +93,16 @@ function moveTo(file, dir) {
 function resolveAccountFor(state, result, file) {
   const byFolder = apply.findAccountByFolder(state, cfg.folderAccountMap, file, cfg.watchDir);
   if (byFolder) return byFolder;
+  // Mapeo banco->cuenta (p. ej. "bbva" -> BBVANOMINA) cuando el parser local
+  // solo puede detectar el banco, no la cuenta específica.
+  if (result.merchant && cfg.bankAccountMap) {
+    const key = String(result.merchant).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    const mapped = cfg.bankAccountMap[key];
+    if (mapped) {
+      const acc = (state.accounts || []).find((a) => a.id === mapped || a.name === mapped);
+      if (acc) return acc;
+    }
+  }
   const hint = result.type === "transfer"
     ? `${result.transfer?.from || ""} ${result.transfer?.to || ""}`
     : result.merchant;
@@ -234,6 +246,39 @@ async function handleStatement(state, result, file, source) {
   };
 }
 
+// Versión 100% local de handleStatement (sin Gemini): registra los movimientos
+// no-duplicados y concilia. La auditoría local dedupe por importe+fecha.
+async function handleStatementLocal(state, result, file, source) {
+  const movements = Array.isArray(result.movements) ? result.movements.filter((m) => m && m.amount > 0) : [];
+  if (movements.length === 0) throw new Error("extracto sin movimientos");
+  const acc = resolveAccountFor(state, result, file);
+  if (!acc) throw new Error("cuenta del estado de cuenta no resuelta");
+
+  const reviewed = await reviewStatementLocal({
+    state,
+    account: acc,
+    movements,
+    source,
+  });
+
+  const reconciled = reconcileEndingBalance({
+    state: reviewed.state,
+    accountId: acc.id,
+    statementBalance: result.statementBalance,
+    source,
+  });
+
+  const actions = [
+    ...reviewed.applied.map((a) => ({ kind: "statement_movement", amount: a.amount, date: a.date, desc: a.description, accountId: acc.id })),
+    ...(reconciled.applied ? [{ kind: "reconcile", diff: reconciled.diff }] : []),
+  ];
+  return {
+    state: reconciled.state,
+    actions,
+    report: { applied: reviewed.applied.length, skipped: reviewed.skipped, reconcile: reconciled.diff },
+  };
+}
+
 // ---------- Flujo principal ----------
 
 // Cooldown cuando Gemini rechaza por cuota: evita martillar la API.
@@ -255,16 +300,16 @@ async function processFile(file) {
 
   try {
     const state = apply.loadState(db, cfg.syncCode);
-    const geminiKey = effectiveGeminiKey(state);
-    if (!geminiKey) throw new Error("sin GEMINI key: pon settings.geminiKey en la app, config.geminiKey o env GEMINI_API_KEY");
-
     const sourceBase = path.basename(file).replace(/\.processing$/, "");
+    // Hermes reclama el archivo renombrándolo a X.jpeg.processing. El servidor
+    // OCR maneja la extensión .processing con un temp copy; pasamos el lock.
+    const imgPath = lock;
 
-    // Paso OCR local (Unlimited-OCR): opcional, si falla no bloquea el flujo.
+    // Paso 1: OCR local (PaddleOCR). Si falla no bloquea el flujo.
     let ocrText = null;
     if (cfg.ocrUrl) {
       try {
-        ocrText = await ocrImage(lock, { url: cfg.ocrUrl });
+        ocrText = await ocrImage(imgPath, { url: cfg.ocrUrl });
         appendJournal(cfg.journalFile, { event: "ocr", file: base, chars: ocrText.length });
         console.log(`[hermes] OCR ${base} → ${ocrText.length} caracteres`);
       } catch (e) {
@@ -272,11 +317,32 @@ async function processFile(file) {
       }
     }
 
-    const result = await aiExtractFromFile(lock, geminiKey, {
-      categories: state.categories || [],
-      accounts: state.accounts || [],
-      ocrText,
-    });
+    // Paso 2: extracción LOCAL (parser sin IA) como vía principal.
+    let result = null;
+    let local = false;
+    if (ocrText) {
+      const parsed = parseOcrText(ocrText);
+      if (parsed.ok) {
+        result = parsed.result;
+        local = true;
+        appendJournal(cfg.journalFile, { event: "extract_local", file: base, type: result.type });
+        console.log(`[hermes] extract LOCAL ${base} → ${result.type} (${result.movements?.length || 0} movs)`);
+      } else {
+        console.warn(`[hermes] extract local falló ${base}: ${parsed.error}`);
+      }
+    }
+
+    // Paso 3: respaldo Gemini si el parser local no reconoció el formato.
+    if (!result) {
+      const geminiKey = effectiveGeminiKey(state);
+      if (!geminiKey) throw new Error("sin GEMINI key: pon settings.geminiKey en la app, config.geminiKey o env GEMINI_API_KEY");
+      result = await aiExtractFromFile(imgPath, geminiKey, {
+        categories: state.categories || [],
+        accounts: state.accounts || [],
+        ocrText,
+      });
+      appendJournal(cfg.journalFile, { event: "extract_gemini", file: base, type: result.type });
+    }
 
     const baseCurrency = state.settings?.baseCurrency || "MXN";
     let next = state;
@@ -288,7 +354,11 @@ async function processFile(file) {
     } else if (result.type === "transfer") {
       ({ state: next, actions } = handleTransfer(state, result, lock, sourceBase));
     } else if (result.type === "statement") {
-      ({ state: next, actions, report } = await handleStatement(state, result, lock, sourceBase));
+      if (local) {
+        ({ state: next, actions, report } = await handleStatementLocal(state, result, lock, sourceBase));
+      } else {
+        ({ state: next, actions, report } = await handleStatement(state, result, lock, sourceBase));
+      }
     } else {
       throw new Error(`tipo no soportado: ${result.type}`);
     }
