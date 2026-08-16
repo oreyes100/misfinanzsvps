@@ -114,6 +114,51 @@ export function categorize(description: string, categories: Category[] = DEFAULT
   return { category: best.cat, confidence: best.score > 0 ? Math.min(0.6 + best.score / 25, 0.99) : 0.3 };
 }
 
+/**
+ * Categorización semántica vía embeddings + k-NN (async).
+ * Requiere que lib/ai.js exporte embedText y cosineSimilarity.
+ * @param {string} description - Descripción de la transacción
+ * @param {Category[]} categories - Categorías del usuario (para validar resultado)
+ * @param {Array<{text:string, embedding:number[], category:string}>} knownExamples - Ejemplos con embeddings precalculados
+ * @param {string} embedProvider - "ollama" | "openai" | "gemini"
+ * @returns {Promise<{category:string, confidence:number}>}
+ */
+export async function categorizeSemanticAsync(
+  description: string,
+  categories: Category[] = DEFAULT_CATEGORIES,
+  knownExamples: Array<{text: string; embedding: number[]; category: string}> = [],
+  embedProvider: "ollama" | "openai" | "gemini" = "ollama"
+): Promise<{category: string; confidence: number}> {
+  if (!description?.trim() || !knownExamples?.length) {
+    return categorize(description, categories);
+  }
+  try {
+    const { embedText, cosineSimilarity } = await import("../lib/ai.js");
+    const descEmb = await embedText(description, embedProvider);
+    if (!descEmb?.length) return categorize(description, categories);
+
+    const validCats = new Set(categories.filter(c => !c.system).map(c => c.name));
+    const scored = knownExamples
+      .filter(x => x.embedding?.length === descEmb.length && validCats.has(x.category))
+      .map(x => ({ category: x.category, sim: cosineSimilarity(descEmb, x.embedding) }))
+      .sort((a, b) => b.sim - a.sim)
+      .slice(0, 5);
+
+    if (!scored.length) return categorize(description, categories);
+
+    const votes = {};
+    for (const s of scored) {
+      votes[s.category] = (votes[s.category] || 0) + s.sim;
+    }
+    const top = Object.entries(votes).sort((a, b) => b[1] - a[1])[0];
+    const totalSim = scored.reduce((sum, s) => sum + s.sim, 0);
+    const confidence = Math.min(0.95, top[1] / (totalSim / scored.length || 1));
+    return { category: top[0], confidence };
+  } catch {
+    return categorize(description, categories);
+  }
+}
+
 export function catColor(name: string, categories: Category[] = DEFAULT_CATEGORIES): string {
   return categories.find((c) => c.name === name)?.color || "#7a8db3";
 }
