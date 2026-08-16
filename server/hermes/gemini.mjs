@@ -5,6 +5,126 @@
 import fs from "node:fs";
 import path from "node:path";
 
+// --- Configuración de proveedores de embeddings ---
+const OLLAMA_BASE = process.env.OLLAMA_BASE || "http://localhost:11434";
+const OLLAMA_EMBED_MODEL = process.env.OLLAMA_EMBED_MODEL || "nomic-embed-text";
+
+const GEMINI_EMBED_MODEL = "text-embedding-004";
+const OPENAI_EMBED_MODEL = "text-embedding-3-small";
+
+/**
+ * Genera embeddings para un texto.
+ * @param {string} text - Texto a embeddear
+ * @param {string} provider - "ollama" | "openai" | "gemini"
+ * @param {string} apiKey - API key (para openai/gemini) o URL base (ollama)
+ * @param {string} model - Modelo específico (opcional)
+ * @returns {Promise<number[]>} Vector de embeddings
+ */
+export async function embedText(text, provider = "ollama", apiKey, model) {
+  const t = String(text || "").trim();
+  if (!t) return [];
+
+  if (provider === "ollama") {
+    const m = model || OLLAMA_EMBED_MODEL;
+    const base = apiKey || OLLAMA_BASE;
+    const res = await fetch(`${base}/api/embeddings`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: m, prompt: t }),
+    });
+    if (!res.ok) throw new Error(`Ollama embeddings ${res.status}: ${await res.text()}`);
+    const out = await res.json();
+    return out.embedding || [];
+  }
+
+  if (provider === "openai") {
+    const key = apiKey || process.env.OPENAI_API_KEY;
+    if (!key) throw new Error("Falta OPENAI_API_KEY");
+    const m = model || OPENAI_EMBED_MODEL;
+    const res = await fetch("https://api.openai.com/v1/embeddings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+      body: JSON.stringify({ model: m, input: t }),
+    });
+    if (!res.ok) throw new Error(`OpenAI embeddings ${res.status}: ${await res.text()}`);
+    const out = await res.json();
+    return out.data?.[0]?.embedding || [];
+  }
+
+  if (provider === "gemini") {
+    const key = apiKey || process.env.GEMINI_API_KEY;
+    if (!key) throw new Error("Falta GEMINI_API_KEY");
+    const m = model || GEMINI_EMBED_MODEL;
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${m}:embedContent?key=${encodeURIComponent(key)}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: { parts: [{ text: t }] } }),
+      }
+    );
+    if (!res.ok) throw new Error(`Gemini embeddings ${res.status}: ${await res.text()}`);
+    const out = await res.json();
+    return out.embedding?.values || [];
+  }
+
+  throw new Error(`Proveedor embeddings no soportado: ${provider}`);
+}
+
+/**
+ * Similaridad coseno entre dos vectores.
+ */
+export function cosineSimilarity(a, b) {
+  if (!a.length || !b.length || a.length !== b.length) return 0;
+  let dot = 0, na = 0, nb = 0;
+  for (let i = 0; i < a.length; i++) { dot += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i]; }
+  return dot / (Math.sqrt(na) * Math.sqrt(nb) || 1);
+}
+
+/**
+ * Categorización semántica vía embeddings + k-NN (async).
+ * @param {string} description - Descripción de la transacción
+ * @param {Array<{text:string, embedding:number[], category:string}>} knownExamples - Ejemplos con embeddings precalculados
+ * @param {number} k - Vecinos a considerar
+ * @param {string} embedProvider - "ollama" | "openai" | "gemini"
+ * @param {string} embedApiKey - API key para el proveedor
+ * @returns {Promise<{category:string, confidence:number}>}
+ */
+export async function categorizeSemanticAsync(
+  description,
+  knownExamples,
+  k = 5,
+  embedProvider = "ollama",
+  embedApiKey
+) {
+  if (!description?.trim() || !knownExamples?.length) {
+    return { category: "Otros", confidence: 0.3 };
+  }
+  try {
+    const descEmb = await embedText(description, embedProvider, embedApiKey);
+    if (!descEmb?.length) return { category: "Otros", confidence: 0.3 };
+
+    const scored = knownExamples
+      .filter(x => x.embedding?.length === descEmb.length)
+      .map(x => ({ category: x.category, sim: cosineSimilarity(descEmb, x.embedding) }))
+      .sort((a, b) => b.sim - a.sim)
+      .slice(0, k);
+
+    if (!scored.length) return { category: "Otros", confidence: 0.3 };
+
+    const votes = {};
+    for (const s of scored) {
+      votes[s.category] = (votes[s.category] || 0) + s.sim;
+    }
+    const top = Object.entries(votes).sort((a, b) => b[1] - a[1])[0];
+    const totalSim = scored.reduce((sum, s) => sum + s.sim, 0);
+    const confidence = Math.min(0.95, top[1] / (totalSim / scored.length || 1));
+    return { category: top[0], confidence };
+  } catch {
+    return { category: "Otros", confidence: 0.3 };
+  }
+}
+
 export const SUBCATEGORIES = {
   Comida: [
     { name: "Abarrotes", words: ["arroz", "frijol", "frijoles", "azucar", "azúcar", "sal", "aceite", "harina", "pasta", "atun", "atún", "sopa", "lata", "enlatado", "cafe", "café", "mayonesa", "salsa", "especias", "abarrote"] },
@@ -81,12 +201,9 @@ async function geminiCall(parts, apiKey, maxRetries = 2) {
  * @param {{categories?: Array, accounts?: Array, ocrText?: string|null}} opts
  * @returns {Promise<object>} { type, merchant, date, total, items, movements, transfer, statementBalance }
  */
-export async function aiExtractFromFile(filePath, apiKey, { categories = [], accounts = [], ocrText = null } = {}) {
+export async function aiExtractFromFile(filePath, apiKey, { categories = [], accounts = [], ocrText = null, knownExamples = [] } = {}) {
   const data = fs.readFileSync(filePath).toString("base64");
   const catNames = categories.filter((c) => !c.system).map((c) => c.name).join(", ");
-  const subcats = Object.entries(SUBCATEGORIES)
-    .map(([p, subs]) => `${p}: ${subs.map((s) => s.name).join(", ")}`)
-    .join("; ");
   const accNames = accounts.map((a) => a.name).join(", ");
 
   const prompt = `Analiza esta imagen financiera. Es UNA de estas tres cosas:
@@ -109,7 +226,7 @@ Devuelve SOLO un objeto JSON con esta forma exacta (sin texto adicional):
 Reglas:
 - "items" solo para receipt (cada línea de producto). "movements" solo para statement. "transfer" solo para transfer.
 - "statementBalance": SOLO para statement, el saldo actual/último saldo visible en la captura (p. ej. "Saldo: $1,234.56" o el total disponible). Si no se ve claramente, null.
-- Categorías disponibles: ${catNames}. Subcategorías de Comida y Hogar: ${subcats}. Si dudas de la categoría usa null.
+- Categorías disponibles: ${catNames}. Si dudas de la categoría usa null.
 - En statements: dirección "in" = abono/depósito/pago recibido (signo +, verde, flecha entrante); "out" = cargo/compra. Marca isTransfer=true en pagos interbancarios, SPEI, traspasos o pagos de tarjeta.
 - Fechas: si falta el año usa 2026. Convierte "08 Jun" → "2026-06-08".
 - Importes SIEMPRE positivos, usa punto decimal.
