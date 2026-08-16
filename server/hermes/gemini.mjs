@@ -78,10 +78,10 @@ async function geminiCall(parts, apiKey, maxRetries = 2) {
  * Analiza una imagen financiera con Gemini.
  * @param {string} filePath — ruta local de la imagen.
  * @param {string} apiKey
- * @param {{categories?: Array, accounts?: Array, statementBalance?: boolean}} opts
+ * @param {{categories?: Array, accounts?: Array, ocrText?: string|null}} opts
  * @returns {Promise<object>} { type, merchant, date, total, items, movements, transfer, statementBalance }
  */
-export async function aiExtractFromFile(filePath, apiKey, { categories = [], accounts = [] } = {}) {
+export async function aiExtractFromFile(filePath, apiKey, { categories = [], accounts = [], ocrText = null } = {}) {
   const data = fs.readFileSync(filePath).toString("base64");
   const catNames = categories.filter((c) => !c.system).map((c) => c.name).join(", ");
   const subcats = Object.entries(SUBCATEGORIES)
@@ -115,7 +115,14 @@ Reglas:
 - Importes SIEMPRE positivos, usa punto decimal.
 - Cuentas del usuario (por si la imagen menciona alguna): ${accNames}.`;
 
-  return geminiCall([{ text: prompt }, { inline_data: { mime_type: mimeFromPath(filePath), data } }], apiKey);
+  const parts = [{ text: prompt }];
+  if (ocrText) {
+    parts.push({
+      text: `\n[Texto extraído por OCR local (Unlimited-OCR) de la misma imagen. Úsalo si la imagen es ilegible o para confirmar importes, fechas o nombres]:\n${String(ocrText).slice(0, 6000)}`,
+    });
+  }
+  parts.push({ inline_data: { mime_type: mimeFromPath(filePath), data } });
+  return geminiCall(parts, apiKey);
 }
 
 /**

@@ -13,6 +13,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { openDb } from "../db.mjs";
 import { aiExtractFromFile } from "./gemini.mjs";
+import { ocrImage } from "./ocr.mjs";
 import * as apply from "./apply.mjs";
 import { reviewStatement, reconcileEndingBalance } from "./review.mjs";
 import { appendJournal, readJournal } from "./journal.mjs";
@@ -34,6 +35,7 @@ function loadConfig() {
     maxAuditRounds: 3,
     folderAccountMap: {},
     geminiKey: null,
+    ocrUrl: null,
   };
   if (fs.existsSync(CONFIG_PATH)) {
     Object.assign(base, JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8")));
@@ -257,9 +259,23 @@ async function processFile(file) {
     if (!geminiKey) throw new Error("sin GEMINI key: pon settings.geminiKey en la app, config.geminiKey o env GEMINI_API_KEY");
 
     const sourceBase = path.basename(file).replace(/\.processing$/, "");
+
+    // Paso OCR local (Unlimited-OCR): opcional, si falla no bloquea el flujo.
+    let ocrText = null;
+    if (cfg.ocrUrl) {
+      try {
+        ocrText = await ocrImage(lock, { url: cfg.ocrUrl });
+        appendJournal(cfg.journalFile, { event: "ocr", file: base, chars: ocrText.length });
+        console.log(`[hermes] OCR ${base} → ${ocrText.length} caracteres`);
+      } catch (e) {
+        console.warn(`[hermes] OCR skip ${base}: ${e.message}`);
+      }
+    }
+
     const result = await aiExtractFromFile(lock, geminiKey, {
       categories: state.categories || [],
       accounts: state.accounts || [],
+      ocrText,
     });
 
     const baseCurrency = state.settings?.baseCurrency || "MXN";
