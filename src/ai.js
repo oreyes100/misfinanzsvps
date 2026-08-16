@@ -1,6 +1,17 @@
 // ai.js — Metadata de los proveedores de IA integrados (UI cliente).
 export const AI_PROVIDERS = [
   {
+    id: "ollama",
+    name: "Ollama (Local)",
+    model: "qwen2.5-vl / nomic-embed-text",
+    free: true,
+    color: "#2E7D32",
+    keyField: "ollamaUrl",
+    keyHint: "http://localhost:11434",
+    keyUrl: "https://ollama.com/download",
+    blurb: "100% local, sin coste, privacidad total. Requiere Ollama instalado.",
+  },
+  {
     id: "gemini",
     name: "Google Gemini",
     model: "gemini-flash-latest",
