@@ -27,6 +27,12 @@
 //     parámetro inválido/inyectado no se reintenta. El auth layer sigue emitiendo
 //     PENDING_APPROVAL para critical; el gate HITL es defensa en profundidad.
 //
+// MCP-05 (fortaleza de datos):
+//   - PersistenceOrchestrator: WAL + checkpoints + recovery + export/import.
+//   - Cada tool mutadora (add_transaction, transfer_funds, drive_sync) registra
+//     su llamada como entrada de auditoría en el WAL (audit trail) vía
+//     runToolWithPersistence, la capa MÁS EXTERNA del chain.
+//
 // Arranque:
 //   node src/mcp/server.ts            (o compilado: node dist/mcp/server.js)
 // Uso como módulo: import { createMcpServer, startMcpServer } from "./server";
@@ -47,6 +53,7 @@ import { HealthDashboard } from "./resilience/health-dashboard.ts";
 import { ToolPriority, type ResilienceConfig, type ToolResilienceConfig, type ToolPriority as ToolPriorityType } from "./resilience/types.ts";
 import { createRetryOrchestrator, runToolWithRetry } from "./retry-integration.ts";
 import { createSecurityOrchestrator, runToolWithSecurity } from "./security-integration.ts";
+import { createPersistenceOrchestrator, runToolWithPersistence } from "./persistence-integration.ts";
 import type { SecureToolDefinition } from "./tool-registry.ts";
 
 const SERVER_NAME = "misfinanzas-mcp-server";
@@ -195,6 +202,8 @@ export function createMcpServer(options: McpServerOptions = {}) {
   const retry = createRetryOrchestrator();
   // MCP-04: capa de seguridad (schema registry + validación + sandbox + HITL).
   const security = createSecurityOrchestrator();
+  // MCP-05: capa de persistencia (WAL + checkpoints + recovery + audit trail).
+  const persistence = createPersistenceOrchestrator();
 
   // Herramienta de admin: reporte de salud del sistema de resiliencia.
   registry.register({
@@ -210,8 +219,9 @@ export function createMcpServer(options: McpServerOptions = {}) {
   });
 
   // Registrar TODAS las herramientas del registry en el orquestador de resiliencia.
-  // El handler real se envuelve con seguridad (MCP-04) ANTES del retry (MCP-03):
-  // validación de schema → sandbox de ejecución → retry/backoff del handler real.
+  // El handler real se envuelve (de fuera hacia dentro): persistencia (MCP-05) →
+  // seguridad (MCP-04) → retry/backoff (MCP-03). La persistencia es la capa más
+  // externa para que el audit trail capture la llamada pase lo que pase con el resto.
   for (const tool of registry.listAll()) {
     const config = resilienceConfigFor(tool);
     const overrides = options.resilienceOverrides?.[tool.name];
@@ -219,7 +229,9 @@ export function createMcpServer(options: McpServerOptions = {}) {
       ? { ...config, ...overrides, toolName: tool.name }
       : config;
     orchestrator.registerTool(merged, (args, ctx) =>
-      runToolWithSecurity(security, tool, args, ctx, (sanitized) => runToolWithRetry(retry, tool, sanitized, ctx))
+      runToolWithPersistence(persistence, tool, args, ctx, (raw) =>
+        runToolWithSecurity(security, tool, raw, ctx, (sanitized) => runToolWithRetry(retry, tool, sanitized, ctx))
+      )
     );
   }
 
@@ -354,14 +366,15 @@ export function createMcpServer(options: McpServerOptions = {}) {
     };
   });
 
-  // Al cerrar la conexión, liberar timers del orquestador, retry y seguridad.
+  // Al cerrar la conexión, liberar timers del orquestador, retry, seguridad y persistencia.
   server.onclose = () => {
     orchestrator.destroy();
     retry.destroy();
     security.destroy();
+    persistence.destroy();
   };
 
-  return { server, registry, auth, orchestrator, dashboard, retry, security };
+  return { server, registry, auth, orchestrator, dashboard, retry, security, persistence };
 }
 
 /** Conecta el servidor por stdio. Devuelve la promesa de conexión. */

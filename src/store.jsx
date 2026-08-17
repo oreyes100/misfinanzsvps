@@ -4,6 +4,7 @@ import { accrueInterest } from "./interest.js";
 import { migrate } from "./migrations.js";
 import useFX from "./useFX.js";
 import { mergeSyncStates } from "./merge.js";
+import { createPersistenceOrchestrator } from "./mcp/persistence-integration.js";
 
 export { accrueInterest };
 
@@ -487,30 +488,48 @@ function innerReducer(state, action) {
 const StoreCtx = createContext(null);
 const KEY = "mis-finazas-v1";
 
+// MCP-05: orquestador de persistencia (WAL + checkpoints + recovery + export).
+// Instancia única por StoreProvider; guarda en `mis-finazas-persistence:*`.
+const persistence = createPersistenceOrchestrator();
+
+/** Normaliza el estado leído: merge con SEED, saneamiento y migraciones. */
+function finalize(saved) {
+  const merged = { ...SEED, ...saved, fx: { ...BASE_FX, ...saved.fx } };
+  merged.accounts = stripDemoAccounts(merged.accounts, merged.deletedAccountIds || []);
+  merged.transactions = cleanOrphanTransactions(merged.accounts, merged.transactions);
+  if (merged.deletedTransactions) {
+    merged.transactions = (merged.transactions || []).filter((t) => !merged.deletedTransactions[t.id]);
+  }
+  const delAssets = merged.deletedAssetIds || [];
+  if (delAssets.length && merged.assets) {
+    merged.assets = {
+      ...merged.assets,
+      crypto: (merged.assets.crypto || []).filter((c) => !delAssets.includes(c.id)),
+      realEstate: (merged.assets.realEstate || []).filter((r) => !delAssets.includes(r.id)),
+      depreciating: (merged.assets.depreciating || []).filter((d) => !delAssets.includes(d.id)),
+    };
+  }
+  return migrate(accrueInterest(merged));
+}
+
 function load() {
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return accrueInterest(SEED);
-    const saved = JSON.parse(raw);
-    const merged = { ...SEED, ...saved, fx: { ...BASE_FX, ...saved.fx } };
-    merged.accounts = stripDemoAccounts(merged.accounts, merged.deletedAccountIds || []);
-    merged.transactions = cleanOrphanTransactions(merged.accounts, merged.transactions);
-    if (merged.deletedTransactions) {
-      merged.transactions = (merged.transactions || []).filter((t) => !merged.deletedTransactions[t.id]);
-    }
-    const delAssets = merged.deletedAssetIds || [];
-    if (delAssets.length && merged.assets) {
-      merged.assets = {
-        ...merged.assets,
-        crypto: (merged.assets.crypto || []).filter((c) => !delAssets.includes(c.id)),
-        realEstate: (merged.assets.realEstate || []).filter((r) => !delAssets.includes(r.id)),
-        depreciating: (merged.assets.depreciating || []).filter((d) => !delAssets.includes(d.id)),
-      };
-    }
-    return migrate(accrueInterest(merged));
+    return finalize(JSON.parse(raw));
   } catch {
+    // localStorage corrupto/ilegible → recovery desde WAL/checkpoints (MCP-05).
+    const rec = persistence.recoverStateOnLoad(accrueInterest(SEED));
+    console.warn("[store] estado local corrupto → recovery:", rec.status, rec.reasons);
+    if (rec.status !== "reset") return finalize(rec.state);
     return accrueInterest(SEED);
   }
+}
+
+/** Parte durable para WAL/checkpoints (sin precios/FX en vivo). Conserva _syncVersion. */
+function durableSnapshot(state) {
+  const { priceHistory, fx, goldPriceEUR, ...rest } = state;
+  return rest;
 }
 
 const SYNC_KEY = "mis-finazas-sync-id";
@@ -771,10 +790,26 @@ export function StoreProvider({ children }) {
   useEffect(() => {
     const handler = () => {
       try { localStorage.setItem(KEY, stableSaveRef.current); } catch {}
+      persistence.flush(); // MCP-05: escribir WAL pendiente antes de cerrar.
     };
     window.addEventListener('beforeunload', handler);
     return () => window.removeEventListener('beforeunload', handler);
   }, []);
+
+  // MCP-05: registrar cada mutación en el WAL + checkpointing periódico.
+  // Keyed por _syncVersion (solo cambia en mutaciones reales): update_fx,
+  // accrue y hydrate no incrementan la versión, así que no ensucian el WAL.
+  // El ref de la última versión hace esto StrictMode-safe (la versión solo
+  // avanza en el estado confirmado por el reducer, nunca en un doble-invoke).
+  const lastRecordedVersionRef = useRef(state._syncVersion);
+  useEffect(() => {
+    const version = state._syncVersion;
+    if (version === lastRecordedVersionRef.current) return;
+    lastRecordedVersionRef.current = version;
+    const durable = durableSnapshot(state);
+    persistence.recordStateMutation(durable);
+    persistence.maybeCheckpoint(durable, version);
+  }, [state._syncVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Devengo de intereses también con la app abierta (detecta el cambio de día).
   useEffect(() => {

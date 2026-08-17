@@ -1,34 +1,36 @@
-# Plan: FASE 4 — MCP-04 Cortafuegos de Semántica
+# Plan: FASE 5 — MCP-05 Fortaleza de Datos
 
 ## Problema
-Un MCP server comprometido (o un cliente malicioso) puede:
-1. Enviar schemas envenenados (schema poisoning) para inyectar parámetros.
-2. Colar SQL/command/prompt injection vía strings de herramientas.
-3. Ejecutar sin límite de tiempo/recursos.
-4. Ejecutar acciones financieras sin aprobación humana auditable.
+El estado vive en `localStorage` (`mis-finazas-v1`). Un fallo de escritura a
+mitad, una extensión maliciosa o un parseo defectuoso pueden corromper el JSON
+en silencio: `load()` cae directo a `SEED` y el usuario pierde todo. No hay
+Write-Ahead Log, ni checkpoints, ni rollback, ni export/import de emergencia.
 
 ## Cambios
 | Archivo | Cambio |
 |---|---|
-| `src/mcp/security/security-types.ts` | Tipos: validación, registry, sandbox, HITL, supply chain, eventos. Reusa `SensitivityLevel` (minúsculas) de capability-types |
-| `src/mcp/security/schema-validator.ts` | Validación JSON Schema + patrones de inyección + límites; `valid = errors.length === 0` |
-| `src/mcp/security/schema-registry.ts` | Registry con SHA-256 (canonical JSON) + firma Ed25519 reales (`node:crypto`) |
-| `src/mcp/security/sandbox.ts` | Timeout con cleanup de timer, allowlist de red, límites tamaño/profundidad |
-| `src/mcp/security/human-in-the-loop.ts` | Gate HITL: umbral HIGH, 2FA CRITICAL, firma SHA-256, audit log, `destroy()` |
-| `src/mcp/security/security-orchestrator.ts` | Flujo 5 pasos: supply chain → validación → tamaño/profundidad → HITL → sandbox |
-| `src/mcp/security-integration.ts` | `createSecurityOrchestrator()` + schemas reales (real-tools.ts) + `runToolWithSecurity` (sin datos mock) |
-| `src/mcp/security/__tests__/schema-poisoning.test.js` | Simulación Red Team (JS, sin TS) |
-| `src/mcp/server.ts` | Handler envuelto: `runToolWithSecurity(security, tool, args, ctx, inner=runToolWithRetry)` |
+| `src/mcp/persistence/persistence-types.ts` | Tipos (WalEntry, Checkpoint, RecoveryResult, ExportBundle, PersistenceConfig), almacenamiento KV (`memory`/`localStorage` + guard Node), hash FNV-1a + `stableStringify` (checksums deterministas) |
+| `src/mcp/persistence/write-ahead-log.ts` | `WriteAheadLog`: append sync O(1) con checksum encadenado, flush (timer o inmediato), verify con detección de rango dañado, compact(upToSeq), `destroy()` |
+| `src/mcp/persistence/checkpoint-manager.ts` | `CheckpointManager`: save/loadLatest/loadAll/isValid con historial acotado (`maxHistory`) |
+| `src/mcp/persistence/recovery-manager.ts` | `RecoveryManager.recoverOnLoad`: checkpoint válido → replay WAL posterior; checkpoint dañado → reconstruir desde WAL; WAL dañado → rollback al checkpoint; `maxToleratedDamage` → SEED; auto-heal con nuevo checkpoint + compact |
+| `src/mcp/persistence/export-import.ts` | `ExportImport`: exportState → `{ format, version, timestamp, checksum, signature?, data }`; importState verifica checksum y firma (HMAC-SHA256 vía WebCrypto, async) |
+| `src/mcp/persistence/persistence-orchestrator.ts` | `PersistenceOrchestrator`: `recordStateMutation` (dedupe por versión), `recordMutation` (audit server), `maybeCheckpoint` (cada N mutaciones o intervalo), `rollbackTo`, `recoverStateOnLoad`, export/import, `destroy()` |
+| `src/mcp/persistence-integration.ts` | Config `MISFINANZAS_PERSISTENCE_CONFIG`, factory `createPersistenceOrchestrator()`, `runToolWithPersistence` (registra mutaciones reales de tools mutadoras en el servidor) |
+| `src/mcp/persistence/__tests__/state-corruption.test.js` | Red Team (JS, sin TS): ~20 escenarios de corrupción |
+| `src/mcp/server.ts` | Crear `persistence` por instancia, envolver tools mutadoras con `runToolWithPersistence`, destruir en onclose, exponer en el retorno |
+| `src/store.jsx` | `load()`: ante error de parseo, `recoverStateOnLoad(SEED)` en vez de SEED ciego; efecto que observa `_syncVersion` y llama `recordStateMutation` + `maybeCheckpoint` tras cada commit; flush en beforeunload |
+| `src/migrations.ts` | Sin cambios funcionales: `migrate()` ya propaga errores (el fallback a SEED vive en `load()`; se intercepta ahí con recovery) |
 
 ## Decisiones de adaptación (vs propuesta)
-- **Sin enums ni parameter properties**: `as const`/unions y campos explícitos (Node strip-only).
-- **Crypto real** (`node:crypto`): sha256 + Ed25519, no hashes simplificados.
-- **Schemas registrados = inputSchemas reales** (real-tools.ts), no inventados; `get_balance` usa `syncCode`, no `accountId`.
-- **Sin wrappers mock** (`secureTransfer`/`secureOcrScan`/`secureDriveRead`): integración envuelve handlers reales vía `runToolWithSecurity`; sin datos simulados en producción.
-- **Sanitización no escapa strings**: la validación ya RECHAZA inyecciones (fatal → bloqueado); escapar corrompería descripciones almacenadas. Sanitizar = filtrar propiedades declaradas conservando valores.
-- **Timeout de sandbox por tool** desde `SchemaPermissions.maxExecutionTimeMs` (drive_sync=200s; global 30s por defecto). Memoria = presupuesto declarativo (aislamiento real requeriría worker_threads, fuera de MVP, documentado).
-- **HITL en servidor stdio**: auth layer ya emite PENDING_APPROVAL antes (e2e intacto); el gate de seguridad es defensa en profundidad con `onApprovalRequired → false` (sin UI). El gate se ejercita por tests y por integración frontend futura.
+- **Sin enums ni parameter properties**: unions/`as const` y campos explícitos (Node strip-only).
+- **Hash FNV-1a 32-bit (sync) para checksums**: store.jsx corre en navegador donde `node:crypto` no existe y WebCrypto es async (rompería el append sync del reducer). La propuesta lo permite explícitamente ("Hash simplificado no criptográfico"). Es integridad/corrupción, no defensa criptográfica.
+- **Firma real en export/import**: HMAC-SHA256 vía `crypto.subtle` (async, disponible en navegador y Node 26). Clave configurable (Settings); sin clave → solo checksum (documentado).
+- **WAL con hash encadenado (`prev`)**: detecta entradas borradas/reordenadas en medio, no solo el byte modificado.
+- **`maybeCheckpoint` compacta al seq capturado en el checkpoint** (no a `getLastSeq()` del momento): evita descartar entradas posteriores al checkpoint.
+- **`recordStateMutation` NO va dentro del reducer**: React doble-invoca reducers en StrictMode (WAL duplicado). Se registra en un efecto que observa `state._syncVersion` (que solo cambia en mutaciones reales; `update_fx`/`accrue`/`hydrate` no lo incrementan).
+- **`runToolWithPersistence`** registra las mutaciones REALES de `add_transaction`/`transfer_funds`/`drive_sync` al servidor (audit trail en WAL), sin datos mock. `recordMutation` usa versión audit interna (no `_syncVersion`).
+- **server.ts**: la persistencia del servidor es audit (memoria en Node vía guard `process.version`); la recuperación completa de estado es responsabilidad del cliente (store.jsx, localStorage real).
 - **Tests en `.js`** sin sintaxis TS (Vitest solo incluye `*.test.{js,jsx}`).
 
 ## Verificación
-`npm test` (238 + nuevos) + `npx tsc --noEmit` (0 errores en src/mcp) + `npm run build` + `node src/mcp/server.ts` (strip-only OK).
+`npm test` (271 + ~20 nuevos) + `npx tsc --noEmit` (0 errores en src/mcp) + `npm run build` (store.jsx importa persistencia browser-safe) + `node src/mcp/server.ts` (strip-only OK, con `destroy()` de timers en onclose).
