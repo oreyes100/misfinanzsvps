@@ -34,7 +34,7 @@ describe("MCP-01 E2E — descubrimiento por rol", () => {
     await client.close();
   });
 
-  it("admin descubre las 8 herramientas y get_balance responde de verdad", async () => {
+  it("admin descubre las 9 herramientas y get_balance responde de verdad", async () => {
     const { client } = await spawnServer();
     const n = await negotiateWithClient(client, {
       requestedScopes: ["read", "write", "finance", "admin", "drive", "ocr"],
@@ -42,15 +42,16 @@ describe("MCP-01 E2E — descubrimiento por rol", () => {
       clientName: "e2e-admin",
     });
 
-    expect(n.visibleTools).toHaveLength(8);
+    expect(n.visibleTools).toHaveLength(9);
     expect(n.visibleTools).toContain("transfer_funds");
+    expect(n.visibleTools).toContain("resilience_health");
 
     const res = await client.callTool({
       name: "get_balance",
       arguments: { syncCode: "corto" }, // inválido → sin red, ok:false
     });
     const text = res.content[0].text;
-    expect(JSON.parse(text).ok).toBe(false);
+    expect(JSON.parse(text).data.ok).toBe(false);
     await client.close();
   });
 
@@ -98,6 +99,45 @@ describe("MCP-01 E2E — descubrimiento por rol", () => {
     const result = await client.listTools();
     expect(result._meta.filterReason).toBe("capability_negotiation");
     expect(result._meta.filteredOut).toBeGreaterThan(0);
+    await client.close();
+  });
+
+  it("MCP-02: rate limit devuelve RATE_LIMITED al superar el límite", async () => {
+    const { client } = await spawnServer({
+      disableHealthCheck: true,
+      resilienceOverrides: { get_balance: { rateLimitPerMinute: 2 } },
+    });
+    await negotiateWithClient(client, {
+      requestedScopes: ["read", "write", "finance", "admin"],
+      authToken: token("admin"),
+      clientName: "e2e-rl",
+    });
+
+    const call = () => client.callTool({ name: "get_balance", arguments: { syncCode: "corto" } });
+
+    const r1 = await call();
+    const r2 = await call();
+    const r3 = await call();
+
+    expect(JSON.parse(r1.content[0].text).data.ok).toBe(false); // pasó
+    expect(JSON.parse(r2.content[0].text).data.ok).toBe(false); // pasó
+    expect(JSON.parse(r3.content[0].text).error.code).toBe("RATE_LIMITED");
+    expect(r3._meta.retryable).toBe(true);
+    await client.close();
+  });
+
+  it("MCP-02: resilience_health reporta el estado del sistema", async () => {
+    const { client } = await spawnServer({ disableHealthCheck: true });
+    await negotiateWithClient(client, {
+      requestedScopes: ["read", "write", "finance", "admin"],
+      authToken: token("admin"),
+      clientName: "e2e-health",
+    });
+
+    const res = await client.callTool({ name: "resilience_health", arguments: {} });
+    const report = JSON.parse(res.content[0].text).data;
+    expect(report.overall.totalTools).toBe(9);
+    expect(report.tools.every((t) => typeof t.isHealthy === "boolean")).toBe(true);
     await client.close();
   });
 });

@@ -1,9 +1,16 @@
-// server.ts — Servidor MCP "Escudo de Descubrimiento" (MCP-01).
+// server.ts — Servidor MCP "Escudo de Descubrimiento" (MCP-01) + "Muralla de
+// Contención" (MCP-02).
 //
-// - Método propio `capability/negotiate`: token → rol → scopes → tools visibles.
-// - tools/list filtrado por scopes de la sesión (con obfuscación de schemas).
-// - tools/call autorizado por scopes + idempotencia + aprobación humana.
-// - Rate limiting por herramienta (ventana de 60s).
+// MCP-01 (descubrimiento seguro):
+//   - Método propio `capability/negotiate`: token → rol → scopes → tools visibles.
+//   - tools/list filtrado por scopes de la sesión (con obfuscación de schemas).
+//   - tools/call autorizado por scopes + idempotencia + aprobación humana.
+//
+// MCP-02 (resiliencia frente a floods):
+//   - ResilienceOrchestrator: rate limiting (token bucket), circuit breaker,
+//     cola de prioridades con backpressure y fallback a caché para lecturas.
+//   - tools/call atraviesa el orquestador: 429 RATE_LIMITED, 503 CIRCUIT_OPEN,
+//     BACKPRESSURE, TIMEOUT, con retryAfterMs.
 //
 // Arranque:
 //   node src/mcp/server.ts            (o compilado: node dist/mcp/server.js)
@@ -19,7 +26,11 @@ import { DynamicToolRegistry } from "./tool-registry.ts";
 import { McpAuthMiddleware, type NegotiateOptions } from "./auth-middleware.ts";
 import { registerRealTools } from "./real-tools.ts";
 import { MCP_SCOPES } from "./capability-types.ts";
-import type { McpScope, CapabilityNegotiateRequest, NegotiationResult } from "./capability-types.ts";
+import type { McpScope, CapabilityNegotiateRequest, NegotiationResult, SensitivityLevel } from "./capability-types.ts";
+import { ResilienceOrchestrator } from "./resilience/resilience-orchestrator.ts";
+import { HealthDashboard } from "./resilience/health-dashboard.ts";
+import { ToolPriority, type ResilienceConfig, type ToolResilienceConfig, type ToolPriority as ToolPriorityType } from "./resilience/types.ts";
+import type { SecureToolDefinition } from "./tool-registry.ts";
 
 const SERVER_NAME = "misfinanzas-mcp-server";
 const SERVER_VERSION = "1.0.0";
@@ -60,8 +71,93 @@ function defaultSession(): Session {
   };
 }
 
+// ─── Configuración de resiliencia (MCP-02) ────────────────────
+const RESILIENCE_CONFIG: ResilienceConfig = {
+  circuitBreaker: {
+    failureThreshold: 5,
+    successThreshold: 2,
+    resetTimeoutMs: 30_000,
+    requestTimeoutMs: 10_000,
+    errorRateThreshold: 0.5,
+    errorRateWindowMs: 60_000,
+    minimumRequestVolume: 10,
+  },
+  rateLimiter: {
+    maxRequests: 60,
+    windowMs: 60_000,
+    algorithm: "token_bucket",
+    refillRatePerSecond: 1,
+    // Sin bucketCapacity global: cada herramienta deriva su bucket de su propio
+    // rateLimitPerMinute (el bucket sigue al límite, no al default global).
+  },
+  priorityQueue: {
+    maxQueueSize: 100,
+    concurrency: 5,
+    maxWaitTimeMs: 30_000,
+    enableBackpressure: true,
+  },
+  // Sin fallback global: las escrituras financieras nunca deben servir datos
+  // stale/deferidos. El fallback a caché se configura solo en herramientas de lectura.
+  metrics: {
+    enablePrometheus: false,
+    logLevel: "info",
+    healthCheckIntervalMs: 5_000,
+  },
+};
+
+// Ajustes por herramienta real (prioridad, circuit breaker, fallback de lectura).
+const TOOL_RESILIENCE: Record<string, Partial<ToolResilienceConfig>> = {
+  get_balance: { priority: ToolPriority.NORMAL, fallback: { type: "cache", cacheTtlMs: 30_000 } },
+  add_transaction: { priority: ToolPriority.HIGH },
+  transfer_funds: {
+    priority: ToolPriority.CRITICAL,
+    bypassQueue: true,
+    circuitBreaker: { failureThreshold: 2, resetTimeoutMs: 60_000, requestTimeoutMs: 30_000 },
+  },
+  scan_receipt: { priority: ToolPriority.LOW, circuitBreaker: { failureThreshold: 3, resetTimeoutMs: 20_000, requestTimeoutMs: 15_000 } },
+  parse_transfer: { priority: ToolPriority.LOW },
+  drive_status: {
+    priority: ToolPriority.NORMAL,
+    fallback: { type: "cache", cacheTtlMs: 60_000 },
+    circuitBreaker: { failureThreshold: 3, resetTimeoutMs: 20_000, requestTimeoutMs: 30_000 },
+  },
+  drive_pending: {
+    priority: ToolPriority.NORMAL,
+    fallback: { type: "cache", cacheTtlMs: 60_000 },
+    circuitBreaker: { failureThreshold: 3, resetTimeoutMs: 20_000, requestTimeoutMs: 30_000 },
+  },
+  drive_sync: {
+    priority: ToolPriority.BACKGROUND,
+    circuitBreaker: { failureThreshold: 3, resetTimeoutMs: 30_000, requestTimeoutMs: 180_000 },
+  },
+  resilience_health: { priority: ToolPriority.NORMAL, rateLimitPerMinute: 5 },
+};
+
+function defaultPriority(sensitivity: SensitivityLevel): ToolPriorityType {
+  if (sensitivity === "critical") return ToolPriority.CRITICAL;
+  if (sensitivity === "high") return ToolPriority.HIGH;
+  if (sensitivity === "low") return ToolPriority.LOW;
+  return ToolPriority.NORMAL;
+}
+
+function resilienceConfigFor(tool: SecureToolDefinition): ToolResilienceConfig {
+  const overrides = TOOL_RESILIENCE[tool.name] || {};
+  return {
+    toolName: tool.name,
+    priority: overrides.priority ?? defaultPriority(tool.sensitivity),
+    rateLimitPerMinute: overrides.rateLimitPerMinute ?? tool.rateLimitPerMinute,
+    circuitBreaker: overrides.circuitBreaker,
+    fallback: overrides.fallback,
+    bypassQueue: overrides.bypassQueue,
+  };
+}
+
 export interface McpServerOptions extends NegotiateOptions {
   environment?: "dev" | "staging" | "production";
+  /** Overrides de resiliencia por herramienta (para tests/despliegues). */
+  resilienceOverrides?: Record<string, Partial<ToolResilienceConfig>>;
+  /** Desactiva el health-check periódico (para tests deterministas). */
+  disableHealthCheck?: boolean;
 }
 
 /** Construye el servidor MCP con registro de herramientas reales y middleware. */
@@ -70,20 +166,44 @@ export function createMcpServer(options: McpServerOptions = {}) {
   const auth = new McpAuthMiddleware(registry, options);
   const environment = options.environment || "production";
 
+  const orchestrator = new ResilienceOrchestrator({
+    ...RESILIENCE_CONFIG,
+    metrics: {
+      ...RESILIENCE_CONFIG.metrics,
+      healthCheckIntervalMs: options.disableHealthCheck ? 0 : RESILIENCE_CONFIG.metrics.healthCheckIntervalMs,
+    },
+  });
+  const dashboard = new HealthDashboard();
+
+  // Herramienta de admin: reporte de salud del sistema de resiliencia.
+  registry.register({
+    name: "resilience_health",
+    description: "Reporte de salud del sistema de resiliencia: circuit breakers, rate limits, cola y errores.",
+    inputSchema: { type: "object", properties: {} },
+    handler: async () => dashboard.generateJsonReport(orchestrator.runHealthCheck()),
+    requiredScopes: ["admin"],
+    sensitivity: "low",
+    requiresIdempotency: false,
+    requiresHumanApproval: false,
+    rateLimitPerMinute: 5,
+  });
+
+  // Registrar TODAS las herramientas del registry en el orquestador de resiliencia.
+  for (const tool of registry.listAll()) {
+    const config = resilienceConfigFor(tool);
+    const overrides = options.resilienceOverrides?.[tool.name];
+    const merged: ToolResilienceConfig = overrides
+      ? { ...config, ...overrides, toolName: tool.name }
+      : config;
+    orchestrator.registerTool(merged, (args) => tool.handler(args));
+  }
+
+  // Reenviar eventos de resiliencia al dashboard para los reportes.
+  orchestrator.onEvent((event) => dashboard.logEvent(event));
+
   const session: Session = defaultSession();
   // Idempotencia: tool+key → último resultado (replay devuelve lo mismo).
   const idempotencyResults = new Map<string, unknown>();
-  // Rate limiting: tool → timestamps de llamadas en la última ventana.
-  const callLog = new Map<string, number[]>();
-  const WINDOW_MS = 60_000;
-
-  function isRateLimited(toolName: string, limit: number): boolean {
-    const now = Date.now();
-    const recent = (callLog.get(toolName) || []).filter((t) => now - t < WINDOW_MS);
-    if (recent.length >= limit) return true;
-    callLog.set(toolName, [...recent, now]);
-    return false;
-  }
 
   const server = new Server(
     { name: SERVER_NAME, version: SERVER_VERSION },
@@ -139,12 +259,12 @@ export function createMcpServer(options: McpServerOptions = {}) {
     };
   });
 
-  // ─── tools/call (AUTORIZADO + rate limit + idempotencia) ────
+  // ─── tools/call (AUTORIZADO + resiliencia + idempotencia) ──
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
-    const idempotencyKey =
-      (request.params._meta as { idempotencyKey?: string } | undefined)?.idempotencyKey ||
-      (args as Record<string, unknown> | undefined)?.idempotencyKey;
+    const meta = request.params._meta as { idempotencyKey?: string; clientId?: string } | undefined;
+    const idempotencyKey = meta?.idempotencyKey || (args as Record<string, unknown> | undefined)?.idempotencyKey;
+    const clientId = meta?.clientId || "mcp-client";
 
     const authResult = auth.authorizeToolCall(name, session.scopes, idempotencyKey as string | undefined);
     if (!authResult.authorized) {
@@ -163,11 +283,8 @@ export function createMcpServer(options: McpServerOptions = {}) {
       return { content: [{ type: "text", text: `Tool '${name}' no encontrada` }], isError: true };
     }
 
-    if (isRateLimited(name, tool.rateLimitPerMinute)) {
-      return { content: [{ type: "text", text: JSON.stringify({ error: "RATE_LIMITED", message: `Límite: ${tool.rateLimitPerMinute}/min` }) }], isError: true };
-    }
-
-    // Aprobación humana para operaciones críticas.
+    // Aprobación humana para operaciones críticas (antes del orquestador:
+    // una aprobación pendiente no consume tokens de rate limit).
     if (authResult.requiresApproval) {
       return {
         content: [{
@@ -182,16 +299,46 @@ export function createMcpServer(options: McpServerOptions = {}) {
       };
     }
 
-    try {
-      const result = await tool.handler(args);
-      if (idempotencyKey) idempotencyResults.set(`${name}:${idempotencyKey}`, result);
-      return { content: [{ type: "text", text: JSON.stringify(result) }] };
-    } catch (error) {
-      return { content: [{ type: "text", text: JSON.stringify({ error: "EXECUTION_FAILED", message: (error as Error).message }) }], isError: true };
+    // ═══ Resiliencia: rate limit → circuit breaker → cola → ejecución ═══
+    const result = await orchestrator.executeToolCall({
+      toolName: name,
+      clientId,
+      args,
+      idempotencyKey: idempotencyKey as string | undefined,
+    });
+
+    if (result.success) {
+      if (idempotencyKey) idempotencyResults.set(`${name}:${idempotencyKey}`, result.data);
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            data: result.data,
+            _meta: {
+              fromCache: result._meta.fromCache,
+              latencyMs: result._meta.latencyMs,
+              circuitState: result._meta.circuitState,
+              queuedTimeMs: result._meta.queuedTimeMs,
+            },
+          }),
+        }],
+      };
     }
+
+    return {
+      content: [{ type: "text", text: JSON.stringify({ error: result.error, _meta: result._meta }) }],
+      isError: true,
+      _meta: {
+        retryAfterMs: result.error?.retryAfterMs,
+        retryable: result.error?.retryable,
+      },
+    };
   });
 
-  return { server, registry, auth };
+  // Al cerrar la conexión, liberar timers del orquestador.
+  server.onclose = () => orchestrator.destroy();
+
+  return { server, registry, auth, orchestrator, dashboard };
 }
 
 /** Conecta el servidor por stdio. Devuelve la promesa de conexión. */
@@ -199,7 +346,7 @@ export async function startMcpServer(options: McpServerOptions = {}): Promise<Se
   const { server } = createMcpServer(options);
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.log(`[mcp] ${SERVER_NAME} v${SERVER_VERSION} listo (capability negotiation activa)`);
+  console.log(`[mcp] ${SERVER_NAME} v${SERVER_VERSION} listo (capability negotiation + resiliencia activas)`);
   return server;
 }
 
