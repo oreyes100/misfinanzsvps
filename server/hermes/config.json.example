@@ -8,7 +8,13 @@
   "pollIntervalMs": 15000,
   "maxAuditRounds": 3,
   "folderAccountMap": {},
-  "bankAccountMap": {},
+  "bankAccountMap": {
+    "bbva": "q8q3fc71",
+    "uala": "6bfkdx9o",
+    "bodegaaurrera": "a55lyg5r",
+    "bodega aurrera": "a55lyg5r",
+    "wal mart": "a55lyg5r"
+  },
   "geminiKey": null,
   "ocrUrl": "http://127.0.0.1:8765",
   "drive": {
