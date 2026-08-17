@@ -5,6 +5,7 @@ import { migrate } from "./migrations.js";
 import useFX from "./useFX.js";
 import { mergeSyncStates } from "./merge.js";
 import { createPersistenceOrchestrator } from "./mcp/persistence-integration.js";
+import { enqueueItem, acceptItem, dismissItem, acceptAllReviewable, dismissAll, cleanupReviewQueue } from "./review.js";
 
 export { accrueInterest };
 
@@ -68,6 +69,7 @@ const SEED = {
   goldPriceEUR: 68.4, // €/gramo
   _syncVersion: 0,
   deletedAccountIds: [],
+  reviewQueue: { pending: [], resolved: [], dismissed: [] },
 };
 
 // ---------- Reducer ----------
@@ -478,6 +480,25 @@ function innerReducer(state, action) {
       return { ...state, transactions, deletedTransactions: mergedDeleted };
     }
 
+    // ---- Cola de revisión MCP (Command Center) ----
+    case "review_enqueue":
+      return { ...state, reviewQueue: enqueueItem(state.reviewQueue, action.item) };
+
+    case "review_accept":
+      return { ...state, reviewQueue: acceptItem(state.reviewQueue, action.itemId) };
+
+    case "review_dismiss":
+      return { ...state, reviewQueue: dismissItem(state.reviewQueue, action.itemId) };
+
+    case "review_accept_all":
+      return { ...state, reviewQueue: acceptAllReviewable(state.reviewQueue) };
+
+    case "review_dismiss_all":
+      return { ...state, reviewQueue: dismissAll(state.reviewQueue) };
+
+    case "review_cleanup":
+      return { ...state, reviewQueue: cleanupReviewQueue(state.reviewQueue) };
+
     default:
       return state;
   }
@@ -814,6 +835,13 @@ export function StoreProvider({ children }) {
   // Devengo de intereses también con la app abierta (detecta el cambio de día).
   useEffect(() => {
     const t = setInterval(() => dispatch({ type: "accrue" }), 60_000);
+    return () => clearInterval(t);
+  }, []);
+
+  // Cola de revisión MCP: poda historial antiguo al montar y cada hora.
+  useEffect(() => {
+    dispatch({ type: "review_cleanup" });
+    const t = setInterval(() => dispatch({ type: "review_cleanup" }), 60 * 60 * 1000);
     return () => clearInterval(t);
   }, []);
 

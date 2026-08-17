@@ -14,10 +14,13 @@ import { SecurityBadge } from "./components/UI.jsx";
 const Assistant = lazy(() => import("./components/Assistant.jsx"));
 const Auditoria = lazy(() => import("./components/Auditoria.jsx"));
 const Importar = lazy(() => import("./components/IaImport.jsx"));
+const McpMenu = lazy(() => import("./components/McpMenu.jsx"));
+import McpNotification from "./components/McpNotification.jsx";
 
 const VIEWS = {
   inicio: Dashboard,
   movimientos: Transactions,
+  mcp: McpMenu,
   gestion: Manage,
   reportes: Reports,
   auditoria: Auditoria,
@@ -96,6 +99,7 @@ function Shell({ session, onLogout }) {
       </main>
 
       <BottomNav tab={tab} setTab={setTab} session={session} />
+      <McpNotification tab={tab} onNavigate={() => setTab("mcp")} />
     </div>
   );
 }

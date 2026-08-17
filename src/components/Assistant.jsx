@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
+import { motion } from "framer-motion";
 import { useStore } from "../store.jsx";
 import { monthSpend } from "../selectors.js";
-import { fmtMoney, parseIntent, todayISO } from "../utils.js";
+import { fmtMoney, parseIntent, todayISO, uid } from "../utils.js";
+import { buildStagedAction, classifyConfidence } from "../review.js";
 import { Btn, Glass, inputCls } from "./UI.jsx";
 
 const SUGGESTIONS = [
@@ -36,17 +37,16 @@ const isCapacitor = typeof window !== "undefined" && !!window.Capacitor?.isNativ
 export default function Assistant() {
   const { state, dispatch } = useStore();
   const [messages, setMessages] = useState([
-    { role: "ai", text: "Hola 👋 Soy tu asistente financiero. Puedo registrar gastos, programar transferencias o ajustar límites. Toda acción te la muestro antes de ejecutarla." },
+    { role: "ai", text: "Hola 👋 Soy tu asistente financiero. Puedo registrar gastos, programar transferencias o ajustar límites. Toda acción la encolo en el menú MCP y la ejecuto solo cuando la apruebas." },
   ]);
   const [input, setInput] = useState("");
-  const [pending, setPending] = useState(null);
   const [listening, setListening] = useState(false);
   const recRef = useRef(null);
   const logRef = useRef(null);
 
   useEffect(() => {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages, pending]);
+  }, [messages]);
 
   const push = (m) => setMessages((prev) => [...prev, m]);
 
@@ -66,15 +66,57 @@ export default function Assistant() {
       return;
     }
 
-    if (intent.type === "expense" || intent.type === "income") {
-      if (intent.accountName) {
-        const acc = resolveAccount(state, intent.accountName, 0);
-        if (acc) intent._resolvedAccount = acc;
-      }
+    // Resolver cuentas mencionadas para el intent.
+    if ((intent.type === "expense" || intent.type === "income") && intent.accountName) {
+      const acc = resolveAccount(state, intent.accountName, 0);
+      if (acc) intent._resolvedAccount = acc;
+    }
+    if (intent.type === "transfer" || intent.type === "schedule_transfer") {
+      intent._fromAccount = resolveAccount(state, intent.fromName, 0);
+      intent._toAccount = resolveAccount(state, intent.toName, 1);
     }
 
-    push({ role: "ai", text: `Entendido. Esta es la acción que voy a realizar — revísala y aprueba:` });
-    setPending(intent);
+    // Acción staged + clasificación de confianza.
+    const action = buildStagedAction(intent, state.accounts);
+    if (!action) {
+      push({ role: "ai", text: "⚠ No he podido construir una acción para eso. Configura al menos una cuenta y prueba de nuevo." });
+      return;
+    }
+
+    const classification = classifyConfidence(intent.confidence);
+    const accountId = action.tx?.accountId ?? action.fromId ?? null;
+    const accountName = accountId ? (state.accounts.find((a) => a.id === accountId)?.name ?? null) : null;
+    const previewAmount =
+      action.tx?.amount ??
+      (intent.type === "transfer" ? -intent.amount : intent.type === "set_limit" ? 0 : intent.amount);
+
+    const item = {
+      id: uid(),
+      batchId: uid(),
+      source: "assistant",
+      classification,
+      confidence: intent.confidence ?? 0.9,
+      createdAt: Date.now(),
+      action,
+      preview: {
+        description: intent.summary ?? intent.description ?? "Operación",
+        amount: previewAmount,
+        currency: action.tx?.currency ?? null,
+        date: todayISO(),
+        category: intent.category ?? null,
+        categoryId: null,
+        accountId,
+        accountName,
+        subcategory: intent.subcategory ?? null,
+      },
+    };
+
+    dispatch({ type: "review_enqueue", item });
+    logAction(intent, "queued", `classification:${classification}`);
+    push({
+      role: "ai",
+      text: `🤖 Acción creada con ${Math.round((item.confidence) * 100)} % de confianza. La reviso en el menú **MCP** de la barra inferior antes de ejecutarla.`,
+    });
   };
 
   const logAction = (intent, result, detail = "") => {
@@ -83,84 +125,6 @@ export default function Assistant() {
       prev.push({ ts: new Date().toISOString(), type: intent.type, amount: intent.amount, result, detail });
       localStorage.setItem("mis-finazas-assistant-log", JSON.stringify(prev));
     } catch {}
-  };
-
-  const approve = () => {
-    const intent = pending;
-    setPending(null);
-    switch (intent.type) {
-      case "expense":
-      case "income": {
-        if (!state.accounts.length) {
-          push({ role: "ai", text: `⚠ No hay cuentas configuradas. Crea una cuenta antes de registrar movimientos.` });
-          logAction(intent, "preflight_fail", "no accounts");
-          return;
-        }
-        const acc = intent._resolvedAccount || state.accounts[0];
-        if (intent.type === "expense" && acc.balance < intent.amount) {
-          push({ role: "ai", text: `⚠ Saldo insuficiente en ${acc.name} (${fmtMoney(acc.balance)}). ¿Confirmar de todas formas?` });
-          logAction(intent, "preflight_warn", `balance ${acc.balance} < ${intent.amount}`);
-        }
-        dispatch({
-          type: "add_transaction",
-          tx: {
-            description: intent.description,
-            amount: intent.type === "expense" ? -intent.amount : intent.amount,
-            currency: acc.currency,
-            accountId: acc.id,
-            category: intent.category,
-            subcategory: intent.subcategory || null,
-          },
-        });
-        push({ role: "ai", text: `✓ Registrado: ${intent.summary} en ${acc.name}. Categoría asignada automáticamente con ${Math.round((intent.confidence ?? 0.9) * 100)} % de confianza.`, ok: true });
-        logAction(intent, "ok", `account:${acc.id}`);
-        break;
-      }
-      case "transfer": {
-        const from = resolveAccount(state, intent.fromName, 0);
-        const to = resolveAccount(state, intent.toName, 1);
-        if (from.id === to.id) {
-          push({ role: "ai", text: `⚠ No puedo ejecutarla: origen y destino coinciden.` });
-          logAction(intent, "preflight_fail", "same account");
-          return;
-        }
-        dispatch({ type: "transfer", fromId: from.id, toId: to.id, amount: intent.amount });
-        push({ role: "ai", text: `✓ Transferencia ejecutada: ${fmtMoney(intent.amount, from.currency)} de ${from.name} a ${to.name}.`, ok: true });
-        logAction(intent, "ok", `${from.id}->${to.id}`);
-        break;
-      }
-      case "schedule_transfer": {
-        const from = resolveAccount(state, intent.fromName, 0);
-        const to = resolveAccount(state, intent.toName, 1);
-        if (from.id === to.id) {
-          push({ role: "ai", text: `⚠ Origen y destino coinciden. No se puede programar.` });
-          logAction(intent, "preflight_fail", "same account");
-          return;
-        }
-        const item = { fromId: from.id, toId: to.id, amount: intent.amount, when: "próximo día hábil", created: todayISO() };
-        if (intent.description) item.notes = intent.description; // usar descripción como nota si viene del parser
-        dispatch({ type: "schedule_transfer", item });
-        push({ role: "ai", text: `✓ Transferencia programada: ${fmtMoney(intent.amount)} de ${from.name} a ${to.name}. La verás en Ajustes → Programadas.`, ok: true });
-        logAction(intent, "ok", `scheduled:${from.id}->${to.id}`);
-        break;
-      }
-      case "set_limit": {
-        if (intent.amount <= 0) {
-          push({ role: "ai", text: `⚠ El límite debe ser mayor que 0.` });
-          logAction(intent, "preflight_fail", `amount=${intent.amount}`);
-          return;
-        }
-        dispatch({ type: "set_limit", amount: intent.amount });
-        push({ role: "ai", text: `✓ Límite de gasto mensual actualizado a ${fmtMoney(intent.amount)}.`, ok: true });
-        logAction(intent, "ok");
-        break;
-      }
-    }
-  };
-
-  const reject = () => {
-    setPending(null);
-    push({ role: "ai", text: "Acción descartada. Nada se ha modificado." });
   };
 
   // ---- Voice: Capacitor native (Android/iOS) ----
@@ -273,7 +237,7 @@ export default function Assistant() {
         <span className="flex size-8 items-center justify-center rounded-full bg-accent/20 text-accent-soft" aria-hidden="true">✦</span>
         <div>
           <h2 className="text-base font-semibold leading-tight">Asistente IA</h2>
-          <p className="text-xs text-ink-dim">Agéntico · supervisión humana en cada acción</p>
+          <p className="text-xs text-ink-dim">Agéntico · las acciones se aprueban en el menú MCP</p>
         </div>
       </header>
 
@@ -293,26 +257,6 @@ export default function Assistant() {
             {m.text}
           </motion.div>
         ))}
-
-        <AnimatePresence>
-          {pending && (
-            <motion.div
-              initial={{ opacity: 0, scale: 0.96 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.96 }}
-              className="rounded-2xl border border-accent/40 bg-accent/10 p-3.5"
-              role="region"
-              aria-label="Acción pendiente de aprobación"
-            >
-              <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-accent-soft">Previsualización de acción</p>
-              <p className="mb-3 text-sm">{pending.summary}</p>
-              <div className="flex gap-2">
-                <Btn variant="gain" onClick={approve} className="!py-1.5 text-xs">Aprobar y ejecutar</Btn>
-                <Btn variant="ghost" onClick={reject} className="!py-1.5 text-xs">Descartar</Btn>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
       </div>
 
       <div className="mt-3 flex flex-wrap gap-1.5" aria-label="Sugerencias">
