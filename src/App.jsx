@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { StoreProvider, useStore } from "./store.jsx";
 import { canAccess, currentSession, hasBiometricCredential, logout } from "./auth.js";
+import { handleOAuthCallback } from "./services/googlePhotos.js";
 import BottomNav from "./components/BottomNav.jsx";
 import Dashboard from "./components/Dashboard.jsx";
 import Login from "./components/Login.jsx";
@@ -30,9 +31,29 @@ const VIEWS = {
 };
 
 function Shell({ session, onLogout }) {
-  const { state, sync } = useStore();
+  const { state, sync, dispatch } = useStore();
   const firstTab = Object.keys(VIEWS).find((id) => canAccess(session, id)) ?? "inicio";
   const [tab, setTab] = useState(firstTab);
+
+  // OPERACIÓN PHOTO VAULT: si volvimos de Google OAuth (?code&state), completar
+  // el exchange, marcar conectado y limpiar la URL. Una sola vez por sesión.
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search);
+    if (!p.get("code") && !p.get("error")) return;
+    handleOAuthCallback()
+      .then((res) => {
+        if (res.ok) {
+          dispatch({
+            type: "update_settings",
+            patch: { googlePhotos: { ...(state.settings.googlePhotos || {}), connected: true, email: res.email || null, connectedAt: new Date().toISOString() } },
+          });
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        window.history.replaceState({}, document.title, window.location.pathname + window.location.hash);
+      });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Pull inmediato al entrar (la sesión acaba de iniciar, nube puede tener cambios de otros dispositivos)
   useEffect(() => {
@@ -93,7 +114,7 @@ function Shell({ session, onLogout }) {
           transition={{ duration: 0.2, ease: "easeOut" }}
         >
           <Suspense fallback={<div className="p-8 text-center text-ink-dim">Cargando…</div>}>
-            {View ? <View session={session} /> : <p className="text-sm text-ink-dim">No tienes acceso a esta sección.</p>}
+            {View ? <View session={session} onNavigate={setTab} /> : <p className="text-sm text-ink-dim">No tienes acceso a esta sección.</p>}
           </Suspense>
         </motion.div>
       </main>

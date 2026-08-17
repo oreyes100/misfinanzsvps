@@ -23,19 +23,19 @@ function todayKey() {
  */
 export default function McpNotification({ tab, onNavigate }) {
   const { state } = useStore();
-  const pendingCount = state.reviewQueue.pending.length;
+  const pendingCount = state.reviewQueue?.pending?.length ?? 0;
   const inMcp = tab === "mcp";
 
   const [visible, setVisible] = useState(false);
   const [count, setCount] = useState(0);
   const lastShownRef = useRef(0);
   const dayRef = useRef(todayKey());
-  const usedRef = useRef(() => {
+  const usedRef = useRef((() => {
     try {
       if (localStorage.getItem(DAY_KEY) !== dayRef.current) return 0;
       return Number(localStorage.getItem(COUNT_KEY) || 0);
     } catch { return 0; }
-  })();
+  })());
 
   useEffect(() => {
     // Reset diario
@@ -125,7 +125,7 @@ export default function McpNotification({ tab, onNavigate }) {
  */
 export function McpNavBadge() {
   const { state } = useStore();
-  const total = state.reviewQueue.pending.length;
+  const total = state.reviewQueue?.pending?.length ?? 0;
   if (total === 0) return null;
   return (
     <span

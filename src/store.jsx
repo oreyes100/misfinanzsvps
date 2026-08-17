@@ -21,12 +21,25 @@ function seedHistory(current, n = 48, vol = 0.008) {
   return arr;
 }
 
+const DEFAULT_GOOGLE_PHOTOS = {
+  connected: false,
+  email: null,
+  connectedAt: null,
+  lastScanAt: null,
+  lastImportCount: 0,
+};
+
+/** Metadatos de Google Photos (los TOKENS nunca viajan a la nube, viven cifrados en localStorage). */
+const defaultSettings = (over = {}) => ({
+  baseCurrency: "EUR",
+  spendLimit: 1200,
+  biometric: true,
+  googlePhotos: { ...DEFAULT_GOOGLE_PHOTOS, ...(over.googlePhotos || {}) },
+  ...over,
+});
+
 const SEED = {
-  settings: {
-    baseCurrency: "EUR",
-    spendLimit: 1200,
-    biometric: true,
-  },
+  settings: defaultSettings(),
   accounts: [
     { id: "acc-corriente", name: "Corriente", type: "checking", currency: "EUR", balance: 2480.55, rate: 0, accrual: "none", lastAccrual: todayISO() },
     { id: "acc-ahorro", name: "Ahorro", type: "savings", currency: "EUR", balance: 9300, rate: 0.031, accrual: "daily", lastAccrual: seedDate(9) },
@@ -94,6 +107,10 @@ function innerReducer(state, action) {
       if (cleaned && cleaned.deletedTransactions && Array.isArray(cleaned.transactions)) {
         cleaned = { ...cleaned, transactions: cleaned.transactions.filter((t) => !cleaned.deletedTransactions[t.id]) };
       }
+      // reviewQueue es un slice nuevo: si el estado remoto aún no lo trae, se rellena.
+      if (cleaned && !cleaned.reviewQueue) cleaned = { ...cleaned, reviewQueue: SEED.reviewQueue };
+      // settings.googlePhotos es nuevo: merge con defaults si el estado viejo no lo trae.
+      if (cleaned && cleaned.settings) cleaned = { ...cleaned, settings: defaultSettings(cleaned.settings) };
       return cleaned;
     }
 
@@ -405,7 +422,7 @@ function innerReducer(state, action) {
       return accrueInterest({
         ...state,
         _syncVersion: Math.max(state._syncVersion, s._syncVersion || 0),
-        settings: { ...state.settings, ...(s.settings || {}) },
+        settings: defaultSettings({ ...state.settings, ...(s.settings || {}) }),
         accounts: mergedAccounts,
         transactions: mergedTxs,
         scheduled: mergedScheduled,
@@ -515,7 +532,7 @@ const persistence = createPersistenceOrchestrator();
 
 /** Normaliza el estado leído: merge con SEED, saneamiento y migraciones. */
 function finalize(saved) {
-  const merged = { ...SEED, ...saved, fx: { ...BASE_FX, ...saved.fx } };
+  const merged = { ...SEED, ...saved, settings: defaultSettings(saved.settings || {}), fx: { ...BASE_FX, ...saved.fx } };
   merged.accounts = stripDemoAccounts(merged.accounts, merged.deletedAccountIds || []);
   merged.transactions = cleanOrphanTransactions(merged.accounts, merged.transactions);
   if (merged.deletedTransactions) {
@@ -557,8 +574,8 @@ const SYNC_KEY = "mis-finazas-sync-id";
 
 /** Partes del estado que viajan a la nube (precios/FX en vivo se quedan fuera). */
 function syncableSlice(state) {
-  const { settings, accounts, assets, transactions, scheduled, categories, transferAliases, categoryAliases, statementPatterns, _syncVersion, deletedTransactions, deletedAccountIds, deletedAssetIds } = state;
-  return { settings, accounts, assets, transactions, scheduled, categories, transferAliases, categoryAliases, statementPatterns, _syncVersion, deletedTransactions, deletedAccountIds, deletedAssetIds };
+  const { settings, accounts, assets, transactions, scheduled, categories, transferAliases, categoryAliases, statementPatterns, reviewQueue, _syncVersion, deletedTransactions, deletedAccountIds, deletedAssetIds } = state;
+  return { settings, accounts, assets, transactions, scheduled, categories, transferAliases, categoryAliases, statementPatterns, reviewQueue, _syncVersion, deletedTransactions, deletedAccountIds, deletedAssetIds };
 }
 
 export function StoreProvider({ children }) {

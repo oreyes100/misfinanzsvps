@@ -31,8 +31,9 @@ const DAY_MS = 86_400_000;
  */
 export default function McpMenu() {
   const { state, dispatch } = useStore();
-  const { pending, resolved, dismissed } = state.reviewQueue;
-  const counts = pendingCounts(state.reviewQueue);
+  const queue = state.reviewQueue ?? { pending: [], resolved: [], dismissed: [] };
+  const { pending, resolved, dismissed } = queue;
+  const counts = pendingCounts(queue);
   const reduceMotion = useReducedMotion();
 
   const [tab, setTab] = useState("pending");

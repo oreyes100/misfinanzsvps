@@ -34,7 +34,7 @@ function resolveAccount(state, name, fallbackIdx) {
 const isCapacitor = typeof window !== "undefined" && !!window.Capacitor?.isNativePlatform?.();
 
 /** Asistente agéntico: analiza, previsualiza la acción y la ejecuta solo tras aprobación humana. */
-export default function Assistant() {
+export default function Assistant({ onNavigate = () => {} }) {
   const { state, dispatch } = useStore();
   const [messages, setMessages] = useState([
     { role: "ai", text: "Hola 👋 Soy tu asistente financiero. Puedo registrar gastos, programar transferencias o ajustar límites. Toda acción la encolo en el menú MCP y la ejecuto solo cuando la apruebas." },
@@ -116,6 +116,7 @@ export default function Assistant() {
     push({
       role: "ai",
       text: `🤖 Acción creada con ${Math.round((item.confidence) * 100)} % de confianza. La reviso en el menú **MCP** de la barra inferior antes de ejecutarla.`,
+      mcpLink: true,
     });
   };
 
@@ -255,6 +256,16 @@ export default function Assistant() {
             }`}
           >
             {m.text}
+            {m.mcpLink && (
+              <button
+                type="button"
+                onClick={() => onNavigate("mcp")}
+                className="pressable mt-2 inline-flex items-center gap-1 rounded-lg bg-accent/20 px-3 py-1.5 text-xs font-medium text-accent-soft hover:bg-accent/30"
+                aria-label="Ver la acción en el menú MCP"
+              >
+                🤖 Ver en MCP →
+              </button>
+            )}
           </motion.div>
         ))}
       </div>
