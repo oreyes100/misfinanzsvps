@@ -315,6 +315,7 @@ async function extractFromImage(cfg, state, imgPath, sourceBase) {
       appendJournal(cfg.journalFile, { event: "extract_local", file: sourceBase, type: result.type });
     } else {
       console.warn(`[processor] extract local falló ${sourceBase}: ${parsed.error}`);
+      appendJournal(cfg.journalFile, { event: "ocr_debug", file: sourceBase, error: parsed.error, ocrText: ocrText.slice(0, 1500) });
     }
   }
 

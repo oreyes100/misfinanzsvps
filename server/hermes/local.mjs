@@ -70,10 +70,11 @@ function isAmountLine(t) {
   return /^\$?-?\d[\d,]*\.\d{2}$/.test(s);
 }
 
-// Importe embebido al final de una línea: "texto ... $ 535.55" | "$535.55" | "-$368.76"
+// Importe embebido en una línea: "texto ... $ 535.55" | "$535.55" | "-$368.76" |
+// "Enviaste $1,300.00 MXN" | "Monto $ 869.00 M.N."
 function embeddedAmount(t) {
   const s = String(t || "").replace(/\s/g, "");
-  const m = s.match(/([+-]?\$?\d[\d,]*\.\d{2})$/);
+  const m = s.match(/([+-]?\$?\d[\d,]*\.\d{2})(?:MXN|M\.N\.|PESOS|Pesos|USD)?$/i);
   if (!m) return null;
   let v = m[1].replace(/\$/g, "");
   const neg = v.startsWith("-") || /^-\$/.test(m[1]);
@@ -288,18 +289,44 @@ function parseTransfer(lines) {
   let from = null;
   let to = null;
   let keyword = false;
-  for (const l of lines) {
+  let title = null;
+
+  // El texto puede venir como "y\tx\ttexto" (parser local) o como líneas planas.
+  const ls = lines.map((l) => (typeof l === "string" ? { text: l } : l));
+
+  for (const l of ls) {
     const t = l.text.trim();
+    if (!t) continue;
+    // Importe: standalone ("$1,300.00") o embebido ("Enviaste $1,300.00 MXN").
     const a = isAmountLine(t) ? parseAmount(t) : null;
-    if (a && amount === null) amount = a;
+    const emb = a ? null : embeddedAmount(t);
+    if (!amount) {
+      if (a) amount = a;
+      else if (emb) amount = emb.amount;
+    }
     const n = norm(t);
     if (isTransferText(t)) keyword = true;
-    if (!from && /(de la cuenta|cuenta de|from|desde|origen)/.test(n)) from = t;
-    if (!to && /(a la cuenta|para|hacia|destino|to )/.test(n)) to = t;
+    if (/enviaste|recibiste|transferencia|comprobante|spei|traspaso/.test(n)) keyword = true;
+    // Origen: la línea "CTA **3167" suele estar justo debajo de la etiqueta
+    // "Cuenta origen"; capturamos la etiqueta y el valor por proximidad.
+    if (!from && /(cuenta origen|cuenta de|de la cuenta|from|desde|origen)/.test(n)) from = t;
+    else if (!from && /^cta\s*\*{2,3}\d/i.test(t)) from = t;
+    if (!to && /(cuenta destino|a la cuenta|para la cuenta|hacia la cuenta|destino|beneficiario|a nombre de|transferir a|para el beneficiario)/.test(n)) to = t;
   }
+
+  // En los comprobantes de app, el destinatario es un nombre propio
+  // ("Saul Gutierrez Negrete") y el banco ("BBVA MEXICO ...").
+  if (!to) {
+    const nameLine = ls.find((l) => {
+      const t = l.text.trim();
+      return /^[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+\s+[A-ZÁÉÍÓÚÑ]/.test(t) && !isAmountLine(t) && !/\d{8,}/.test(t) && !/^\d/.test(t);
+    });
+    if (nameLine) to = nameLine.text.trim();
+  }
+
   if (amount === null) return null;
-  if (!from && !to && !keyword) return null;
-  return { amount, from: from ? from.replace(/^.*?:\s*/, "") : null, to: to ? to.replace(/^.*?:\s*/, "") : null };
+  if (!from && !to && !keyword && !title) return null;
+  return { amount, from: from ? from.replace(/^.*?:\s*/, "").trim() : null, to: to ? to.replace(/^.*?:\s*/, "").trim() : null };
 }
 
 // ---------- API principal ----------
