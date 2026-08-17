@@ -8,5 +8,14 @@
   "pollIntervalMs": 15000,
   "maxAuditRounds": 3,
   "folderAccountMap": {},
-  "geminiKey": null
+  "bankAccountMap": {},
+  "geminiKey": null,
+  "ocrUrl": "http://127.0.0.1:8765",
+  "drive": {
+    "folderUrl": "https://drive.google.com/drive/folders/ID_DE_LA_CARPETA",
+    "downloadDir": "/home/devops/drive-downloads",
+    "stateFile": "/home/devops/drive-state.json",
+    "pollIntervalMs": 30000,
+    "enabled": true
+  }
 }
