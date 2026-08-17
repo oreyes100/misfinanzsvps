@@ -65,11 +65,16 @@ function resolveAccountFor(cfg, state, result, file) {
   const byFolder = apply.findAccountByFolder(state, cfg.folderAccountMap, file, cfg.watchDir);
   if (byFolder) return byFolder;
   if (result.merchant && cfg.bankAccountMap) {
-    const key = String(result.merchant).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-    const mapped = cfg.bankAccountMap[key];
-    if (mapped) {
-      const acc = (state.accounts || []).find((a) => a.id === mapped || a.name === mapped);
-      if (acc) return acc;
+    // Coincidencia por token (p. ej. "BBVA MEXICO (CTA **3167)" -> "bbva"),
+    // no solo por clave exacta, para capturar cuentas que mencionan el banco.
+    const text = String(result.merchant).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    const tokens = text.split(/[^\p{L}\p{N}]+/u).filter((s) => s.length >= 3);
+    for (const [key, mapped] of Object.entries(cfg.bankAccountMap)) {
+      const k = String(key).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      if (text === k || tokens.includes(k) || text.includes(k)) {
+        const acc = (state.accounts || []).find((a) => a.id === mapped || a.name === mapped);
+        if (acc) return acc;
+      }
     }
   }
   const hint = result.type === "transfer"
@@ -135,25 +140,54 @@ function handleReceipt(cfg, state, result, file, source) {
 function handleTransfer(cfg, state, result, file, source) {
   const t = result.transfer;
   if (!t || !(t.amount > 0)) throw new Error("comprobante sin importe");
-  const from = apply.findAccount(state, t.from, state.transferAliases || {});
-  const to = apply.findAccount(state, t.to, state.transferAliases || {});
-  if (!from || !to || from.id === to.id) {
-    throw new Error(`cuentas de transferencia no resueltas: from="${t.from}" to="${t.to}"`);
+
+  // Resolver ambas puntas. Si alguna no resuelve a una cuenta propia, en lugar
+  // de fallar se degrada a un movimiento simple (egreso/ingreso) en la cuenta
+  // que sí se conozca; el texto de la contraparte queda en la descripción.
+  const aliases = state.transferAliases || {};
+  const from = apply.findAccount(state, t.from, aliases) || resolveAccountFor(cfg, state, { merchant: t.from, transfer: t, type: "transfer" }, file);
+  const to = apply.findAccount(state, t.to, aliases) || resolveAccountFor(cfg, state, { merchant: t.to, transfer: t, type: "transfer" }, file);
+
+  if (from && to && from.id !== to.id) {
+    const next = apply.addTransfer(state, {
+      fromId: from.id,
+      toId: to.id,
+      amount: t.amount,
+      date: result.date || null,
+      notes: `Ingresado por Hermes desde comprobante [${source}]`,
+    });
+    return {
+      state: next,
+      actions: [
+        { kind: "transfer_out", fromId: from.id, toId: to.id, amount: -r2(t.amount) },
+        { kind: "transfer_in", fromId: from.id, toId: to.id, amount: r2(t.amount) },
+      ],
+    };
   }
-  const next = apply.addTransfer(state, {
-    fromId: from.id,
-    toId: to.id,
-    amount: t.amount,
-    date: result.date || null,
-    notes: `Ingresado por Hermes desde comprobante [${source}]`,
-  });
-  return {
-    state: next,
-    actions: [
-      { kind: "transfer_out", fromId: from.id, toId: to.id, amount: -r2(t.amount) },
-      { kind: "transfer_in", fromId: from.id, toId: to.id, amount: r2(t.amount) },
-    ],
-  };
+
+  // Degradación: una sola punta conocida -> movimiento simple en esa cuenta.
+  const acc = from || to;
+  if (acc) {
+    const out = !!from; // salió de la cuenta conocida -> egreso
+    const amount = out ? -r2(t.amount) : r2(t.amount);
+    const counterpart = out ? t.to : t.from;
+    const next = apply.addTransaction(state, {
+      description: counterpart ? `Transferencia ${out ? "a" : "desde"} ${counterpart}` : "Transferencia",
+      amount,
+      currency: acc.currency,
+      accountId: acc.id,
+      category: "Otros",
+      date: result.date || null,
+      notes: `Ingresado por Hermes desde comprobante [${source}]`,
+      auto: true,
+    });
+    return {
+      state: next,
+      actions: [{ kind: out ? "transfer_out" : "transfer_in", accountId: acc.id, amount, counterpart }],
+    };
+  }
+
+  throw new Error(`cuentas de transferencia no resueltas: from="${t.from}" to="${t.to}"`);
 }
 
 async function handleStatement(cfg, state, result, file, source) {
@@ -245,14 +279,28 @@ async function handleStatementLocal(cfg, state, result, file, source) {
 // ---------- OCR + parseo ----------
 
 async function extractFromImage(cfg, state, imgPath, sourceBase) {
-  // Paso 1: OCR local (PaddleOCR). Si falla no bloquea el flujo.
+  // Paso 1: OCR local (PaddleOCR). Reintenta con backoff si el servidor está
+  // ocupado o la inferencia falla por razones transitorias; si falla no
+  // bloquea el flujo (luego entra Gemini).
   let ocrText = null;
   if (cfg.ocrUrl) {
-    try {
-      ocrText = await ocrImage(imgPath, { url: cfg.ocrUrl });
-      appendJournal(cfg.journalFile, { event: "ocr", file: sourceBase, chars: ocrText.length });
-    } catch (e) {
-      console.warn(`[processor] OCR skip ${sourceBase}: ${e.message}`);
+    const maxOcr = cfg.ocrRetries ?? 2;
+    for (let attempt = 1; attempt <= maxOcr; attempt++) {
+      try {
+        ocrText = await ocrImage(imgPath, { url: cfg.ocrUrl });
+        appendJournal(cfg.journalFile, { event: "ocr", file: sourceBase, chars: ocrText.length, attempt });
+        break;
+      } catch (e) {
+        const retriable = /socket hang up|ECONNREFUSED|ECONNRESET|timeout|no such file|ENOENT|500|503/i.test(String(e.message));
+        if (attempt < maxOcr && retriable) {
+          const wait = 15000 * attempt;
+          console.warn(`[processor] OCR ${sourceBase} reintento ${attempt}/${maxOcr} en ${wait / 1000}s: ${e.message}`);
+          await new Promise((r) => setTimeout(r, wait));
+        } else {
+          console.warn(`[processor] OCR skip ${sourceBase}: ${e.message}`);
+          break;
+        }
+      }
     }
   }
 

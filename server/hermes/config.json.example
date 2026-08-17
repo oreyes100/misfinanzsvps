@@ -17,11 +17,15 @@
   },
   "geminiKey": null,
   "ocrUrl": "http://127.0.0.1:8765",
+  "ocrRetries": 2,
   "drive": {
     "folderUrl": "https://drive.google.com/drive/folders/ID_DE_LA_CARPETA",
     "downloadDir": "/home/devops/drive-downloads",
     "stateFile": "/home/devops/drive-state.json",
     "pollIntervalMs": 30000,
-    "enabled": true
+    "enabled": true,
+    "maxAttempts": 5,
+    "retryBaseMs": 20000,
+    "retryBackoff": 2
   }
 }

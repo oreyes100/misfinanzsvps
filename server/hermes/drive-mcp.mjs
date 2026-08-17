@@ -27,6 +27,31 @@ if (!drive.folderUrl) throw new Error("config.drive.folderUrl requerido (enlace 
 const DOWNLOAD_DIR = drive.downloadDir || "/home/devops/drive-downloads";
 const STATE_FILE = drive.stateFile || "/home/devops/drive-state.json";
 
+// Configuración del bucle de reintentos (loop recursivo de corrección).
+const MAX_ATTEMPTS = Math.max(1, drive.maxAttempts ?? 5);
+const RETRY_BASE_MS = Math.max(1000, drive.retryBaseMs ?? 20000);
+const RETRY_BACKOFF = drive.retryBackoff ?? 2;
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Errores recuperables: no son definitivos, se reintentan con backoff.
+const RETRYABLE = /ENOENT|no such file|timeout|timed out|L[ií]mite de uso|rate limit|429|500|502|503|socket|ECONNRESET|OCR server|imagen no encontrada|bad request/i;
+
+function isRetryableError(e) {
+  return RETRYABLE.test(String((e && e.message) || e));
+}
+
+function attemptsOf(failedEntry) {
+  return (failedEntry && Number.isFinite(failedEntry.attempts) ? failedEntry.attempts : 0) || 0;
+}
+
+function nextRetryAt(failedEntry) {
+  const n = attemptsOf(failedEntry);
+  const backoff = RETRY_BASE_MS * Math.pow(RETRY_BACKOFF, n);
+  const delay = Math.min(backoff, 10 * 60 * 1000);
+  return Date.now() + delay;
+}
+
 // ---------- Tracking de archivos ya procesados ----------
 
 function readState() {
@@ -42,11 +67,48 @@ function writeState(state) {
   fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
 }
 
+// Un archivo ya no se procesa si: fue procesado OK, o falló de forma definitiva
+// (agotó los reintentos) y aún no le toca volver a intentarlo.
 function alreadyDone(state, fileId) {
-  return !!(state.processed[fileId] || state.failed[fileId]);
+  if (state.processed[fileId]) return true;
+  const failed = state.failed[fileId];
+  if (!failed) return false;
+  if (attemptsOf(failed) >= MAX_ATTEMPTS) return true;
+  const at = failed.retryAt || 0;
+  return at > Date.now(); // pendiente de reintento en el futuro -> no reintentar todavía
 }
 
 // ---------- Sync Drive → DB ----------
+
+async function processFile(state, file) {
+  let local = null;
+  try {
+    // Descargar con el nombre original del Drive para que el parser local
+    // (que a veces detecta el banco por el nombre) no pierda contexto.
+    local = await downloadDriveFile(file, DOWNLOAD_DIR);
+    const sourceBase = file.name;
+    const res = await processImage(db, cfg, local, sourceBase);
+    delete state.failed[file.id];
+    state.processed[file.id] = { name: file.name, at: new Date().toISOString(), type: res.type, actions: res.actions.length };
+    return { ok: true, type: res.type, actions: res.actions.length };
+  } catch (e) {
+    const error = String((e && e.message) || e);
+    const prev = state.failed[file.id] || {};
+    const attempts = attemptsOf(prev) + 1;
+    const entry = { name: file.name, at: new Date().toISOString(), error, attempts };
+    if (attempts < MAX_ATTEMPTS && isRetryableError(e)) {
+      // Error recuperable: lo programamos para reintento con backoff (loop).
+      entry.retryAt = nextRetryAt(entry);
+      state.failed[file.id] = entry;
+      return { ok: false, retry: true, attempts, error, retryAt: entry.retryAt };
+    }
+    // Fallo definitivo (no recuperable o agotó intentos).
+    state.failed[file.id] = entry;
+    return { ok: false, retry: false, attempts, error };
+  } finally {
+    if (local) rmQuiet(local);
+  }
+}
 
 async function syncOnce() {
   const state = readState();
@@ -54,42 +116,56 @@ async function syncOnce() {
   const files = (await listDrivePublic(folderId)).filter((f) => f.isImage);
   const pendientes = files.filter((f) => !alreadyDone(state, f.id));
 
-  const results = { total: files.length, nuevos: pendientes.length, ok: 0, fallidos: 0, errores: [] };
+  const results = { total: files.length, nuevos: pendientes.length, ok: 0, fallidos: 0, reintentos: 0, errores: [] };
 
   for (const file of pendientes) {
-    let local = null;
-    try {
-      // Descargar con el nombre original del Drive para que el parser local
-      // (que a veces detecta el banco por el nombre) no pierda contexto.
-      local = await downloadDriveFile(file, DOWNLOAD_DIR);
-      const sourceBase = file.name;
-      const res = await processImage(db, cfg, local, sourceBase);
-      state.processed[file.id] = { name: file.name, at: new Date().toISOString(), type: res.type, actions: res.actions.length };
-      results.ok++;
-      console.log(`[drive] OK ${file.name} → ${res.type} (${res.actions.length} acciones)`);
-    } catch (e) {
-      state.failed[file.id] = { name: file.name, at: new Date().toISOString(), error: String(e.message || e) };
-      results.fallidos++;
-      results.errores.push({ file: file.name, error: String(e.message || e) });
-      console.error(`[drive] FAIL ${file.name}: ${e.message}`);
-    } finally {
-      if (local) rmQuiet(local);
+    // Si es un reintento pendiente, respetar el backoff antes de volver a procesar.
+    const prev = state.failed[file.id];
+    const wait = (prev && prev.retryAt ? prev.retryAt - Date.now() : 0);
+    if (wait > 0) {
+      console.log(`[drive] ${file.name}: reintento programado en ${Math.round(wait / 1000)}s`);
+      await sleep(Math.min(wait, 10000));
     }
+    const r = await processFile(state, file);
+    if (r.ok) {
+      results.ok++;
+      console.log(`[drive] OK ${file.name} → ${r.type} (${r.actions} acciones)`);
+    } else if (r.retry) {
+      results.reintentos++;
+      console.warn(`[drive] RETRY ${file.name} (${r.attempts}/${MAX_ATTEMPTS}): ${r.error}`);
+      results.errores.push({ file: file.name, error: r.error, attempts: r.attempts, retry: true });
+    } else {
+      results.fallidos++;
+      results.errores.push({ file: file.name, error: r.error, attempts: r.attempts });
+      console.error(`[drive] FAIL ${file.name}: ${r.error}`);
+    }
+    writeState(state);
   }
 
-  writeState(state);
-  appendJournal(cfg.journalFile, { event: "drive_sync", folderId, total: results.total, nuevos: results.nuevos, ok: results.ok, fallidos: results.fallidos, at: new Date().toISOString() });
+  appendJournal(cfg.journalFile, { event: "drive_sync", folderId, total: results.total, nuevos: results.nuevos, ok: results.ok, fallidos: results.fallidos, reintentos: results.reintentos, at: new Date().toISOString() });
   return results;
 }
 
 // ---------- Modo daemon ----------
 
 async function watchLoop() {
-  console.log(`[drive] vigilando ${drive.folderUrl} cada ${drive.pollIntervalMs || 30000}ms`);
-  await syncOnce();
-  setInterval(() => {
-    syncOnce().catch((e) => console.error(`[drive] sync error: ${e.message}`));
-  }, drive.pollIntervalMs || 30000);
+  console.log(`[drive] vigilando ${drive.folderUrl} cada ${drive.pollIntervalMs || 30000}ms (reintentos: ${MAX_ATTEMPTS}, backoff ${RETRY_BASE_MS}ms)`);
+  // Bucle secuencial: cada ciclo espera a que el anterior termine para no
+  // procesar el mismo archivo dos veces en paralelo (causa ENOENT/duplicados).
+  let running = false;
+  const tick = async () => {
+    if (running) return;
+    running = true;
+    try {
+      await syncOnce();
+    } catch (e) {
+      console.error(`[drive] sync error: ${e.message}`);
+    } finally {
+      running = false;
+    }
+  };
+  await tick();
+  setInterval(tick, drive.pollIntervalMs || 30000);
 }
 
 // ---------- Modo MCP ----------
@@ -148,32 +224,33 @@ async function runMcp() {
 
   server.tool(
     "drive_retry_failed",
-    "Reintenta procesar los archivos de Google Drive que fallaron anteriormente.",
+    "Reintenta procesar los archivos de Google Drive que fallaron anteriormente (o que están pendientes de reintento por backoff).",
     {},
     async () => {
       const state = readState();
       const failedIds = Object.keys(state.failed);
       const folderId = driveFolderId(drive.folderUrl);
       const files = await listDrivePublic(folderId);
+      // Reintentar todos los fallidos, ignorando el backoff programado.
       const retry = files.filter((f) => failedIds.includes(f.id) && f.isImage);
-      const results = { reintentos: retry.length, ok: 0, fallidos: 0, errores: [] };
+      const results = { reintentos: retry.length, ok: 0, fallidos: 0, pendientes: 0, errores: [] };
       for (const file of retry) {
         delete state.failed[file.id];
-        let local = null;
-        try {
-          local = await downloadDriveFile(file, DOWNLOAD_DIR);
-          const res = await processImage(db, cfg, local, file.name);
-          state.processed[file.id] = { name: file.name, at: new Date().toISOString(), type: res.type, actions: res.actions.length };
+        const r = await processFile(state, file);
+        if (r.ok) {
           results.ok++;
-        } catch (e) {
-          state.failed[file.id] = { name: file.name, at: new Date().toISOString(), error: String(e.message || e) };
+          console.log(`[drive] OK ${file.name} → ${r.type} (${r.actions} acciones)`);
+        } else if (r.retry) {
+          results.pendientes++;
+          results.errores.push({ file: file.name, error: r.error, attempts: r.attempts, retry: true });
+          console.warn(`[drive] RETRY ${file.name} (${r.attempts}/${MAX_ATTEMPTS}): ${r.error}`);
+        } else {
           results.fallidos++;
-          results.errores.push({ file: file.name, error: String(e.message || e) });
-        } finally {
-          if (local) rmQuiet(local);
+          results.errores.push({ file: file.name, error: r.error, attempts: r.attempts });
+          console.error(`[drive] FAIL ${file.name}: ${r.error}`);
         }
+        writeState(state);
       }
-      writeState(state);
       return {
         content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
       };
