@@ -157,7 +157,7 @@ export default function Transactions() {
                   style={{ background: `${catColor(t.category, state.categories)}22`, color: catColor(t.category, state.categories) }}
                   aria-hidden="true"
                 >
-                  {t.category.slice(0, 2).toUpperCase()}
+                  {(t.category || "Otro").slice(0, 2).toUpperCase()}
                 </span>
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium">{t.description}</p>
