@@ -12,6 +12,13 @@
 //   - tools/call atraviesa el orquestador: 429 RATE_LIMITED, 503 CIRCUIT_OPEN,
 //     BACKPRESSURE, TIMEOUT, con retryAfterMs.
 //
+// MCP-03 (amortiguador de tormentas):
+//   - RetryOrchestrator: backoff exponencial + jitter, idempotencia por
+//     Idempotency-Key, presupuesto de retries por cliente y detección de storms.
+//   - Cada handler real se envuelve con runToolWithRetry (retry engine dentro
+//     de la ejecución). La idempotencia de replay la gestiona el
+//     IdempotencyManager del retry layer en vez del antiguo Map local.
+//
 // Arranque:
 //   node src/mcp/server.ts            (o compilado: node dist/mcp/server.js)
 // Uso como módulo: import { createMcpServer, startMcpServer } from "./server";
@@ -30,6 +37,7 @@ import type { McpScope, CapabilityNegotiateRequest, NegotiationResult, Sensitivi
 import { ResilienceOrchestrator } from "./resilience/resilience-orchestrator.ts";
 import { HealthDashboard } from "./resilience/health-dashboard.ts";
 import { ToolPriority, type ResilienceConfig, type ToolResilienceConfig, type ToolPriority as ToolPriorityType } from "./resilience/types.ts";
+import { createRetryOrchestrator, runToolWithRetry } from "./retry-integration.ts";
 import type { SecureToolDefinition } from "./tool-registry.ts";
 
 const SERVER_NAME = "misfinanzas-mcp-server";
@@ -174,6 +182,8 @@ export function createMcpServer(options: McpServerOptions = {}) {
     },
   });
   const dashboard = new HealthDashboard();
+  // MCP-03: capa de retry/backoff + idempotencia + budget + storm.
+  const retry = createRetryOrchestrator();
 
   // Herramienta de admin: reporte de salud del sistema de resiliencia.
   registry.register({
@@ -189,21 +199,21 @@ export function createMcpServer(options: McpServerOptions = {}) {
   });
 
   // Registrar TODAS las herramientas del registry en el orquestador de resiliencia.
+  // El handler real se envuelve con el retry layer (MCP-03): backoff + idempotencia
+  // + budget + storm se aplican dentro de la ejecución.
   for (const tool of registry.listAll()) {
     const config = resilienceConfigFor(tool);
     const overrides = options.resilienceOverrides?.[tool.name];
     const merged: ToolResilienceConfig = overrides
       ? { ...config, ...overrides, toolName: tool.name }
       : config;
-    orchestrator.registerTool(merged, (args) => tool.handler(args));
+    orchestrator.registerTool(merged, (args, ctx) => runToolWithRetry(retry, tool, args, ctx));
   }
 
   // Reenviar eventos de resiliencia al dashboard para los reportes.
   orchestrator.onEvent((event) => dashboard.logEvent(event));
 
   const session: Session = defaultSession();
-  // Idempotencia: tool+key → último resultado (replay devuelve lo mismo).
-  const idempotencyResults = new Map<string, unknown>();
 
   const server = new Server(
     { name: SERVER_NAME, version: SERVER_VERSION },
@@ -272,11 +282,8 @@ export function createMcpServer(options: McpServerOptions = {}) {
       return { content: [{ type: "text", text: JSON.stringify({ error: "UNAUTHORIZED", message: authResult.reason }) }], isError: true };
     }
 
-    // Replay de operación idempotente → devolver el resultado previo.
-    if (idempotencyKey) {
-      const cached = idempotencyResults.get(`${name}:${idempotencyKey}`);
-      if (cached) return { content: [{ type: "text", text: JSON.stringify(cached) }] };
-    }
+    // Replay de operación idempotente → lo resuelve el IdempotencyManager del
+    // retry layer (MCP-03) dentro del handler, sin llegar a re-ejecutar.
 
     const tool = registry.getTool(name);
     if (!tool) {
@@ -308,7 +315,6 @@ export function createMcpServer(options: McpServerOptions = {}) {
     });
 
     if (result.success) {
-      if (idempotencyKey) idempotencyResults.set(`${name}:${idempotencyKey}`, result.data);
       return {
         content: [{
           type: "text",
@@ -335,10 +341,13 @@ export function createMcpServer(options: McpServerOptions = {}) {
     };
   });
 
-  // Al cerrar la conexión, liberar timers del orquestador.
-  server.onclose = () => orchestrator.destroy();
+  // Al cerrar la conexión, liberar timers del orquestador y del retry layer.
+  server.onclose = () => {
+    orchestrator.destroy();
+    retry.destroy();
+  };
 
-  return { server, registry, auth, orchestrator, dashboard };
+  return { server, registry, auth, orchestrator, dashboard, retry };
 }
 
 /** Conecta el servidor por stdio. Devuelve la promesa de conexión. */

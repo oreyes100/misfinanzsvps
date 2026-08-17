@@ -29,12 +29,18 @@ interface CachedValue {
   expiresAt: number;
 }
 
+/** Contexto de ejecución que el orquestador pasa al handler (MCP-03). */
+export interface HandlerContext {
+  clientId?: string;
+  idempotencyKey?: string;
+}
+
 export class ResilienceOrchestrator {
   private config: ResilienceConfig;
   private circuitBreakers = new Map<string, CircuitBreaker>();
   private rateLimiters = new Map<string, RateLimiter>();
   private toolConfigs = new Map<string, ToolResilienceConfig>();
-  private handlers = new Map<string, (args: unknown) => Promise<unknown>>();
+  private handlers = new Map<string, (args: unknown, ctx?: HandlerContext) => Promise<unknown>>();
   private cache = new Map<string, CachedValue>();
   private latencyLog = new Map<string, number[]>();
   private eventListeners: ((event: ResilienceEvent) => void)[] = [];
@@ -49,7 +55,11 @@ export class ResilienceOrchestrator {
     this.priorityQueue.setProcessor(async (item: QueueItem) => {
       const handler = this.handlers.get(item.toolName);
       if (!handler) throw new Error(`Sin handler registrado para '${item.toolName}'`);
-      return this.executeWithTimeout(handler, item.args, this.timeoutFor(item.toolName));
+      return this.executeWithTimeout(
+        () => handler(item.args, { clientId: item.clientId, idempotencyKey: item.idempotencyKey }),
+        item.toolName,
+        this.timeoutFor(item.toolName)
+      );
     });
 
     if (config.metrics.healthCheckIntervalMs > 0) {
@@ -60,7 +70,10 @@ export class ResilienceOrchestrator {
   /**
    * Registrar una herramienta con su configuración de resiliencia y (opcional) handler.
    */
-  registerTool(toolConfig: ToolResilienceConfig, handler?: (args: unknown) => Promise<unknown>): void {
+  registerTool(
+    toolConfig: ToolResilienceConfig,
+    handler?: (args: unknown, ctx?: HandlerContext) => Promise<unknown>
+  ): void {
     this.toolConfigs.set(toolConfig.toolName, toolConfig);
     if (handler) this.handlers.set(toolConfig.toolName, handler);
 
@@ -96,9 +109,9 @@ export class ResilienceOrchestrator {
     clientId: string;
     args: unknown;
     idempotencyKey?: string;
-    handler?: (args: unknown) => Promise<unknown>;
+    handler?: (args: unknown, ctx?: HandlerContext) => Promise<unknown>;
   }): Promise<ResilientToolCallResult> {
-    const { toolName, clientId, args, handler } = params;
+    const { toolName, clientId, args, handler, idempotencyKey } = params;
     const startTime = Date.now();
     const toolConfig = this.toolConfigs.get(toolName);
     const priority = toolConfig?.priority ?? ToolPriority.NORMAL;
@@ -165,9 +178,11 @@ export class ResilienceOrchestrator {
     try {
       let result: unknown;
       if (toolConfig?.bypassQueue) {
+        const directHandler =
+          this.handlers.get(toolName) || (() => Promise.reject(new Error(`Sin handler para '${toolName}'`)));
         result = await this.executeWithTimeout(
-          this.handlers.get(toolName) || (() => Promise.reject(new Error(`Sin handler para '${toolName}'`))),
-          args,
+          () => directHandler(args, { clientId, idempotencyKey }),
+          toolName,
           this.timeoutFor(toolName)
         );
       } else {
@@ -177,7 +192,7 @@ export class ResilienceOrchestrator {
           priority,
           args,
           clientId,
-          idempotencyKey: params.idempotencyKey,
+          idempotencyKey,
         });
       }
 
@@ -244,9 +259,13 @@ export class ResilienceOrchestrator {
     };
   }
 
-  private executeWithTimeout(handler: (args: unknown) => Promise<unknown>, args: unknown, timeoutMs: number): Promise<unknown> {
+  private executeWithTimeout(
+    fn: () => Promise<unknown>,
+    toolName: string,
+    timeoutMs: number
+  ): Promise<unknown> {
     return Promise.race([
-      handler(args),
+      fn(),
       new Promise((_, reject) =>
         setTimeout(() => reject(new Error(`Tool execution timeout after ${timeoutMs}ms`)), timeoutMs)
       ),
