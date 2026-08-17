@@ -82,10 +82,15 @@ function resolveAccountFor(cfg, state, result, file) {
 
 function handleReceipt(cfg, state, result, file, source) {
   const items = Array.isArray(result.items) ? result.items : [];
-  if (items.length === 0) {
+  const acc = resolveAccountFor(cfg, state, result, file);
+  if (!acc) throw new Error("cuenta del recibo no resuelta");
+
+  // Si los ítems no traen montos (tickets: importes en columnas separadas que
+  // el OCR no empareja con el producto), usamos el TOTAL del recibo como una
+  // sola transacción.
+  const itemTotal = r2(items.reduce((s, it) => s + Math.abs(it.amount || 0), 0));
+  if (items.length === 0 || itemTotal <= 0) {
     if (!(result.total > 0)) throw new Error("recibo sin total ni ítems");
-    const acc = resolveAccountFor(cfg, state, result, file);
-    if (!acc) throw new Error("cuenta del recibo no resuelta");
     const tx = apply.addTransaction(state, {
       description: result.merchant || "Compra",
       amount: -r2(result.total),
@@ -107,8 +112,6 @@ function handleReceipt(cfg, state, result, file, source) {
     g.desc.push(it.name);
     groups.set(key, g);
   }
-  const acc = resolveAccountFor(cfg, state, result, file);
-  if (!acc) throw new Error("cuenta del recibo no resuelta");
 
   let next = state;
   const actions = [];

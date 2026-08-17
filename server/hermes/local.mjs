@@ -226,7 +226,6 @@ function parseStatement(lines) {
 function parseReceipt(lines) {
   // Recibo: total con $ en la parte baja, descripción en la cabecera.
   // items: líneas con importe que no sean el total.
-  let total = null;
   let merchant = null;
   const items = [];
 
@@ -234,12 +233,38 @@ function parseReceipt(lines) {
   for (const l of lines) {
     const t = l.text.trim();
     if (!t) continue;
-    if (isAmountLine(t)) {
-      total = parseAmount(t);
-      break;
-    }
+    if (isAmountLine(t)) break;
     if (t.length > 3 && merchant === null && !/^\d+$/.test(t)) {
       merchant = t;
+    }
+  }
+
+  // Total: importe asociado a TOTAL/IMPORTE/MONTO. Los tickets de tienda suelen
+  // poner "TOTAL" y/o "IMPORTE: $X"; preferimos ese valor sobre el primer
+  // importe suelto del documento (que puede ser un subtotal).
+  let total = null;
+  let labelAmount = null;
+  for (const l of lines) {
+    const t = l.text.trim();
+    if (!t) continue;
+    const n = norm(t);
+    if (!/(^|\b)(total|importe|monto)(\b|:)/.test(n) || /subtotal/.test(n)) continue;
+    const emb = embeddedAmount(t);
+    if (emb) {
+      labelAmount = emb.amount;
+      break;
+    }
+  }
+  if (labelAmount) {
+    total = labelAmount;
+  } else {
+    // Fallback: primer importe del documento.
+    for (const l of lines) {
+      const t = l.text.trim();
+      if (isAmountLine(t)) {
+        total = parseAmount(t);
+        break;
+      }
     }
   }
 
@@ -256,18 +281,24 @@ function parseReceipt(lines) {
 
 function parseTransfer(lines) {
   // Comprobante de transferencia: importe grande + "desde/hacia/para/cuenta".
+  // Solo se considera transferencia si hay origen/destino O una keyword fuerte
+  // de transferencia (SPEI/CLABE/transferencia), para no confundir un recibo
+  // de compra (que tiene importes pero no cuentas) con una transferencia.
   let amount = null;
   let from = null;
   let to = null;
+  let keyword = false;
   for (const l of lines) {
     const t = l.text.trim();
     const a = isAmountLine(t) ? parseAmount(t) : null;
     if (a && amount === null) amount = a;
     const n = norm(t);
+    if (isTransferText(t)) keyword = true;
     if (!from && /(de la cuenta|cuenta de|from|desde|origen)/.test(n)) from = t;
     if (!to && /(a la cuenta|para|hacia|destino|to )/.test(n)) to = t;
   }
   if (amount === null) return null;
+  if (!from && !to && !keyword) return null;
   return { amount, from: from ? from.replace(/^.*?:\s*/, "") : null, to: to ? to.replace(/^.*?:\s*/, "") : null };
 }
 
