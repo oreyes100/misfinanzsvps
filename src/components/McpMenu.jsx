@@ -408,9 +408,16 @@ function ReviewRow({ item, onAccept, onDismiss, onEdit }) {
             Categoría {preview.category || "—"} · Cuenta {preview.accountName || "—"}
           </p>
         </div>
-        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${isFix ? "bg-loss/15 text-loss" : "bg-amber-400/15 text-amber-400"}`}>
+        <button
+          type="button"
+          onClick={() => onEdit(item)}
+          title={isFix ? "Abrir editor para corregir" : "Abrir editor para revisar"}
+          className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium transition-colors pressable ${
+            isFix ? "bg-loss/15 text-loss hover:bg-loss/25" : "bg-amber-400/15 text-amber-400 hover:bg-amber-400/25"
+          }`}
+        >
           {isFix ? "⚠️ Corregir" : "👁️ Revisar"}
-        </span>
+        </button>
       </div>
 
       {hasSuggestion && (
@@ -454,25 +461,24 @@ function EditPanel({ item, state, dispatch, isStillPending, onSave, onClose }) {
   const [showReceipt, setShowReceipt] = useState(false);
   const [convertTo, setConvertTo] = useState(""); // "" | accountId destino
   const [conflict, setConflict] = useState(null);
+  const [semanticSuggestion, setSemanticSuggestion] = useState(null);
 
   // Top of Mind A: sugerencia semántica (embeddings en el backend) al abrir la edición.
+  // Solo se muestra como badge (no se aplica automáticamente) para que el usuario decida.
   useEffect(() => {
     let alive = true;
+    setSemanticSuggestion(null);
     const text = description?.trim();
     if (text && text.length >= 2) {
       categorizeSemanticAsync(text, state.categories).then((r) => {
         if (!alive || !r?.category || r.category === "Otros") return;
-        setCategory((prev) => {
-          const current = prev || "";
-          const ruleCat = categorize(text).category;
-          if (current === ruleCat || !state.categories.some((c) => c.name === r.category)) return prev;
-          return r.confidence >= 0.6 ? r.category : prev;
-        });
+        if (!state.categories.some((c) => c.name === r.category)) return;
+        if (r.confidence >= 0.9 && r.semantic !== false) setSemanticSuggestion(r);
       });
     }
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [description]);
+  }, [description, state.categories]);
 
   const handleSave = () => {
     // Optimistic lock: el item debe seguir pendiente al guardar.
@@ -530,6 +536,24 @@ function EditPanel({ item, state, dispatch, isStillPending, onSave, onClose }) {
 
         {!conflict && (
           <>
+            {/* Sugerencia semántica (Top of Mind A) — badge visible, el usuario decide */}
+            {semanticSuggestion && (
+              <div className="mb-3 flex items-center gap-2 rounded-lg border border-gain/30 bg-gain/10 px-3 py-2">
+                <span className="text-green-400" aria-hidden="true">✨</span>
+                <p className="min-w-0 flex-1 text-xs text-gain">
+                  IA sugiere <strong>{semanticSuggestion.category}</strong>{" "}
+                  ({(semanticSuggestion.confidence * 100).toFixed(0)}% confianza)
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setCategory(semanticSuggestion.category)}
+                  className="pressable shrink-0 rounded-lg bg-gain/20 px-2.5 py-1 text-xs font-medium text-gain hover:bg-gain/30"
+                >
+                  Aplicar
+                </button>
+              </div>
+            )}
+
             {/* Recibo visible (RV-01) */}
             {hasReceipt && (
               <div className="mb-4 flex items-center gap-3 rounded-xl border border-white/10 bg-white/4 p-3">
