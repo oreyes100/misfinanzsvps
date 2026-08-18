@@ -257,7 +257,7 @@ async function runMcp() {
     }
   );
 
-  server.tool(
+server.tool(
     "image_process_local",
     "Procesa una imagen local (ruta absoluta de archivo) y registra las transacciones detectadas en Mis Finanzas (OCR → parseo → alta). Úsalo cuando el usuario envía una foto de recibo/transferencia/estado de cuenta por un canal (p. ej. Telegram).",
     {

@@ -327,7 +327,7 @@ function parseTransfer(lines) {
     if (isTransferText(t)) keyword = true;
     if (/enviaste|recibiste|transferencia|comprobante|spei|traspaso/.test(n)) keyword = true;
     // Origen: la línea "CTA **3167" suele estar justo debajo de la etiqueta
-    // "Cuenta origen"; capturamos el valor por proximidad y no la etiqueta.
+// "Cuenta origen"; capturamos el valor por proximidad y no la etiqueta.
     if (!from) {
       if (/(cuenta origen|cuenta de|de la cuenta|from|desde|origen)/.test(n) && !/recibir/.test(n)) {
         const v = valueBelowLabel(i);
@@ -350,7 +350,7 @@ function parseTransfer(lines) {
   if (!to) {
     const nameLine = ls.find((l) => {
       const t = l.text.trim();
-      return /^[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+\s+[A-ZÁÉÍÓÚÑ]/.test(t) && !isAmountLine(t) && !/\d{8,}/.test(t) && !/^\d/.test(t) && !/recibir/.test(t);
+return /^[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+\s+[A-ZÁÉÍÓÚÑ]/.test(t) && !isAmountLine(t) && !/\d{8,}/.test(t) && !/^\d/.test(t) && !/recibir/.test(t);
     });
     if (nameLine) to = nameLine.text.trim();
   }
