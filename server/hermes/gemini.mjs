@@ -9,7 +9,7 @@ import path from "node:path";
 const OLLAMA_BASE = process.env.OLLAMA_BASE || "http://localhost:11434";
 const OLLAMA_EMBED_MODEL = process.env.OLLAMA_EMBED_MODEL || "nomic-embed-text";
 
-const GEMINI_EMBED_MODEL = "text-embedding-004";
+const GEMINI_EMBED_MODEL = "gemini-embedding-001";
 const OPENAI_EMBED_MODEL = "text-embedding-3-small";
 
 /**
