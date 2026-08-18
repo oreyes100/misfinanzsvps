@@ -115,47 +115,33 @@ export function categorize(description: string, categories: Category[] = DEFAULT
 }
 
 /**
- * Categorización semántica vía embeddings + k-NN (async).
- * Requiere que lib/ai.js exporte embedText y cosineSimilarity.
+ * Categorización semántica vía embeddings (Top of Mind A).
+ * Llama al endpoint propio `/api/categorize` (server.mjs → motor de embeddings
+ * de Hermes en el VPS). Si el backend no responde o no hay key, cae a reglas.
  * @param {string} description - Descripción de la transacción
- * @param {Category[]} categories - Categorías del usuario (para validar resultado)
- * @param {Array<{text:string, embedding:number[], category:string}>} knownExamples - Ejemplos con embeddings precalculados
- * @param {string} embedProvider - "ollama" | "openai" | "gemini"
+ * @param {Category[]} categories - Categorías del usuario
+ * @param {string} [baseUrl] - API_BASE ("" en web, Vercel en capacitor)
  * @returns {Promise<{category:string, confidence:number}>}
  */
 export async function categorizeSemanticAsync(
   description: string,
   categories: Category[] = DEFAULT_CATEGORIES,
-  knownExamples: Array<{text: string; embedding: number[]; category: string}> = [],
-  embedProvider: "ollama" | "openai" | "gemini" = "ollama"
-): Promise<{category: string; confidence: number}> {
-  if (!description?.trim() || !knownExamples?.length) {
-    return categorize(description, categories);
-  }
+  baseUrl: string = API_BASE
+): Promise<{ category: string; confidence: number }> {
+  const fallback = () => categorize(description, categories);
+  if (!description?.trim()) return fallback();
   try {
-    const { embedText, cosineSimilarity } = await import("../lib/ai.js");
-    const descEmb = await embedText(description, embedProvider);
-    if (!descEmb?.length) return categorize(description, categories);
-
-    const validCats = new Set(categories.filter(c => !c.system).map(c => c.name));
-    const scored = knownExamples
-      .filter(x => x.embedding?.length === descEmb.length && validCats.has(x.category))
-      .map(x => ({ category: x.category, sim: cosineSimilarity(descEmb, x.embedding) }))
-      .sort((a, b) => b.sim - a.sim)
-      .slice(0, 5);
-
-    if (!scored.length) return categorize(description, categories);
-
-    const votes = {};
-    for (const s of scored) {
-      votes[s.category] = (votes[s.category] || 0) + s.sim;
-    }
-    const top = Object.entries(votes).sort((a, b) => b[1] - a[1])[0];
-    const totalSim = scored.reduce((sum, s) => sum + s.sim, 0);
-    const confidence = Math.min(0.95, top[1] / (totalSim / scored.length || 1));
-    return { category: top[0], confidence };
+    const res = await fetch(`${baseUrl}/api/categorize`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: description, categories: categories.map(({ id, name, type, color, keywords, subcategories, system }) => ({ id, name, type, color, keywords, subcategories, system })) }),
+    });
+    if (!res.ok) return fallback();
+    const data = await res.json();
+    if (!data || data.semantic !== true || !data.category) return fallback();
+    return { category: data.category, confidence: data.confidence ?? 0.5 };
   } catch {
-    return categorize(description, categories);
+    return fallback();
   }
 }
 

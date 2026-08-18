@@ -51,6 +51,94 @@ function authorizeWrite(existing, actor) {
   return !!admin && eq(actor?.hash, admin.hash);
 }
 
+// ---------- Categorización semántica (Top of Mind A) ----------
+// Reutiliza el motor de embeddings de Hermes (server/hermes/gemini.mjs) con el
+// proveedor configurado (env EMBED_PROVIDER / GEMINI_API_KEY, o el geminiKey del
+// config de Hermes). Fallback a reglas si no hay key o falla la red.
+import { readFileSync, existsSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const HERMES_CONFIG = path.join(HERE, "hermes", "config.json");
+
+function hermesGeminiKey() {
+  try {
+    if (existsSync(HERMES_CONFIG)) {
+      const cfg = JSON.parse(readFileSync(HERMES_CONFIG, "utf8"));
+      if (cfg.geminiKey) return cfg.geminiKey;
+    }
+  } catch { /* ignorar */ }
+  return null;
+}
+
+function embedProviderFromEnv() {
+  return process.env.EMBED_PROVIDER || "gemini";
+}
+
+function embedApiKey() {
+  return process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY || hermesGeminiKey() || null;
+}
+
+/** k-NN coseno: devuelve la categoría más similar entre prototipos. */
+function pickByCosine(descEmb, prototypes) {
+  let best = null;
+  let bestSim = 0;
+  for (const p of prototypes) {
+    if (p.embedding?.length !== descEmb.length) continue;
+    let dot = 0, na = 0, nb = 0;
+    for (let i = 0; i < descEmb.length; i++) {
+      dot += descEmb[i] * p.embedding[i];
+      na += descEmb[i] * descEmb[i];
+      nb += p.embedding[i] * p.embedding[i];
+    }
+    const sim = dot / (Math.sqrt(na) * Math.sqrt(nb) || 1);
+    if (sim > bestSim) { bestSim = sim; best = p; }
+  }
+  if (!best) return null;
+  return { category: best.category, confidence: Math.min(0.95, 0.5 + bestSim) };
+}
+
+/** Categoriza por embeddings: prototipo = nombre + keywords + subcategorías de cada categoría. */
+async function categorizeByEmbeddings(text, categories, provider, apiKey) {
+  const { embedText } = await import("./hermes/gemini.mjs");
+  const descEmb = await embedText(String(text || ""), provider, apiKey);
+  if (!descEmb?.length) return null;
+
+  const prototypes = [];
+  for (const c of categories || []) {
+    if (c.system) continue;
+    const corpus = [c.name, ...(c.keywords || []), ...(c.subcategories || [])].filter(Boolean).join(" · ");
+    const emb = await embedText(corpus, provider, apiKey);
+    if (emb?.length) prototypes.push({ category: c.name, embedding: emb });
+  }
+  if (!prototypes.length) return null;
+  return pickByCosine(descEmb, prototypes);
+}
+
+async function handleCategorize(req, res, rawBody) {
+  const body = rawBody || {};
+  const text = String(body.text || "").trim();
+  const categories = Array.isArray(body.categories) ? body.categories : null;
+  if (!text) return { status: 400, body: { error: "text requerido" } };
+  const provider = embedProviderFromEnv();
+  const apiKey = embedApiKey();
+
+  // Sin key → fallback a reglas (misma semántica que categorize()).
+  if (!apiKey) {
+    return { status: 200, body: { category: "Otros", confidence: 0.3, provider, semantic: false } };
+  }
+  try {
+    const r = await categorizeByEmbeddings(text, categories || [], provider, apiKey);
+    if (r) return { status: 200, body: { ...r, provider, semantic: true } };
+    return { status: 200, body: { category: "Otros", confidence: 0.3, provider, semantic: false } };
+  } catch (e) {
+    console.error("[server] categorize error:", e);
+    return { status: 200, body: { category: "Otros", confidence: 0.3, provider, semantic: false } };
+  }
+}
+
+
 // ---------- CORS (idéntico a api/users.js) ----------
 function allowedOrigin(req) {
   let origin = req.headers.origin;
@@ -402,6 +490,7 @@ const server = http.createServer(async (req, res) => {
     if (urlPath === "/api/google-auth") return await routeExtra(handleGoogleAuth, req, res, db);
     if (urlPath === "/api/telegram") return await routeExtra(handleTelegram, req, res, db);
     if (urlPath === "/api/telegram-config") return await routeExtra(handleTelegramConfig, req, res, db);
+    if (urlPath === "/api/categorize") return await routeExtra(handleCategorize, req, res, db);
     return sendJson(res, 404, { error: "No encontrado." });
   } catch (e) {
     if (e.message === "bad_json") return sendJson(res, 400, { error: "JSON inválido." });

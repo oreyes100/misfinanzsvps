@@ -1,8 +1,8 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   BASE_FX, CURRENCIES, CURRENCY_SYMBOL,
   toEUR, convert, fmtMoney, fmtPct,
-  categorize, catColor, DEFAULT_CATEGORIES,
+  categorize, categorizeSemanticAsync, catColor, DEFAULT_CATEGORIES,
   ACCOUNT_TYPES, sortedAccounts, groupedAccounts,
   parseIntent, todayISO, uid,
 } from "./utils";
@@ -87,6 +87,43 @@ describe("utils · categorize", () => {
   it("respeta categorias personalizadas", () => {
     const custom = [{ id: "x", name: "Custom", keywords: ["test"], color: "#fff", type: "expense" }];
     expect(categorize("test algo", custom).category).toBe("Custom");
+  });
+});
+
+describe("utils · categorizeSemanticAsync (Top of Mind A)", () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it("cae a reglas si el backend no responde", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network")));
+    const r = await categorizeSemanticAsync("Netflix");
+    expect(r.category).toBe("Suscripciones"); // reglas
+  });
+
+  it("cae a reglas si el backend devuelve semantic:false", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ category: "Otros", confidence: 0.3, semantic: false }),
+    }));
+    const r = await categorizeSemanticAsync("Uber");
+    expect(r.category).toBe("Transporte"); // reglas
+  });
+
+  it("usa el resultado semántico del backend", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ category: "Comida", confidence: 0.87, semantic: true }),
+    }));
+    const r = await categorizeSemanticAsync("Taquería El Fogoncito");
+    expect(r.category).toBe("Comida");
+    expect(r.confidence).toBeCloseTo(0.87, 2);
+  });
+
+  it("devuelve Otros sin descripción (sin llamar al backend)", async () => {
+    const spy = vi.fn();
+    vi.stubGlobal("fetch", spy);
+    const r = await categorizeSemanticAsync("");
+    expect(r.category).toBe("Otros");
+    expect(spy).not.toHaveBeenCalled();
   });
 });
 

@@ -400,6 +400,31 @@ describe("reducer · settings", () => {
   });
 });
 
+// ---------- FX y oro (Top of Mind B) ----------
+
+describe("reducer · update_fx", () => {
+  it("actualiza goldPriceEUR y hace push a priceHistory.GOLD", () => {
+    const state = cleanState();
+    const next = reducer(state, { type: "update_fx", fx: { EUR: 1, USD: 1.1 }, goldPriceEUR: 95.4, priceHistory: { BTC: 62000, ETH: 3300, GOLD: 95.4 } });
+    expect(next.goldPriceEUR).toBe(95.4);
+    expect(next.priceHistory.GOLD[0]).toBe(68.4); // conserva la serie
+    expect(next.priceHistory.GOLD.at(-1)).toBe(95.4); // push al final
+  });
+
+  it("mantiene goldPriceEUR si el action no lo trae (fallback)", () => {
+    const state = cleanState();
+    const next = reducer(state, { type: "update_fx", fx: { EUR: 1, USD: 1.1 }, priceHistory: { BTC: 62000, ETH: 3300, GOLD: null } });
+    expect(next.goldPriceEUR).toBe(68.4);
+    expect(next.priceHistory.GOLD.at(-1)).toBe(68.4); // GOLD null → se conserva la serie
+  });
+
+  it("no incrementa _syncVersion", () => {
+    const state = cleanState();
+    const next = reducer(state, { type: "update_fx", fx: state.fx, goldPriceEUR: 90 });
+    expect(next._syncVersion).toBe(state._syncVersion);
+  });
+});
+
 // ---------- Tarjetas de crédito ----------
 
 describe("reducer · mark_card_paid", () => {

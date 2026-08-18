@@ -1,10 +1,10 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { useStore } from "../store.jsx";
 import { Btn, Field, Glass, Money } from "./UI.jsx";
 import { useVirtualScroll } from "../hooks/useVirtualScroll.js";
 import { pendingCounts, CLASS_NEEDS_FIX, CLASS_NEEDS_REVIEW } from "../review.js";
-import { categorize } from "../utils.js";
+import { categorize, categorizeSemanticAsync } from "../utils.js";
 import McpPipelineHealth from "./McpPipelineHealth.jsx";
 import { ReceiptThumbnail, ReceiptViewer } from "./ReceiptPreview.jsx";
 
@@ -454,6 +454,25 @@ function EditPanel({ item, state, dispatch, isStillPending, onSave, onClose }) {
   const [showReceipt, setShowReceipt] = useState(false);
   const [convertTo, setConvertTo] = useState(""); // "" | accountId destino
   const [conflict, setConflict] = useState(null);
+
+  // Top of Mind A: sugerencia semántica (embeddings en el backend) al abrir la edición.
+  useEffect(() => {
+    let alive = true;
+    const text = description?.trim();
+    if (text && text.length >= 2) {
+      categorizeSemanticAsync(text, state.categories).then((r) => {
+        if (!alive || !r?.category || r.category === "Otros") return;
+        setCategory((prev) => {
+          const current = prev || "";
+          const ruleCat = categorize(text).category;
+          if (current === ruleCat || !state.categories.some((c) => c.name === r.category)) return prev;
+          return r.confidence >= 0.6 ? r.category : prev;
+        });
+      });
+    }
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [description]);
 
   const handleSave = () => {
     // Optimistic lock: el item debe seguir pendiente al guardar.

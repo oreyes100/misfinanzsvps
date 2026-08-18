@@ -1,7 +1,7 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useStore } from "../store.jsx";
-import { catColor, categorize, convert, fmtMoney, groupedAccounts, todayISO, uid } from "../utils.js";
+import { catColor, categorize, categorizeSemanticAsync, convert, fmtMoney, groupedAccounts, todayISO, uid } from "../utils.js";
 import { aiExtract, matchAccount, ocrImage, parseReceipt, parseTransfer } from "../ocr.js";
 import { Btn, Field, Modal, Money, inputCls } from "./UI.jsx";
 
@@ -245,7 +245,18 @@ export function TransactionModal({ onClose, preset, tx }) {
   const receiptFileRef = useRef(null);
 
   const ai = categorize(desc, state.categories);
-  const suggested = sign === "income" ? "Ingresos" : ai.category;
+  // Top of Mind A: sugerencia semántica async (embeddings en el backend) con fallback a reglas.
+  const [semanticAi, setSemanticAi] = useState(null); // { category, confidence } | null
+  useEffect(() => {
+    let alive = true;
+    setSemanticAi(null);
+    if (desc?.trim().length >= 2) {
+      categorizeSemanticAsync(desc, state.categories).then((r) => { if (alive) setSemanticAi(r); });
+    }
+    return () => { alive = false; };
+  }, [desc, state.categories]);
+  const effectiveAi = semanticAi?.category && semanticAi.confidence >= (ai.confidence + 0.05) ? semanticAi : ai;
+  const suggested = sign === "income" ? "Ingresos" : effectiveAi.category;
   const category = catOverride || suggested;
   const catOptions = state.categories.filter((c) => c.type === (sign === "income" ? "income" : "expense"));
   const activeCat = state.categories.find((c) => c.name === category);

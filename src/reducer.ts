@@ -103,17 +103,18 @@ function innerReducer(state: AppState, action: Action): AppState {
     }
 
     case "update_fx": {
-      const { fx, priceHistory } = action;
+      const { fx, priceHistory, goldPriceEUR } = action;
       const push = (arr: number[], v: number) => [...arr.slice(-59), v];
-      const goldPriceEUR = state.goldPriceEUR;
+      const nextGold = typeof goldPriceEUR === "number" ? goldPriceEUR : state.goldPriceEUR;
+      const goldValue = priceHistory && typeof priceHistory.GOLD === "number" ? priceHistory.GOLD : null;
       return {
         ...state,
         fx,
-        goldPriceEUR,
+        goldPriceEUR: nextGold,
         priceHistory: priceHistory ? {
           BTC: push(state.priceHistory.BTC, priceHistory.BTC ?? state.fx.BTC),
           ETH: push(state.priceHistory.ETH, priceHistory.ETH ?? state.fx.ETH),
-          GOLD: "GOLD" in priceHistory ? push(state.priceHistory.GOLD, priceHistory.GOLD) : state.priceHistory.GOLD,
+          GOLD: goldValue != null ? push(state.priceHistory.GOLD, goldValue) : state.priceHistory.GOLD,
         } : state.priceHistory,
       };
     }
