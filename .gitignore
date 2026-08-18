@@ -22,3 +22,6 @@ server/node_modules/
 
 # Agente Hermes - configuracion local con datos personales
 server/hermes/config.json
+
+# Respaldo de datos privados (no versionable)
+server/mis-finazas-respaldo-*.json

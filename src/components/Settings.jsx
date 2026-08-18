@@ -6,6 +6,7 @@ import { AI_PROVIDERS, aiProviderById } from "../ai.js";
 import { Btn, Field, Glass, inputCls } from "./UI.jsx";
 import TelegramAgent from "./TelegramAgent.jsx";
 import Users from "./Users.jsx";
+import GooglePhotosSettings from "./GooglePhotosSettings.jsx";
 
 const SYNC_LABEL = {
   off: ["Desactivada", "text-ink-dim"],
@@ -194,6 +195,8 @@ export default function Settings({ session }) {
       <BiometricSettings session={session} />
 
       <AIEngine />
+
+      <GooglePhotosSettings />
 
       <TelegramAgent />
 

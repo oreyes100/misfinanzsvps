@@ -11,38 +11,13 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { openDb } from "../db.mjs";
-import { aiExtractFromFile } from "./gemini.mjs";
-import * as apply from "./apply.mjs";
-import { reviewStatement, reconcileEndingBalance } from "./review.mjs";
 import { appendJournal, readJournal } from "./journal.mjs";
+import { loadProcessorConfig, processImage, openDb } from "./processor.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const CONFIG_PATH = process.env.HERMES_CONFIG || path.join(HERE, "config.json");
 
-const IMAGE_EXT = [".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"];
-
-function loadConfig() {
-  const base = {
-    syncCode: null,
-    dbPath: null,
-    watchDir: "/home/devops/obsidian-vault/images/inbox",
-    processedDir: "/home/devops/obsidian-vault/images/processed",
-    reviewDir: "/home/devops/obsidian-vault/images/review",
-    journalFile: "/home/devops/hermes-agent/journal.jsonl",
-    pollIntervalMs: 15000,
-    maxAuditRounds: 3,
-    folderAccountMap: {},
-    geminiKey: null,
-  };
-  if (fs.existsSync(CONFIG_PATH)) {
-    Object.assign(base, JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8")));
-  }
-  if (!base.syncCode) throw new Error("config.syncCode requerido");
-  return base;
-}
-
-const cfg = loadConfig();
+const cfg = loadProcessorConfig(CONFIG_PATH);
 const db = openDb(cfg.dbPath || undefined);
 
 // Bloqueo de instancia única (evita procesos zombi compitiendo por los archivos).
@@ -77,159 +52,9 @@ if (!process.argv[2] || !["--journal", "--config"].includes(process.argv[2])) {
   });
 }
 
-function effectiveGeminiKey(state) {
-  return cfg.geminiKey || process.env.GEMINI_API_KEY || state.settings?.geminiKey || null;
-}
-
 function moveTo(file, dir) {
   fs.mkdirSync(dir, { recursive: true });
   fs.renameSync(file, path.join(dir, path.basename(file)));
-}
-
-function resolveAccountFor(state, result, file) {
-  const byFolder = apply.findAccountByFolder(state, cfg.folderAccountMap, file, cfg.watchDir);
-  if (byFolder) return byFolder;
-  const hint = result.type === "transfer"
-    ? `${result.transfer?.from || ""} ${result.transfer?.to || ""}`
-    : result.merchant;
-  return apply.findAccount(state, hint, state.transferAliases || {});
-}
-
-function r2(n) {
-  return Math.round(n * 100) / 100;
-}
-
-// ---------- Procesamiento de cada tipo ----------
-
-function handleReceipt(state, result, file, source) {
-  const items = Array.isArray(result.items) ? result.items : [];
-  if (items.length === 0) {
-    if (!(result.total > 0)) throw new Error("recibo sin total ni ítems");
-    const acc = resolveAccountFor(state, result, file);
-    if (!acc) throw new Error("cuenta del recibo no resuelta");
-    const tx = apply.addTransaction(state, {
-      description: result.merchant || "Compra",
-      amount: -r2(result.total),
-      currency: acc.currency,
-      accountId: acc.id,
-      category: "Otros",
-      date: result.date || null,
-      notes: `Ingresado por Hermes desde recibo [${source}]`,
-      auto: true,
-    });
-    return { state: tx, actions: [{ kind: "receipt", desc: result.merchant || "Compra", amount: -r2(result.total), accountId: acc.id }] };
-  }
-
-  const groups = new Map();
-  for (const it of items) {
-    const key = it.category || "Otros";
-    const g = groups.get(key) || { category: key, total: 0, desc: [] };
-    g.total = r2(g.total + Math.abs(it.amount || 0));
-    g.desc.push(it.name);
-    groups.set(key, g);
-  }
-  const acc = resolveAccountFor(state, result, file);
-  if (!acc) throw new Error("cuenta del recibo no resuelta");
-
-  let next = state;
-  const actions = [];
-  for (const g of groups.values()) {
-    const amount = -r2(g.total);
-    next = apply.addTransaction(next, {
-      description: `${result.merchant || "Compra"} · ${g.desc.slice(0, 3).join(", ")}`,
-      amount,
-      currency: acc.currency,
-      accountId: acc.id,
-      category: g.category,
-      date: result.date || null,
-      notes: `Ingresado por Hermes desde recibo [${source}]`,
-      auto: true,
-    });
-    actions.push({ kind: "receipt_item", category: g.category, amount, accountId: acc.id });
-  }
-  return { state: next, actions };
-}
-
-function handleTransfer(state, result, file, source) {
-  const t = result.transfer;
-  if (!t || !(t.amount > 0)) throw new Error("comprobante sin importe");
-  const from = apply.findAccount(state, t.from, state.transferAliases || {});
-  const to = apply.findAccount(state, t.to, state.transferAliases || {});
-  if (!from || !to || from.id === to.id) {
-    throw new Error(`cuentas de transferencia no resueltas: from="${t.from}" to="${t.to}"`);
-  }
-  const next = apply.addTransfer(state, {
-    fromId: from.id,
-    toId: to.id,
-    amount: t.amount,
-    date: result.date || null,
-    notes: `Ingresado por Hermes desde comprobante [${source}]`,
-  });
-  return {
-    state: next,
-    actions: [
-      { kind: "transfer_out", fromId: from.id, toId: to.id, amount: -r2(t.amount) },
-      { kind: "transfer_in", fromId: from.id, toId: to.id, amount: r2(t.amount) },
-    ],
-  };
-}
-
-async function handleStatement(state, result, file, source) {
-  const movements = Array.isArray(result.movements) ? result.movements.filter((m) => m && m.amount > 0) : [];
-  if (movements.length === 0) throw new Error("extracto sin movimientos");
-  const acc = resolveAccountFor(state, result, file);
-  if (!acc) throw new Error("cuenta del estado de cuenta no resuelta");
-
-  const geminiKey = effectiveGeminiKey(state);
-  const categories = state.categories || [];
-
-  // 1) Registrar movimientos que NO sean transferencias como transacciones directas.
-  let current = state;
-  const direct = [];
-  for (const m of movements) {
-    if (m.isTransfer) continue; // las transferencias se resuelven en la auditoría
-    const amount = m.direction === "in" ? m.amount : -m.amount;
-    current = apply.addTransaction(current, {
-      description: m.description || "Movimiento",
-      amount,
-      currency: acc.currency,
-      accountId: acc.id,
-      category: m.category || null,
-      date: m.date || null,
-      notes: `Ingresado por Hermes desde estado de cuenta [${source}]`,
-      auto: true,
-    });
-    direct.push({ kind: "statement_movement", amount, date: m.date, accountId: acc.id });
-  }
-
-  // 2) Revisión recursiva: audita contra lo registrado, aplica faltantes hasta cuadrar.
-  const reviewed = await reviewStatement({
-    state: current,
-    account: acc,
-    movements,
-    geminiKey,
-    categories,
-    maxRounds: cfg.maxAuditRounds,
-    source,
-  });
-
-  // 3) Reconciliación final al saldo del banco.
-  const reconciled = reconcileEndingBalance({
-    state: reviewed.state,
-    accountId: acc.id,
-    statementBalance: result.statementBalance,
-    source,
-  });
-
-  return {
-    state: reconciled.state,
-    actions: [
-      ...direct,
-      ...reviewed.applied.map((a) => ({ kind: "audit_missing", amount: a.amount, date: a.date, desc: a.description })),
-      ...(reconciled.applied ? [{ kind: "reconcile", diff: reconciled.diff }] : []),
-    ],
-    report: { round: reviewed.round, remaining: reviewed.remaining, truncated: !!reviewed.truncated, reconcile: reconciled.diff },
-  };
 }
 
 // ---------- Flujo principal ----------
@@ -252,44 +77,17 @@ async function processFile(file) {
   }
 
   try {
-    const state = apply.loadState(db, cfg.syncCode);
-    const geminiKey = effectiveGeminiKey(state);
-    if (!geminiKey) throw new Error("sin GEMINI key: pon settings.geminiKey en la app, config.geminiKey o env GEMINI_API_KEY");
-
     const sourceBase = path.basename(file).replace(/\.processing$/, "");
-    const result = await aiExtractFromFile(lock, geminiKey, {
-      categories: state.categories || [],
-      accounts: state.accounts || [],
-    });
+    // Hermes reclama el archivo renombrándolo a X.jpeg.processing. El servidor
+    // OCR maneja la extensión .processing con un temp copy; pasamos el lock.
+    const imgPath = lock;
 
-    const baseCurrency = state.settings?.baseCurrency || "MXN";
-    let next = state;
-    let actions = [];
-    let report = null;
+    const { ok, type, actions, report } = await processImage(db, cfg, imgPath, sourceBase);
 
-    if (result.type === "receipt") {
-      ({ state: next, actions } = handleReceipt(state, result, lock, sourceBase));
-    } else if (result.type === "transfer") {
-      ({ state: next, actions } = handleTransfer(state, result, lock, sourceBase));
-    } else if (result.type === "statement") {
-      ({ state: next, actions, report } = await handleStatement(state, result, lock, sourceBase));
-    } else {
-      throw new Error(`tipo no soportado: ${result.type}`);
-    }
-
-    const finalState = apply.saveState(db, cfg.syncCode, next);
     fs.mkdirSync(cfg.processedDir, { recursive: true });
     fs.renameSync(lock, path.join(cfg.processedDir, sourceBase));
-    appendJournal(cfg.journalFile, {
-      event: "processed",
-      file: base,
-      type: result.type,
-      actions,
-      report,
-      newSyncVersion: finalState._syncVersion,
-    });
-    console.log(`[hermes] OK ${base} → ${result.type} (${actions.length} acciones)`);
-    return { ok: true, file: base, type: result.type, actions, report };
+    console.log(`[hermes] OK ${base} → ${type} (${actions.length} acciones)`);
+    return { ok, file: base, type, actions, report };
   } catch (e) {
     const isRateLimit = /Límite de uso/i.test(String(e.message || ""));
     if (isRateLimit) {
@@ -356,7 +154,7 @@ function scanPendings() {
       continue;
     }
     if (!st.isFile()) continue;
-    if (!IMAGE_EXT.includes(path.extname(name).toLowerCase())) continue;
+    if (![".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"].includes(path.extname(name).toLowerCase())) continue;
     files.push(full);
   }
   return files;

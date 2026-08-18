@@ -1,14 +1,15 @@
 import { motion } from "framer-motion";
 import { canAccess } from "../auth.js";
+import { McpNavBadge } from "./McpNotification.jsx";
 
 const TABS = [
   { id: "inicio", label: "Inicio", icon: "M3 11.5 12 4l9 7.5M5 10v9h5v-5h4v5h5v-9" },
   { id: "movimientos", label: "Movs", icon: "M4 7h13m0 0-3-3m3 3-3 3M20 17H7m0 0 3-3m-3 3 3 3" },
+  { id: "mcp", label: "MCP", icon: "M9 3h6v2h4a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-4v1H9v-1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h4V3Z M10 8h1.6v1.6H10z M12.4 8H14v1.6h-1.6z" },
   { id: "gestion", label: "Gestión", icon: "M4 6h16M4 6v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V6M4 6l2-3h12l2 3M9 11h6" },
   { id: "reportes", label: "Reportes", icon: "M4 20V10m5 10V4m5 16v-7m5 7V8" },
   { id: "auditoria", label: "Auditar", icon: "M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2M9 5h6M9 12l2 2 4-4" },
   { id: "asistente", label: "IA", icon: "M12 3a7 7 0 0 1 7 7c0 2.5-1.3 4.3-2.7 5.7L16 21h-8l-.3-5.3C6.3 14.3 5 12.5 5 10a7 7 0 0 1 7-7Zm-2 7h.01M14 10h.01" },
-  { id: "congregacion", label: "Congr.", icon: "M3 21h18M5 21V7l7-4 7 4v14M9 21v-6h6v6M9 11h.01M15 11h.01" },
   { id: "importar", label: "Importar", icon: "M12 3v12m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" },
   { id: "ajustes", label: "Ajustes", icon: "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm8 4a8 8 0 0 1-.2 1.8l2 1.6-2 3.4-2.4-1a8 8 0 0 1-3 1.8L14 22h-4l-.4-2.4a8 8 0 0 1-3-1.8l-2.4 1-2-3.4 2-1.6A8 8 0 0 1 4 12c0-.6.1-1.2.2-1.8l-2-1.6 2-3.4 2.4 1a8 8 0 0 1 3-1.8L10 2h4l.4 2.4a8 8 0 0 1 3 1.8l2.4-1 2 3.4-2 1.6c.1.6.2 1.2.2 1.8Z" },
 ];
@@ -39,6 +40,7 @@ export default function BottomNav({ tab, setTab, session }) {
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={active ? "text-accent-soft" : "text-ink-dim"}>
                 <path d={t.icon} />
               </svg>
+              {t.id === "mcp" && <McpNavBadge />}
               <span className={active ? "text-accent-soft" : "text-ink-dim"}>{t.label}</span>
             </button>
           );

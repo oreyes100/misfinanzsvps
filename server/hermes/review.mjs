@@ -79,3 +79,50 @@ export function reconcileEndingBalance({ state, accountId, statementBalance, sou
     notes: `Saldo reportado por el banco: ${statementBalance} [${source}]`,
   });
 }
+
+// ---------- Auditoría LOCAL (sin Gemini) ----------
+
+const near = (a, b, tol = 0.03) => Math.abs(a - b) <= tol;
+
+function sameDate(d1, d2, days = 3) {
+  if (!d1 || !d2) return true; // fecha desconocida -> no descartar por fecha
+  const t1 = new Date(d1).getTime();
+  const t2 = new Date(d2).getTime();
+  if (isNaN(t1) || isNaN(t2)) return true;
+  return Math.abs(t1 - t2) <= days * 86400000;
+}
+
+/**
+ * Versión local de la revisión: para cada movimiento del extracto, si ya existe
+ * una transacción registrada en la cuenta con el mismo importe y fecha cercana,
+ * se omite (ya registrado). Si no, se crea. No usa IA.
+ * @returns {{state: object, applied: object[], skipped: number}}
+ */
+export async function reviewStatementLocal({ state, account, movements, source = "" }) {
+  let next = state;
+  const applied = [];
+  let skipped = 0;
+
+  for (const m of movements) {
+    const amount = m.direction === "in" ? m.amount : -m.amount;
+    const registered = (next.transactions || []).filter((t) => t.accountId === account.id);
+    const dup = registered.find((t) => near(Math.abs(t.amount), m.amount) && sameDate(t.date, m.date));
+    if (dup) {
+      skipped++;
+      continue;
+    }
+    next = addTransaction(next, {
+      description: m.description || "Movimiento",
+      amount,
+      currency: account.currency,
+      accountId: account.id,
+      category: m.category || null,
+      date: m.date || null,
+      notes: `Ingresado por Hermes desde estado de cuenta [${source}]`,
+      auto: true,
+    });
+    applied.push({ description: m.description || "Movimiento", amount, date: m.date, accountId: account.id });
+  }
+
+  return { state: next, applied, skipped };
+}

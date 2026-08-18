@@ -15,6 +15,59 @@ function Delta({ value }) {
   );
 }
 
+/** Widget MCP en el bento: resumen de actividad pendiente con acceso al menú. */
+function McpActivityCard({ pending, onNavigate }) {
+  const needsFix = pending.filter((i) => i.classification === "needs_fix").length;
+  const needsReview = pending.filter((i) => i.classification === "needs_review").length;
+  const total = pending.length;
+
+  if (total === 0) {
+    return (
+      <Glass className="col-span-2 lg:col-span-1" aria-label="MCP sin pendientes">
+        <div className="flex items-center gap-2">
+          <span className="text-lg" aria-hidden="true">🤖</span>
+          <h2 className="text-sm font-semibold">MCP</h2>
+        </div>
+        <p className="mt-1 text-xl font-bold text-gain">✓</p>
+        <p className="mt-0.5 text-xs text-ink-dim">Todo revisado</p>
+      </Glass>
+    );
+  }
+
+  return (
+    <Glass className="col-span-2 lg:col-span-1 !border-loss/20" aria-label={`MCP: ${total} acciones pendientes de revisión`}>
+      {needsFix > 0 && <div className="absolute inset-x-0 top-0 h-1 bg-loss" aria-hidden="true" />}
+      <div className="flex items-center gap-2">
+        <span className="text-lg" aria-hidden="true">🤖</span>
+        <h2 className="text-sm font-semibold">MCP</h2>
+        {total > 0 && (
+          <span className="ml-auto rounded-full bg-loss/15 px-2 py-0.5 text-xs font-bold text-loss">{total}</span>
+        )}
+      </div>
+      <div className="mt-2 space-y-1">
+        {needsFix > 0 && (
+          <p className="flex items-center gap-1.5 text-xs text-loss">
+            <span className="size-1.5 rounded-full bg-loss" aria-hidden="true" /> {needsFix} por corregir
+          </p>
+        )}
+        {needsReview > 0 && (
+          <p className="flex items-center gap-1.5 text-xs text-yellow-500">
+            <span className="size-1.5 rounded-full bg-yellow-500" aria-hidden="true" /> {needsReview} por revisar
+          </p>
+        )}
+      </div>
+      <button
+        type="button"
+        onClick={() => onNavigate("mcp")}
+        className="pressable mt-3 w-full rounded-xl bg-accent py-2 text-xs font-medium text-base-950 hover:bg-accent-soft"
+        aria-label={`Abrir menú MCP con ${total} acciones pendientes`}
+      >
+        Abrir MCP →
+      </button>
+    </Glass>
+  );
+}
+
 /** Ingresos del mes corriente: tarjeta grande y colorida, con porción de intereses y comparación vs mes anterior. */
 function CurrentMonthIncome({ months, base, fx }) {
   const inBase = (eur) => convert(eur, "EUR", base, fx);
@@ -65,7 +118,7 @@ function CurrentMonthIncome({ months, base, fx }) {
   );
 }
 
-export default function Dashboard() {
+export default function Dashboard({ onNavigate = () => {} }) {
   const { state, dispatch } = useStore();
   const [modal, setModal] = useState(null); // "transfer" | "tx" | null
   const base = state.settings.baseCurrency;
@@ -373,6 +426,9 @@ export default function Dashboard() {
         <LineChart data={state.priceHistory.GOLD} stroke="#f5c451" height={34} label="Precio del oro" />
       </Glass>
       )}
+
+      {/* ---- MCP Activity: resumen de acciones pendientes de revisión ---- */}
+      <McpActivityCard pending={state.reviewQueue?.pending || []} onNavigate={onNavigate} />
 
       {/* ---- Inmuebles: todos con total ---- */}
       {cardOn(state.settings, "inmuebles") && (

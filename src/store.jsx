@@ -4,6 +4,8 @@ import { accrueInterest } from "./interest.js";
 import { migrate } from "./migrations.js";
 import useFX from "./useFX.js";
 import { mergeSyncStates } from "./merge.js";
+import { createPersistenceOrchestrator } from "./mcp/persistence-integration.js";
+import { enqueueItem, acceptItem, dismissItem, acceptAllReviewable, dismissAll, cleanupReviewQueue } from "./review.js";
 
 export { accrueInterest };
 
@@ -19,12 +21,25 @@ function seedHistory(current, n = 48, vol = 0.008) {
   return arr;
 }
 
+const DEFAULT_GOOGLE_PHOTOS = {
+  connected: false,
+  email: null,
+  connectedAt: null,
+  lastScanAt: null,
+  lastImportCount: 0,
+};
+
+/** Metadatos de Google Photos (los TOKENS nunca viajan a la nube, viven cifrados en localStorage). */
+const defaultSettings = (over = {}) => ({
+  baseCurrency: "EUR",
+  spendLimit: 1200,
+  biometric: true,
+  googlePhotos: { ...DEFAULT_GOOGLE_PHOTOS, ...(over.googlePhotos || {}) },
+  ...over,
+});
+
 const SEED = {
-  settings: {
-    baseCurrency: "EUR",
-    spendLimit: 1200,
-    biometric: true,
-  },
+  settings: defaultSettings(),
   accounts: [
     { id: "acc-corriente", name: "Corriente", type: "checking", currency: "EUR", balance: 2480.55, rate: 0, accrual: "none", lastAccrual: todayISO() },
     { id: "acc-ahorro", name: "Ahorro", type: "savings", currency: "EUR", balance: 9300, rate: 0.031, accrual: "daily", lastAccrual: seedDate(9) },
@@ -67,6 +82,7 @@ const SEED = {
   goldPriceEUR: 68.4, // €/gramo
   _syncVersion: 0,
   deletedAccountIds: [],
+  reviewQueue: { pending: [], resolved: [], dismissed: [] },
 };
 
 // ---------- Reducer ----------
@@ -91,6 +107,10 @@ function innerReducer(state, action) {
       if (cleaned && cleaned.deletedTransactions && Array.isArray(cleaned.transactions)) {
         cleaned = { ...cleaned, transactions: cleaned.transactions.filter((t) => !cleaned.deletedTransactions[t.id]) };
       }
+      // reviewQueue es un slice nuevo: si el estado remoto aún no lo trae, se rellena.
+      if (cleaned && !cleaned.reviewQueue) cleaned = { ...cleaned, reviewQueue: SEED.reviewQueue };
+      // settings.googlePhotos es nuevo: merge con defaults si el estado viejo no lo trae.
+      if (cleaned && cleaned.settings) cleaned = { ...cleaned, settings: defaultSettings(cleaned.settings) };
       return cleaned;
     }
 
@@ -402,7 +422,7 @@ function innerReducer(state, action) {
       return accrueInterest({
         ...state,
         _syncVersion: Math.max(state._syncVersion, s._syncVersion || 0),
-        settings: { ...state.settings, ...(s.settings || {}) },
+        settings: defaultSettings({ ...state.settings, ...(s.settings || {}) }),
         accounts: mergedAccounts,
         transactions: mergedTxs,
         scheduled: mergedScheduled,
@@ -477,6 +497,25 @@ function innerReducer(state, action) {
       return { ...state, transactions, deletedTransactions: mergedDeleted };
     }
 
+    // ---- Cola de revisión MCP (Command Center) ----
+    case "review_enqueue":
+      return { ...state, reviewQueue: enqueueItem(state.reviewQueue, action.item) };
+
+    case "review_accept":
+      return { ...state, reviewQueue: acceptItem(state.reviewQueue, action.itemId) };
+
+    case "review_dismiss":
+      return { ...state, reviewQueue: dismissItem(state.reviewQueue, action.itemId) };
+
+    case "review_accept_all":
+      return { ...state, reviewQueue: acceptAllReviewable(state.reviewQueue) };
+
+    case "review_dismiss_all":
+      return { ...state, reviewQueue: dismissAll(state.reviewQueue) };
+
+    case "review_cleanup":
+      return { ...state, reviewQueue: cleanupReviewQueue(state.reviewQueue) };
+
     default:
       return state;
   }
@@ -487,38 +526,56 @@ function innerReducer(state, action) {
 const StoreCtx = createContext(null);
 const KEY = "mis-finazas-v1";
 
+// MCP-05: orquestador de persistencia (WAL + checkpoints + recovery + export).
+// Instancia única por StoreProvider; guarda en `mis-finazas-persistence:*`.
+const persistence = createPersistenceOrchestrator();
+
+/** Normaliza el estado leído: merge con SEED, saneamiento y migraciones. */
+function finalize(saved) {
+  const merged = { ...SEED, ...saved, settings: defaultSettings(saved.settings || {}), fx: { ...BASE_FX, ...saved.fx } };
+  merged.accounts = stripDemoAccounts(merged.accounts, merged.deletedAccountIds || []);
+  merged.transactions = cleanOrphanTransactions(merged.accounts, merged.transactions);
+  if (merged.deletedTransactions) {
+    merged.transactions = (merged.transactions || []).filter((t) => !merged.deletedTransactions[t.id]);
+  }
+  const delAssets = merged.deletedAssetIds || [];
+  if (delAssets.length && merged.assets) {
+    merged.assets = {
+      ...merged.assets,
+      crypto: (merged.assets.crypto || []).filter((c) => !delAssets.includes(c.id)),
+      realEstate: (merged.assets.realEstate || []).filter((r) => !delAssets.includes(r.id)),
+      depreciating: (merged.assets.depreciating || []).filter((d) => !delAssets.includes(d.id)),
+    };
+  }
+  return migrate(accrueInterest(merged));
+}
+
 function load() {
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return accrueInterest(SEED);
-    const saved = JSON.parse(raw);
-    const merged = { ...SEED, ...saved, fx: { ...BASE_FX, ...saved.fx } };
-    merged.accounts = stripDemoAccounts(merged.accounts, merged.deletedAccountIds || []);
-    merged.transactions = cleanOrphanTransactions(merged.accounts, merged.transactions);
-    if (merged.deletedTransactions) {
-      merged.transactions = (merged.transactions || []).filter((t) => !merged.deletedTransactions[t.id]);
-    }
-    const delAssets = merged.deletedAssetIds || [];
-    if (delAssets.length && merged.assets) {
-      merged.assets = {
-        ...merged.assets,
-        crypto: (merged.assets.crypto || []).filter((c) => !delAssets.includes(c.id)),
-        realEstate: (merged.assets.realEstate || []).filter((r) => !delAssets.includes(r.id)),
-        depreciating: (merged.assets.depreciating || []).filter((d) => !delAssets.includes(d.id)),
-      };
-    }
-    return migrate(accrueInterest(merged));
+    return finalize(JSON.parse(raw));
   } catch {
+    // localStorage corrupto/ilegible → recovery desde WAL/checkpoints (MCP-05).
+    const rec = persistence.recoverStateOnLoad(accrueInterest(SEED));
+    console.warn("[store] estado local corrupto → recovery:", rec.status, rec.reasons);
+    if (rec.status !== "reset") return finalize(rec.state);
     return accrueInterest(SEED);
   }
+}
+
+/** Parte durable para WAL/checkpoints (sin precios/FX en vivo). Conserva _syncVersion. */
+function durableSnapshot(state) {
+  const { priceHistory, fx, goldPriceEUR, ...rest } = state;
+  return rest;
 }
 
 const SYNC_KEY = "mis-finazas-sync-id";
 
 /** Partes del estado que viajan a la nube (precios/FX en vivo se quedan fuera). */
 function syncableSlice(state) {
-  const { settings, accounts, assets, transactions, scheduled, categories, transferAliases, categoryAliases, statementPatterns, _syncVersion, deletedTransactions, deletedAccountIds, deletedAssetIds } = state;
-  return { settings, accounts, assets, transactions, scheduled, categories, transferAliases, categoryAliases, statementPatterns, _syncVersion, deletedTransactions, deletedAccountIds, deletedAssetIds };
+  const { settings, accounts, assets, transactions, scheduled, categories, transferAliases, categoryAliases, statementPatterns, reviewQueue, _syncVersion, deletedTransactions, deletedAccountIds, deletedAssetIds } = state;
+  return { settings, accounts, assets, transactions, scheduled, categories, transferAliases, categoryAliases, statementPatterns, reviewQueue, _syncVersion, deletedTransactions, deletedAccountIds, deletedAssetIds };
 }
 
 export function StoreProvider({ children }) {
@@ -771,14 +828,37 @@ export function StoreProvider({ children }) {
   useEffect(() => {
     const handler = () => {
       try { localStorage.setItem(KEY, stableSaveRef.current); } catch {}
+      persistence.flush(); // MCP-05: escribir WAL pendiente antes de cerrar.
     };
     window.addEventListener('beforeunload', handler);
     return () => window.removeEventListener('beforeunload', handler);
   }, []);
 
+  // MCP-05: registrar cada mutación en el WAL + checkpointing periódico.
+  // Keyed por _syncVersion (solo cambia en mutaciones reales): update_fx,
+  // accrue y hydrate no incrementan la versión, así que no ensucian el WAL.
+  // El ref de la última versión hace esto StrictMode-safe (la versión solo
+  // avanza en el estado confirmado por el reducer, nunca en un doble-invoke).
+  const lastRecordedVersionRef = useRef(state._syncVersion);
+  useEffect(() => {
+    const version = state._syncVersion;
+    if (version === lastRecordedVersionRef.current) return;
+    lastRecordedVersionRef.current = version;
+    const durable = durableSnapshot(state);
+    persistence.recordStateMutation(durable);
+    persistence.maybeCheckpoint(durable, version);
+  }, [state._syncVersion]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Devengo de intereses también con la app abierta (detecta el cambio de día).
   useEffect(() => {
     const t = setInterval(() => dispatch({ type: "accrue" }), 60_000);
+    return () => clearInterval(t);
+  }, []);
+
+  // Cola de revisión MCP: poda historial antiguo al montar y cada hora.
+  useEffect(() => {
+    dispatch({ type: "review_cleanup" });
+    const t = setInterval(() => dispatch({ type: "review_cleanup" }), 60 * 60 * 1000);
     return () => clearInterval(t);
   }, []);
 
