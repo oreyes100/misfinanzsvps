@@ -394,10 +394,17 @@ export async function handleTelegram(req, res, rawBody, db) {
   const secret = binding.webhookSecret || process.env.TELEGRAM_WEBHOOK_SECRET;
   const header = req.headers["x-telegram-bot-api-secret-token"];
   if (secret && header !== secret) return { status: 401, body: { error: "Unauthorized" } };
-  try {
-    if (update.callback_query) await handleCallback(db, update, binding, cid);
-    else if (update.message) await handleMessage(db, update, binding, cid);
-  } catch (e) { console.error("[telegram] webhook error:", e.message); }
+
+  // WG11-FIX: responder 200 AL INSTANTE y procesar en background. El OCR Paddle
+  // (CPU, puede tardar minutos) + Gemini exceden el timeout del webhook de
+  // Telegram: si esperamos, Telegram reintenta el MISMO update y encola todos
+  // los siguientes (el bot "se queda atascado en el primer recibo").
+  setImmediate(async () => {
+    try {
+      if (update.callback_query) await handleCallback(db, update, binding, cid);
+      else if (update.message) await handleMessage(db, update, binding, cid);
+    } catch (e) { console.error("[telegram] webhook error:", e.message); }
+  });
   return { status: 200, body: "" };
 }
 
