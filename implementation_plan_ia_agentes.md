@@ -331,3 +331,30 @@ Mejoras de legibilidad del `EditPanel` (McpMenu.jsx) siguiendo reglas Ground Tru
   contiene "glass-solid", "Origen:", "Datos del banco", "embeddings", "reglas").
 - API semántica: `semantic:true` (Transporte 0.95). Health OK.
 - Git: `d295558` → main; VPS alineado en `d295558`.
+
+## ✅ WARGAME 10 — OPERACIÓN EVIDENCIA COMPLETA (2026-08-18, commit `26218b3`)
+
+Regla de negocio: toda propuesta del MCP tiene evidencia (recibo O estado de
+cuenta). Aplicado con Ground Truth: el modelo NO tiene `bank`/`reference`/
+`statement` — la evidencia se DERIVA del item real (no se inventan campos).
+
+### Fase 1+2 — Función pura `buildEvidence(item)` (src/review.js)
+- `kind: "receipt"` si existe `receiptUrl/Blob/Id` (OCR/Google Photos).
+- `kind: "statement"` para `source: "sync"|"import"` con los datos reales del
+  movimiento: `accountName`, `accountId`, `date`, `description`, `amount`.
+- `kind: "ocr"` para OCR sin imagen (verificar importe).
+- `kind: "none"` solo para manual.
+
+### Fase 3 — EditPanel muestra la evidencia real (McpMenu.jsx)
+- Bloque "📄 Estado de cuenta (movimiento bancario)" con 🏦 cuenta, 📅 fecha,
+  📝 descripción y 💵 monto para sync — NUNCA "sin recibo adjunto".
+- Recibo → `ReceiptThumbnail` clickeable + "Ver recibo".
+- OCR sin imagen → "Extraído por OCR — verifica el importe".
+- Manual → "✍️ Registro manual — sin evidencia adjunta".
+
+### Verificación
+- 386 tests OK (+5 de `buildEvidence`), build OK.
+- Prod: `index-D766ttEy.js` + `McpMenu-CH9H9feJ.js` (200, contiene "Estado de
+  cuenta (movimiento bancario)", "Extraído por OCR", "Registro manual — sin
+  evidencia"). API `semantic:true` (0.95). Health OK.
+- Git: `26218b3` → main; VPS alineado en `26218b3`.
