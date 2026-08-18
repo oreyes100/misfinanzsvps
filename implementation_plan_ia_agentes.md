@@ -277,3 +277,34 @@ en revisión humana, y no había telemetría. Fix completo en
   (`misfinanzas-server.service`).
 - Git: `04415fe` (feature) + `52ddc8d` (fix modelo embeddings) → `main`;
   VPS alineado en `52ddc8d`.
+
+## ✅ WARGAME 8 — OPERACIÓN GROUND TRUTH (2026-08-17, commit `a4d16d5`)
+
+Mejoras al editor real `EditPanel` (McpMenu.jsx) verificadas contra el código en
+prod. Se descartó un script externo generado contra un modelo falso del proyecto
+(`TransactionEditor.jsx`, `recordId`, `review_item_*`, `type:"expense"` no existen).
+
+### Fase 1 — Badge "⚠️/👁️ Corregir" clickeable
+- El `<span>` decorativo del badge en `ReviewRow` ahora es `<button>` que abre
+  el mismo `EditPanel` que `✏️ Corregir`, con feedback `pressable hover:`.
+
+### Fase 2 — Toggle transferencia
+- YA existía (convertTo, líneas ~596-626): convertir propuesta en par atómico
+  vía `convert_item_to_transfer`. Verificado, sin cambios.
+
+### Fase 3 — Recibo visible
+- YA existía (RV-01): `ReceiptThumbnail` + `ReceiptViewer`. Verificado, sin cambios.
+
+### Fase 4 — Sugerencia semántica visible (mejora real)
+- Antes: `categorizeSemanticAsync` se aplicaba silenciosamente con confianza ≥0.6.
+- Ahora: badge verde destacado con "✨ IA sugiere {categoría} (X% confianza)" +
+  botón "Aplicar" (solo si `semantic !== false` y confianza ≥0.9). Human-in-the-loop.
+
+### Fase 5 — Swap atómico
+- YA testado en `receiptVision.test.js` (editTransferPair swap b→c). Verificado.
+
+### Verificación
+- 381 tests OK, build OK. Prod: `index-CQVbUyQk.js` + `McpMenu-BMjglP0n.js` (200,
+  contiene "Aplicar", "IA sugiere", "Corregir transacción").
+- API semántica: `semantic:true` (Transporte 0.95). Health OK.
+- Git: `a4d16d5` → main; VPS alineado en `a4d16d5`.
