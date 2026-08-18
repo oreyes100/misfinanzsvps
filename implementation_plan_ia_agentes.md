@@ -132,3 +132,68 @@ Decisión final:
   "Banorte Digital mía" que **no existe** como cuenta en Mis Finanzas →
   `processImage` devuelve error de transferencia no resuelta (revisión humana
   esperada). Opciones: crear la cuenta o mapearla en `bankAccountMap`.
+
+---
+
+## ✅ OPERACIÓN NULL HUNTER (2026-08-17, commits `0c10ee3` + `c7ebbde`)
+
+Eliminó las transacciones sin categoría (null) del pipeline de ingesta.
+
+### Diagnóstico real (refuta el wargame)
+- El wargame asumía **71% null** en 7 fuentes; la realidad era **8.1% (50 de 618)**
+  y **una sola fuente**: la ingesta automática por Hermes (server), no la UI.
+- Tras el fix: **null = 0** en ambas sync docs.
+
+### Piezas nuevas
+| Archivo | Responsabilidad |
+|---|---|
+| `server/hermes/categoryGuard.mjs` | Port de keywords `DEFAULT_CATEGORIES` + `resolveCategory`/`ensureCategory` (server-side) |
+| `server/backfill-null-categories.mjs` | Backfill idempotente (getSyncDoc/putSyncDoc): corrigió las 50 nulas |
+| `src/selectors.js` → `categoryHealth()` | Métrica de salud de categorización (umbrales 5%/10%, excluye Transferencia) |
+| `src/components/CategoryHealthCard` (en `Dashboard.jsx`) | Widget de salud + detalle en el dashboard |
+| `ReviewRow` (en `McpMenu.jsx`) | Sugerencia de categoría por keywords + botón "Aplicar" |
+
+### Guardianes (defensa en profundidad)
+- `apply.mjs addTransaction`: punto único con `ensureCategory` → cubre `processor` + `review`.
+- Frontend `categorize()` nunca devuelve null (ya blindado).
+
+### Verificación
+- Tests: `src/categoryHealth.test.js` (5) + `server/hermes/categoryGuard.test.mjs` (9, node:test).
+- `npm test` (334), `npm run build` OK, deploy `index-B7iMyjkg.js`.
+- Backup DB: `server/data/misfinanzas.db.bak-null-hunter`.
+
+---
+
+## ✅ OPERACIÓN GHOST PIPELINE (2026-08-17, commits `a6b91dd` + `b3c896b`)
+
+El pipeline MCP existía pero era **silencioso**: el server marcaba cada transacción
+con `_categoryConfidence`/`needsCategoryReview` pero el frontend nunca las convertía
+en revisión humana, y no había telemetría. Fix completo en
+`implementation_plan-ghost-pipeline.md`.
+
+### Diagnóstico real (refuta el wargame)
+- Eslabones 1-5 (SEED.reviewQueue, reducer `review_*`, fuentes, UI, badge) **ya estaban sanos**.
+- Los huecos reales: auto-captura de revisión inexistente + sin telemetría + sin onboarding.
+
+### Piezas nuevas
+| Archivo | Responsabilidad |
+|---|---|
+| `src/utils/pipelineDiagnostics.js` | `diagnosePipeline()`: checklist de 5 eslabones + health + `pushPipelineEvents()` (cap 200) |
+| `src/review.js` → `buildUnreviewedItems()` | Auto-captura: txs sin categoría / `needsCategoryReview` / confianza <0.8 → items de revisión (dedupe por id, respeta ya resueltas, cap 50/batch) |
+| `src/components/McpPipelineHealth.jsx` | Widget de salud del pipeline + actividad reciente + botón "Reparar" (re-check) |
+| `src/pipelineDiagnostics.test.js` + `src/pipelineE2E.test.js` | 21 tests nuevos |
+
+### Cambios en `store.jsx`
+- Auto-captura en `restore` (post-merge) y `add_transaction`.
+- Casos nuevos: `mcp_record`, `mcp_batch` (telemetría), `pipeline_recheck` (reparación),
+  `pipeline_demo` (onboarding con item de ejemplo no destructivo).
+- `pipelineEvents` en SEED + `hydrate`; **excluido** de `syncableSlice` (volátil).
+
+### Fuentes con telemetría
+- `Assistant.jsx` y `PhotoSelector.jsx` emiten `mcp_record`/`mcp_batch` junto a `review_enqueue`.
+- `McpMenu`: widget `McpPipelineHealth` + banner de onboarding cuando no hay actividad.
+
+### Verificación
+- `npm test` (**355**, +21), `npm run build` OK, 9 tests server OK.
+- Deploy `index-gj2nFZcE.js` → `/var/www/misfinanzas/`, HTTPS 200, backend `server.mjs` activo.
+- Git: `a6b91dd` (feature) + `b3c896b` (docs) → `main`; VPS alineado en `b3c896b`.
