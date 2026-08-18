@@ -41,3 +41,48 @@ export function pendingCardPayments(state, ref = new Date()) {
     })
     .filter((p) => !p.paid && (p.due || p.daysToDue <= 5));
 }
+
+// ---------- Calidad de categorías (Operación NULL HUNTER) ----------
+
+const NULL_CRITICAL_PCT = 5;
+const OTROS_WARNING_PCT = 10;
+
+/**
+ * Salud de la clasificación por categorías. Report parity con Reports.jsx:
+ * excluye "Transferencia" (movimientos internos no son gasto/ingreso) y las
+ * transacciones marcadas para excluir del reporte de categorías.
+ * @returns {{total, nullCount, nullPct, otrosCount, otrosPct, categorizedPct, status, alerts: object[]}}
+ */
+export function categoryHealth(state) {
+  const txs = (state.transactions || []).filter(
+    (t) => t.category !== "Transferencia" && !t.excludeFromCategoryReport
+  );
+  const total = txs.length;
+  if (total === 0) return { total: 0, nullCount: 0, nullPct: 0, otrosCount: 0, otrosPct: 0, categorizedPct: 100, status: "ok", alerts: [] };
+
+  const nullCount = txs.filter((t) => !t.category || String(t.category).trim() === "" || String(t.category) === "null").length;
+  const otrosCount = txs.filter((t) => t.category === "Otros").length;
+  const nullPct = (nullCount / total) * 100;
+  const otrosPct = (otrosCount / total) * 100;
+  const alerts = [];
+
+  if (nullPct > NULL_CRITICAL_PCT) {
+    alerts.push({ level: "critical", action: "send_to_mcp", message: `${nullPct.toFixed(1)}% de transacciones sin categoría` });
+  } else if (nullPct > 0) {
+    alerts.push({ level: "warning", action: "review", message: `${nullPct.toFixed(1)}% sin categoría` });
+  }
+  if (otrosPct > OTROS_WARNING_PCT) {
+    alerts.push({ level: "warning", action: "reclassify_otros", message: `${otrosPct.toFixed(1)}% en "Otros", considera reclasificar` });
+  }
+
+  return {
+    total,
+    nullCount,
+    nullPct,
+    otrosCount,
+    otrosPct,
+    categorizedPct: 100 - nullPct,
+    status: nullPct > NULL_CRITICAL_PCT ? "critical" : alerts.length ? "warning" : "ok",
+    alerts,
+  };
+}

@@ -3,6 +3,7 @@
 // Hermes inyecte transacciones idénticas a las que crearía el usuario en la app.
 
 import { getSyncDoc, putSyncDoc } from "../db.mjs";
+import { ensureCategory } from "./categoryGuard.mjs";
 
 export const uid = () => Math.random().toString(36).slice(2, 10);
 
@@ -23,6 +24,7 @@ export function saveState(db, code, state) {
 }
 
 export function addTransaction(state, t) {
+  const guard = ensureCategory({ category: t.category, description: t.description });
   const tx = {
     id: uid(),
     date: t.date || todayISO(),
@@ -31,11 +33,14 @@ export function addTransaction(state, t) {
     amount: t.amount,
     currency: t.currency,
     accountId: t.accountId,
-    category: t.category || null,
+    category: guard.category,
     subcategory: t.subcategory || null,
     auto: t.auto || false,
     counterpartId: t.counterpartId || null,
     notes: t.notes || null,
+    _categorySource: guard.categorySource,
+    _categoryConfidence: guard.categoryConfidence,
+    _needsCategoryReview: guard.needsCategoryReview || undefined,
   };
   const accounts = (state.accounts || []).map((a) =>
     a.id === tx.accountId ? { ...a, balance: r2((a.balance || 0) + tx.amount) } : a

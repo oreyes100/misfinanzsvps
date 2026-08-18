@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { AnimatePresence } from "framer-motion";
 import { useStore } from "../store.jsx";
-import { monthSpend, netWorthEUR, pendingCardPayments } from "../selectors.js";
+import { categoryHealth, monthSpend, netWorthEUR, pendingCardPayments } from "../selectors.js";
 import { ACCOUNT_TYPES, LIABILITY_ACCOUNT_TYPES, cardOn, catColor, convert, fmtMoney, fmtPct, groupedAccounts, sortedAccounts } from "../utils.js";
 import { BarChart, LineChart, PieChart } from "./Charts.jsx";
 import { TransactionModal, TransferModal } from "./Modals.jsx";
@@ -64,6 +64,50 @@ function McpActivityCard({ pending, onNavigate }) {
       >
         Abrir MCP →
       </button>
+    </Glass>
+  );
+}
+
+/** Calidad de la clasificación por categorías: null% y "Otros"% con alertas. */
+function CategoryHealthCard({ state }) {
+  const health = categoryHealth(state);
+  const ok = health.status === "ok";
+  const critical = health.status === "critical";
+  const pct = Math.max(0, Math.min(100, health.categorizedPct));
+
+  return (
+    <Glass
+      className={`col-span-2 lg:col-span-1 ${critical ? "!border-loss/20" : ok ? "" : "!border-yellow-500/30"}`}
+      aria-label={`Calidad de categorías: ${health.categorizedPct.toFixed(0)}% categorizadas`}
+    >
+      <div className="flex items-center gap-2">
+        <span className="text-lg" aria-hidden="true">🏷️</span>
+        <h2 className="text-sm font-semibold">Calidad de categorías</h2>
+        <span className={`ml-auto text-xs font-bold ${critical ? "text-loss" : ok ? "text-gain" : "text-yellow-500"}`}>
+          {health.categorizedPct.toFixed(0)}%
+        </span>
+      </div>
+      <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/10" aria-hidden="true">
+        <div
+          className={`h-full rounded-full ${critical ? "bg-loss" : ok ? "bg-gain" : "bg-yellow-500"}`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      <div className="mt-2 space-y-1 text-xs text-ink-dim">
+        <p className="flex items-center justify-between">
+          <span>Sin categoría</span>
+          <span className="tabular-nums">{health.nullCount} · {health.nullPct.toFixed(1)}%</span>
+        </p>
+        <p className="flex items-center justify-between">
+          <span>"Otros"</span>
+          <span className="tabular-nums">{health.otrosCount} · {health.otrosPct.toFixed(1)}%</span>
+        </p>
+      </div>
+      {health.alerts.map((a, i) => (
+        <p key={i} className={`mt-2 text-xs ${a.level === "critical" ? "text-loss" : "text-yellow-500"}`}>
+          {a.level === "critical" ? "🔴" : "🟡"} {a.message}
+        </p>
+      ))}
     </Glass>
   );
 }
@@ -429,6 +473,9 @@ export default function Dashboard({ onNavigate = () => {} }) {
 
       {/* ---- MCP Activity: resumen de acciones pendientes de revisión ---- */}
       <McpActivityCard pending={state.reviewQueue?.pending || []} onNavigate={onNavigate} />
+
+      {/* ---- Calidad de categorías: null% y "Otros"% con alertas ---- */}
+      <CategoryHealthCard state={state} />
 
       {/* ---- Inmuebles: todos con total ---- */}
       {cardOn(state.settings, "inmuebles") && (

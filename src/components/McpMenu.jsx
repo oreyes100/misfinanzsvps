@@ -4,6 +4,7 @@ import { useStore } from "../store.jsx";
 import { Btn, Field, Glass, Money } from "./UI.jsx";
 import { useVirtualScroll } from "../hooks/useVirtualScroll.js";
 import { pendingCounts, CLASS_NEEDS_FIX, CLASS_NEEDS_REVIEW } from "../review.js";
+import { categorize } from "../utils.js";
 
 // ═══ Constantes ═══
 const PAGE_SIZE = 20;
@@ -344,9 +345,23 @@ function BatchCard({ batch, reduceMotion, isExpanded, shown, onToggle, onShowMor
 
 // ═══ Fila de revisión ═══
 function ReviewRow({ item, onAccept, onDismiss, onEdit }) {
+  const { dispatch } = useStore();
   const preview = item.preview || {};
   const meta = SOURCE_META[item.source] || { icon: "📦", label: "MCP" };
   const isFix = item.classification === CLASS_NEEDS_FIX;
+
+  // Sugerencia de categoría por keywords cuando el item no tiene categoría.
+  const lacksCategory = !preview.category || preview.category === "null" || preview.category === "—";
+  const suggested = lacksCategory && preview.description
+    ? categorize(preview.description)
+    : null;
+  const hasSuggestion = suggested && suggested.category && suggested.category !== "Otros";
+
+  const applySuggestion = () => {
+    if (!hasSuggestion || !item.action) return;
+    dispatch({ type: "add_transaction", tx: { ...item.action.tx, category: suggested.category } });
+    dispatch({ type: "review_accept", itemId: item.id });
+  };
 
   return (
     <div className={`px-4 py-3 ${isFix ? "border-l-2 border-l-loss bg-loss/6" : "border-l-2 border-l-amber-400/70 bg-amber-400/6"}`}>
@@ -365,6 +380,17 @@ function ReviewRow({ item, onAccept, onDismiss, onEdit }) {
           {isFix ? "⚠️ Corregir" : "👁️ Revisar"}
         </span>
       </div>
+
+      {hasSuggestion && (
+        <div className="mt-2 flex items-center justify-between gap-2 rounded-lg bg-gain/10 px-3 py-2">
+          <p className="text-xs text-gain">
+            🤖 Sugerencia: <strong>{suggested.category}</strong> ({(suggested.confidence * 100).toFixed(0)}%)
+          </p>
+          <button type="button" onClick={applySuggestion} className="pressable rounded-lg bg-gain/20 px-2.5 py-1 text-xs font-medium text-gain hover:bg-gain/30">
+            ✅ Aplicar
+          </button>
+        </div>
+      )}
 
       <div className="mt-2 flex gap-1.5">
         {item.action?.type === "add_transaction" && (
