@@ -308,3 +308,26 @@ prod. Se descartó un script externo generado contra un modelo falso del proyect
   contiene "Aplicar", "IA sugiere", "Corregir transacción").
 - API semántica: `semantic:true` (Transporte 0.95). Health OK.
 - Git: `a4d16d5` → main; VPS alineado en `a4d16d5`.
+
+## ✅ WARGAME 9 — OPERACIÓN CLARIDAD VISUAL (2026-08-18, commit `d295558`)
+
+Mejoras de legibilidad del `EditPanel` (McpMenu.jsx) siguiendo reglas Ground Truth.
+
+### Fase 1 — Modal opaco
+- Nueva clase `.glass-solid` en `src/index.css`: fondo oscuro con opacidad ~97%
+  (mantiene blur + borde + sombra del glassmorphism).
+- `EditPanel` usa `glass-solid` → el contenido de fondo ya no se transparenta.
+
+### Fase 2 — Fuente y evidencia de la propuesta
+- Bloque "Origen: {icono} {label}" siempre visible al inicio del editor, usando
+  `item.source` + `SOURCE_META` (sync/ocr/ai/manual/demo).
+- Con `receiptId` → `ReceiptThumbnail` clickeable + "Ver recibo".
+- Sin recibo → placeholder: sync = "📡 Datos del banco (sincronización) — sin
+  recibo adjunto"; ocr = "Extraído por OCR — verifica el importe".
+- Badge IA añade "· vía embeddings / reglas" según `semanticSuggestion.semantic`.
+
+### Verificación
+- 381 tests OK, build OK. Prod: `index-UIy4nMg6.js` + `McpMenu-CWK7hYjw.js` (200,
+  contiene "glass-solid", "Origen:", "Datos del banco", "embeddings", "reglas").
+- API semántica: `semantic:true` (Transporte 0.95). Health OK.
+- Git: `d295558` → main; VPS alineado en `d295558`.
