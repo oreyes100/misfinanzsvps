@@ -151,6 +151,8 @@ export function buildQueueItems(result, { accounts, baseCurrency = "EUR" } = {})
       classification,
       confidence,
       createdAt: Date.now(),
+      // RECEIPT VISION: referencia al media item original para validar visualmente.
+      ...(result?.item?.baseUrl ? { receiptUrl: thumbnailUrl(result.item.baseUrl, 800) } : {}),
       ...fields,
     });
 

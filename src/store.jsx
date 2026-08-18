@@ -7,6 +7,7 @@ import { mergeSyncStates } from "./merge.js";
 import { createPersistenceOrchestrator } from "./mcp/persistence-integration.js";
 import { enqueueItem, acceptItem, dismissItem, acceptAllReviewable, dismissAll, cleanupReviewQueue, buildUnreviewedItems } from "./review.js";
 import { pushPipelineEvents } from "./utils/pipelineDiagnostics.js";
+import { editTransferPair, convertToTransfer, convertFromTransfer, buildTransferPair } from "./transfers.js";
 
 export { accrueInterest };
 
@@ -162,6 +163,22 @@ function innerReducer(state, action) {
     case "update_transaction": {
       const old = state.transactions.find((t) => t.id === action.id);
       if (!old) return state;
+      // RECEIPT VISION: si la transacción es parte de un par de transferencias,
+      // la edición es ATÓMICA (se propaga al par y reajusta ambos saldos).
+      if (old.counterpartId) {
+        const res = editTransferPair(state, {
+          originalId: old.id,
+          newToAccountId: action.patch.accountId,
+          newAmount: action.patch.amount,
+          newDate: action.patch.date,
+          newDescription: action.patch.description,
+          metadata: {
+            receiptId: action.patch.receiptId ?? old.receiptId,
+            tags: action.patch.tags ?? old.tags,
+          },
+        });
+        if (res) return { ...state, accounts: res.accounts, transactions: res.transactions };
+      }
       const next = { ...old, ...action.patch };
       // Reajuste de saldos: revertir el importe anterior y aplicar el nuevo
       // (cubre cambios de importe, de signo y de cuenta).
@@ -175,6 +192,99 @@ function innerReducer(state, action) {
         .map((t) => (t.id === action.id ? next : t))
         .sort((x, y) => (x.date < y.date ? 1 : x.date > y.date ? -1 : 0));
       return { ...state, accounts, transactions };
+    }
+
+    // RECEIPT VISION RV-05: edición atómica de transferencia (cambio de destino/monto/fecha).
+    case "edit_transfer": {
+      const res = editTransferPair(state, {
+        originalId: action.originalId,
+        newToAccountId: action.newToAccountId,
+        newAmount: action.newAmount,
+        newDate: action.newDate,
+        newDescription: action.newDescription,
+        metadata: action.metadata || {},
+      });
+      if (!res) return state;
+      return {
+        ...state,
+        accounts: res.accounts,
+        transactions: res.transactions,
+        pipelineEvents: pushPipelineEvents(state.pipelineEvents, {
+          ts: Date.now(),
+          source: "manual",
+          kind: "transfer_edited",
+          detail: `${res.out.description} → ${res.newIn.currency} ${Math.abs(res.newOut.amount)}`,
+        }),
+      };
+    }
+
+    // RECEIPT VISION RV-04: convertir gasto/ingreso en transferencia (par atómico).
+    case "convert_to_transfer": {
+      const res = convertToTransfer(state, {
+        transactionId: action.transactionId,
+        toAccountId: action.toAccountId,
+        metadata: action.metadata || {},
+      });
+      if (!res) return state;
+      return { ...state, accounts: res.accounts, transactions: res.transactions };
+    }
+
+    // RECEIPT VISION RV-04: convertir una PROPUESTA de revisión (aún no asentada)
+    // en par de transferencias. No hay saldo que revertir (la tx nunca se creó).
+    case "convert_item_to_transfer": {
+      const { itemId, toAccountId, fromAccountId, amount, description, date, currency, receiptId } = action;
+      const fromAcc = state.accounts.find((a) => a.id === fromAccountId);
+      const toAcc = state.accounts.find((a) => a.id === toAccountId);
+      if (!fromAcc || !toAcc || fromAccountId === toAccountId || !(amount > 0)) return state;
+      const [out, inTx] = buildTransferPair({
+        fromAccountId,
+        toAccountId,
+        amount,
+        date: date || todayISO(),
+        description: description || "Transferencia",
+        fx: state.fx,
+        fromCurrency: fromAcc.currency,
+        toCurrency: toAcc.currency,
+        metadata: { receiptId: receiptId || null },
+      });
+      const accounts = state.accounts.map((a) => {
+        if (a.id === fromAccountId) return { ...a, balance: Math.round((a.balance - amount) * 100) / 100 };
+        if (a.id === toAccountId) return { ...a, balance: Math.round((a.balance + inTx.amount) * 100) / 100 };
+        return a;
+      });
+      const reviewQueue = state.reviewQueue || SEED.reviewQueue;
+      const pendingItem = reviewQueue.pending.find((i) => i.id === itemId);
+      const nextQueue = pendingItem
+        ? {
+            ...reviewQueue,
+            pending: reviewQueue.pending.filter((i) => i.id !== itemId),
+            resolved: [{ ...pendingItem, resolvedAt: Date.now() }, ...reviewQueue.resolved],
+          }
+        : reviewQueue;
+      return {
+        ...state,
+        accounts,
+        transactions: [out, inTx, ...state.transactions],
+        reviewQueue: nextQueue,
+        pipelineEvents: pushPipelineEvents(state.pipelineEvents, {
+          ts: Date.now(),
+          source: "manual",
+          kind: "converted_transfer",
+          detail: `${description || "item"} → ${fromAcc.name} → ${toAcc.name}`,
+        }),
+      };
+    }
+
+    // RECEIPT VISION RV-04: convertir transferencia (par) en gasto/ingreso simple.
+    case "convert_from_transfer": {
+      const res = convertFromTransfer(state, {
+        transactionId: action.transactionId,
+        newType: action.newType,
+        newCategoryId: action.newCategoryId,
+        keepAccountId: action.keepAccountId,
+      });
+      if (!res) return state;
+      return { ...state, accounts: res.accounts, transactions: res.transactions };
     }
 
     case "delete_transaction": {

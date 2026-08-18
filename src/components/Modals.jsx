@@ -240,6 +240,9 @@ export function TransactionModal({ onClose, preset, tx }) {
   const [counterpartId, setCounterpartId] = useState(tx?.counterpartId || "");
   const [formError, setFormError] = useState("");
   const fileRef = useRef(null);
+  // RECEIPT VISION: blob original del recibo (para persistir en IndexedDB) + id persistido.
+  const [receiptId, setReceiptId] = useState(tx?.receiptId || "");
+  const receiptFileRef = useRef(null);
 
   const ai = categorize(desc, state.categories);
   const suggested = sign === "income" ? "Ingresos" : ai.category;
@@ -263,6 +266,7 @@ export function TransactionModal({ onClose, preset, tx }) {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
+    receiptFileRef.current = file; // RECEIPT VISION: conservar el blob para IDB
     setOcr({ busy: true, progress: 0 });
     try {
       if (state.settings.geminiKey) {
@@ -426,9 +430,28 @@ export function TransactionModal({ onClose, preset, tx }) {
       date,
       notes: notes.trim() || undefined,
     };
+    if (receiptId) payload.receiptId = receiptId;
     if (category === "Transferencia" && counterpartId) payload.counterpartId = counterpartId;
+
+    // RECEIPT VISION: persistir el recibo escaneado en IndexedDB (fire-and-forget).
+    const persistReceipt = async () => {
+      if (!receiptFileRef.current || receiptId) return receiptId;
+      const { storeReceipt } = await import("../services/receiptStorage.js");
+      const rid = await storeReceipt(receiptFileRef.current, tx?.id || null);
+      if (rid) {
+        receiptFileRef.current = null;
+        if (isEdit) {
+          dispatch({ type: "update_transaction", id: tx.id, patch: { receiptId: rid } });
+        } else {
+          // No tenemos el id de la tx nueva aún; se asocia en el siguiente render vía onClose.
+        }
+      }
+      return rid;
+    };
+
     if (isEdit) dispatch({ type: "update_transaction", id: tx.id, patch: payload });
     else dispatch({ type: "add_transaction", tx: payload });
+    persistReceipt(); // fire-and-forget (no bloquea el guardado)
     onClose();
   };
 

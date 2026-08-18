@@ -76,6 +76,8 @@ export interface Transaction {
   auto?: boolean;
   counterpartId?: string;
   notes?: string; // motivo o descripción adicional de la transferencia
+  receiptId?: string; // RECEIPT VISION: referencia al blob del recibo en IndexedDB
+  tags?: string[]; // RECEIPT VISION: etiquetas libres
   _updatedAt?: number;
 }
 

@@ -6,6 +6,7 @@ import { useVirtualScroll } from "../hooks/useVirtualScroll.js";
 import { pendingCounts, CLASS_NEEDS_FIX, CLASS_NEEDS_REVIEW } from "../review.js";
 import { categorize } from "../utils.js";
 import McpPipelineHealth from "./McpPipelineHealth.jsx";
+import { ReceiptThumbnail, ReceiptViewer } from "./ReceiptPreview.jsx";
 
 // ═══ Constantes ═══
 const PAGE_SIZE = 20;
@@ -142,7 +143,21 @@ export default function McpMenu() {
     (item, patch) => {
       const action = item.action;
       if (action?.type === "add_transaction") {
-        dispatch({ type: "add_transaction", tx: { ...action.tx, category: patch.category, accountId: patch.accountId } });
+        // RECEIPT VISION: el patch puede incluir monto, fecha, descripción, categoría, cuenta.
+        const base = action.tx;
+        const amount = patch.amount !== undefined && patch.amount !== "" ? Number(patch.amount) : base.amount;
+        dispatch({
+          type: "add_transaction",
+          tx: {
+            ...base,
+            description: patch.description ?? base.description,
+            amount,
+            date: patch.date ?? base.date,
+            category: patch.category ?? base.category,
+            accountId: patch.accountId ?? base.accountId,
+            ...(patch.receiptId ? { receiptId: patch.receiptId } : {}),
+          },
+        });
       } else if (action) {
         dispatch(action);
       }
@@ -289,12 +304,13 @@ export default function McpMenu() {
         )}
       </div>
 
-      {/* Panel de edición con optimistic locking (FASE 4) */}
+      {/* Panel de edición con optimistic locking (FASE 4 + RECEIPT VISION) */}
       <AnimatePresence>
         {editing && (
           <EditPanel
             item={editing}
             state={state}
+            dispatch={dispatch}
             isStillPending={isStillPending}
             onSave={(patch) => onSaveFix(editing, patch)}
             onClose={() => setEditing(null)}
@@ -425,11 +441,18 @@ function ReviewRow({ item, onAccept, onDismiss, onEdit }) {
   );
 }
 
-// ═══ Panel de edición con optimistic locking (FASE 4) ═══
-function EditPanel({ item, state, isStillPending, onSave, onClose }) {
+// ═══ Panel de edición con optimistic locking (FASE 4 + RECEIPT VISION) ═══
+// Editor completo: descripción, monto, fecha, categoría, cuenta + recibo visible
+// + convertir a transferencia (RV-04).
+function EditPanel({ item, state, dispatch, isStillPending, onSave, onClose }) {
   const tx = item.action?.type === "add_transaction" ? item.action.tx : null;
-  const [category, setCategory] = useState(tx?.category ?? state.categories[0]?.name ?? "");
-  const [accountId, setAccountId] = useState(tx?.accountId ?? state.accounts[0]?.id ?? "");
+  const [description, setDescription] = useState(tx?.description ?? item.preview?.description ?? "");
+  const [amount, setAmount] = useState(tx?.amount !== undefined ? String(Math.abs(tx.amount)) : "");
+  const [date, setDate] = useState(tx?.date ?? item.preview?.date ?? "");
+  const [category, setCategory] = useState(tx?.category ?? item.preview?.category ?? state.categories[0]?.name ?? "");
+  const [accountId, setAccountId] = useState(tx?.accountId ?? item.preview?.accountId ?? state.accounts[0]?.id ?? "");
+  const [showReceipt, setShowReceipt] = useState(false);
+  const [convertTo, setConvertTo] = useState(""); // "" | accountId destino
   const [conflict, setConflict] = useState(null);
 
   const handleSave = () => {
@@ -438,8 +461,36 @@ function EditPanel({ item, state, isStillPending, onSave, onClose }) {
       setConflict({ type: "removed", message: "Este item ya fue resuelto o descartado mientras lo editabas." });
       return;
     }
-    onSave({ category, accountId });
+    // RECEIPT VISION RV-04: convertir la propuesta en transferencia (par atómico).
+    if (convertTo) {
+      const amt = Number(amount);
+      if (!Number.isFinite(amt) || amt <= 0 || convertTo === accountId) {
+        setConflict({ type: "invalid", message: "Introduce un importe válido y un destino distinto de la cuenta de cargo." });
+        return;
+      }
+      dispatch({
+        type: "convert_item_to_transfer",
+        itemId: item.id,
+        toAccountId: convertTo,
+        fromAccountId: accountId,
+        amount: amt,
+        description,
+        date,
+        receiptId: item.receiptId || tx?.receiptId || null,
+      });
+      onClose();
+      return;
+    }
+    const amt = Number(amount);
+    const patch = { description, category, accountId, date };
+    if (Number.isFinite(amt) && amt > 0) patch.amount = tx?.amount < 0 ? -amt : amt;
+    if (item.receiptId) patch.receiptId = item.receiptId;
+    onSave(patch);
   };
+
+  const hasReceipt = Boolean(item.receiptUrl || item.receiptBlob || item.receiptId);
+  const baseAccount = tx?.accountId || item.preview?.accountId || state.accounts[0]?.id;
+  const transferTargets = state.accounts.filter((a) => a.id !== accountId && a.id !== baseAccount);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-label="Corregir transacción">
@@ -460,7 +511,54 @@ function EditPanel({ item, state, isStillPending, onSave, onClose }) {
 
         {!conflict && (
           <>
+            {/* Recibo visible (RV-01) */}
+            {hasReceipt && (
+              <div className="mb-4 flex items-center gap-3 rounded-xl border border-white/10 bg-white/4 p-3">
+                <ReceiptThumbnail
+                  receiptUrl={item.receiptUrl}
+                  receiptBlob={item.receiptBlob}
+                  receiptId={item.receiptId}
+                  alt={item.preview?.description || "recibo"}
+                  onClick={() => setShowReceipt(true)}
+                />
+                <div className="flex-1">
+                  <p className="text-xs text-ink-dim">Valida el recibo antes de aceptar.</p>
+                  <button type="button" onClick={() => setShowReceipt(true)} className="mt-1 text-xs font-medium text-accent-soft hover:underline">
+                    🔍 Ver recibo
+                  </button>
+                </div>
+              </div>
+            )}
+
             <div className="space-y-3">
+              <Field label="Descripción">
+                <input
+                  type="text"
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  className="pressable w-full rounded-lg border border-white/12 bg-white/6 px-2 py-1.5 text-sm"
+                />
+              </Field>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Monto">
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={amount}
+                    onChange={(e) => setAmount(e.target.value)}
+                    className="pressable w-full rounded-lg border border-white/12 bg-white/6 px-2 py-1.5 text-sm"
+                  />
+                </Field>
+                <Field label="Fecha">
+                  <input
+                    type="date"
+                    value={date}
+                    onChange={(e) => setDate(e.target.value)}
+                    className="pressable w-full rounded-lg border border-white/12 bg-white/6 px-2 py-1.5 text-sm"
+                  />
+                </Field>
+              </div>
               <Field label="Categoría">
                 <select value={category} onChange={(e) => setCategory(e.target.value)} autoFocus className="pressable w-full rounded-lg border border-white/12 bg-white/6 px-2 py-1.5 text-sm">
                   {state.categories.map((c) => (
@@ -475,6 +573,38 @@ function EditPanel({ item, state, isStillPending, onSave, onClose }) {
                   ))}
                 </select>
               </Field>
+
+              {/* RECEIPT VISION RV-04: convertir en transferencia */}
+              <div className="rounded-xl border border-white/10 bg-white/4 p-3">
+                <label className="mb-1.5 flex items-center justify-between text-xs font-medium text-ink-dim">
+                  <span>🔄 ¿Es una transferencia?</span>
+                  <input
+                    type="checkbox"
+                    checked={convertTo !== ""}
+                    onChange={(e) => setConvertTo(e.target.checked ? (transferTargets[0]?.id || "") : "")}
+                    className="size-4 accent-[var(--color-accent)]"
+                    aria-label="Convertir en transferencia"
+                  />
+                </label>
+                {convertTo !== "" && (
+                  <select
+                    value={convertTo}
+                    onChange={(e) => setConvertTo(e.target.value)}
+                    className="pressable w-full rounded-lg border border-white/12 bg-white/6 px-2 py-1.5 text-sm"
+                    aria-label="Cuenta destino"
+                  >
+                    <option value="">Seleccionar cuenta destino…</option>
+                    {transferTargets.map((a) => (
+                      <option key={a.id} value={a.id}>{a.name}</option>
+                    ))}
+                  </select>
+                )}
+                {convertTo !== "" && (
+                  <p className="mt-1.5 text-[11px] text-ink-dim">
+                    Se registrará como par de transferencias (cargo en origen, abono en destino) sin duplicados.
+                  </p>
+                )}
+              </div>
             </div>
             <div className="mt-5 flex gap-2">
               <Btn onClick={handleSave}>💾 Guardar y aplicar</Btn>
@@ -483,6 +613,18 @@ function EditPanel({ item, state, isStillPending, onSave, onClose }) {
           </>
         )}
       </Glass>
+
+      {/* Viewer del recibo (RV-01) */}
+      <AnimatePresence>
+        {showReceipt && (
+          <ReceiptViewer
+            receiptUrl={item.receiptUrl}
+            receiptBlob={item.receiptBlob}
+            receiptId={item.receiptId}
+            onClose={() => setShowReceipt(false)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }
