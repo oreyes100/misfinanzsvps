@@ -403,3 +403,14 @@ quedan persistidas y re-utilizadas por el pipeline.
 - 389 tests OK (+3 `review.test.js` WG11, +2 `apply.test.mjs`), build OK.
 - Git: `30014ca` → main (pusheado). Deploy VPS pendiente por SSH caído
   (207.248.113.8:2223 timeout; app viva en HTTP).
+
+### Deploy VPS (completado vía comando directo en el VPS, 2026-08-18)
+- `git merge --ff-only origin/main` → `30014ca`; build OK; `dist/*` copiado a
+  `/var/www/misfinanzas/` con chown.
+- `evidenceDir: /home/devops/obsidian-vault/evidence` añadido a `config.json`;
+  dir creado con sudo + chown devops.
+- Servicios reiniciados: `misfinanzas-server.service` + `hermes-drive-watch.service`.
+- Prod: `index-B-aMNFjB.js` + `McpMenu-D23_g-7S.js` (HTTP 200, contiene
+  `api/learn`). Endpoints: `/api/health` ok, `/api/evidence/x.jpg` → 404 por
+  diseño, `/api/learn` sin body → 400 por diseño.
+- VPS alineado en `30014ca`.
