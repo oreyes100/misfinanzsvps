@@ -516,10 +516,11 @@ function EditPanel({ item, state, dispatch, isStillPending, onSave, onClose }) {
   const hasReceipt = Boolean(item.receiptUrl || item.receiptBlob || item.receiptId);
   const baseAccount = tx?.accountId || item.preview?.accountId || state.accounts[0]?.id;
   const transferTargets = state.accounts.filter((a) => a.id !== accountId && a.id !== baseAccount);
+  const meta = SOURCE_META[item.source] || { icon: "📦", label: "MCP" };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-label="Corregir transacción">
-      <Glass className="w-full max-w-md !rounded-2xl p-5">
+      <Glass className="glass-solid w-full max-w-md !rounded-2xl p-5">
         <h3 className="mb-1 text-base font-semibold">✏️ Corregir transacción</h3>
         <p className="mb-4 text-xs text-ink-dim">{item.preview?.description} · <Money value={item.preview?.amount} /></p>
 
@@ -541,8 +542,11 @@ function EditPanel({ item, state, dispatch, isStillPending, onSave, onClose }) {
               <div className="mb-3 flex items-center gap-2 rounded-lg border border-gain/30 bg-gain/10 px-3 py-2">
                 <span className="text-green-400" aria-hidden="true">✨</span>
                 <p className="min-w-0 flex-1 text-xs text-gain">
-                  IA sugiere <strong>{semanticSuggestion.category}</strong>{" "}
+                  ✨ IA sugiere <strong>{semanticSuggestion.category}</strong>{" "}
                   ({(semanticSuggestion.confidence * 100).toFixed(0)}% confianza)
+                  <span className="text-green-400/70">
+                    {" "}· vía {semanticSuggestion.semantic ? "embeddings" : "reglas"}
+                  </span>
                 </p>
                 <button
                   type="button"
@@ -554,24 +558,40 @@ function EditPanel({ item, state, dispatch, isStillPending, onSave, onClose }) {
               </div>
             )}
 
-            {/* Recibo visible (RV-01) */}
-            {hasReceipt && (
-              <div className="mb-4 flex items-center gap-3 rounded-xl border border-white/10 bg-white/4 p-3">
-                <ReceiptThumbnail
-                  receiptUrl={item.receiptUrl}
-                  receiptBlob={item.receiptBlob}
-                  receiptId={item.receiptId}
-                  alt={item.preview?.description || "recibo"}
-                  onClick={() => setShowReceipt(true)}
-                />
-                <div className="flex-1">
-                  <p className="text-xs text-ink-dim">Valida el recibo antes de aceptar.</p>
-                  <button type="button" onClick={() => setShowReceipt(true)} className="mt-1 text-xs font-medium text-accent-soft hover:underline">
-                    🔍 Ver recibo
-                  </button>
+            {/* Fuente y evidencia (WG9): muestra de dónde salió la propuesta */}
+            <div className="mb-4 rounded-xl border border-white/10 bg-white/4 p-3">
+              <p className="mb-2 text-xs font-medium text-ink-dim">
+                {meta.sourceIcon} Origen: {meta.sourceLabel}
+              </p>
+              {hasReceipt ? (
+                <div className="flex items-center gap-3">
+                  <ReceiptThumbnail
+                    receiptUrl={item.receiptUrl}
+                    receiptBlob={item.receiptBlob}
+                    receiptId={item.receiptId}
+                    alt={item.preview?.description || "recibo"}
+                    onClick={() => setShowReceipt(true)}
+                  />
+                  <div className="flex-1">
+                    <p className="text-xs text-ink-dim">📷 Recibo adjunto (OCR) — valida antes de aceptar.</p>
+                    <button type="button" onClick={() => setShowReceipt(true)} className="mt-1 text-xs font-medium text-accent-soft hover:underline">
+                      🔍 Ver recibo
+                    </button>
+                  </div>
                 </div>
-              </div>
-            )}
+              ) : (
+                <div className="py-2 text-center">
+                  <p className="text-2xl" aria-hidden="true">{meta.sourceIcon}</p>
+                  <p className="text-xs text-ink-dim">
+                    {item.source === "sync"
+                      ? "Datos del banco (sincronización) — sin recibo adjunto"
+                      : item.source === "ocr"
+                        ? "Extraído por OCR — verifica el importe"
+                        : "Propuesta sin recibo adjunto"}
+                  </p>
+                </div>
+              )}
+            </div>
 
             <div className="space-y-3">
               <Field label="Descripción">
