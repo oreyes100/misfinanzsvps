@@ -1,7 +1,7 @@
 # Plan — OPERACIÓN RECEIPT VISION (adaptado al código real)
 
-> Fecha: 2026-08-17 · Estado: **PROPUESTO** (pendiente aprobación de alcance)
-> Repo: `oreyes100/misfinanzsvps` · Rama: `main` (HEAD `0e7d940`)
+> Fecha: 2026-08-17 · Estado: **COMPLETADO** (commit `fab1faa`, desplegado `index-D_UsUwfc.js`)
+> Repo: `oreyes100/misfinanzsvps` · Rama: `main` (HEAD `4665215`)
 
 ## 1. Diagnóstico verificado (Context-First, previo a código)
 
@@ -79,7 +79,7 @@ se extiende para recibos persistentes y se reutiliza su lógica en MCP.
 | `src/receiptVision.test.js` | nuevo (tests del wargame) | todos |
 
 ## 4. Verificación
-- `npm test` (355 actuales + nuevos) → 100% verde.
+- `npm test` (355 actuales + nuevos) → 100% verde. **Resultado: 369 tests, 19 archivos.**
 - `npm run build` → exitoso; `node --test server/...` sin regresiones.
 - Deploy `/var/www/misfinanzas/` + `chown www-data`; push `main`; alinear VPS.
 
@@ -89,3 +89,21 @@ se extiende para recibos persistentes y se reutiliza su lógica en MCP.
 - Reajuste de saldos al editar transferencias (doble cuenta) → lógica atómica
   con tests que validan suma de saldos invariante.
 - Tocar `store.jsx` → `vault_lint.py` + build antes de commit.
+
+## 6. Implementado (commit `fab1faa`)
+- **RV-01 Recibo visible**: `ReceiptPreview.jsx` (Thumbnail + Viewer zoom 0.5–3x,
+  rotación 90°, ARIA dialog z-[70]); `photoScanner` persiste `receiptUrl`
+  (thumbnail 800px); Modals `TransactionModal` captura el blob en `scanReceipt`.
+- **RV-02 Edición completa MCP**: `EditPanel` reescrito (descripción, monto,
+  fecha, categoría, cuenta + recibo + toggle "es una transferencia" con destino).
+- **RV-03 Storage**: `receiptStorage.js` (IndexedDB, compresión JPEG ≤1600px q0.8,
+  límites 500 rec/500MB, cleanup 30 días, `enforceLimits`); `types.ts` gana
+  `receiptId`/`tags`.
+- **RV-04/05 Transferencias atómicas**: `transfers.js` (findPair por counterpartId
+  mutuo, buildPair, editPair con swap de destino sin duplicados, convertTo/From);
+  reducer con `edit_transfer`, `convert_to_transfer`, `convert_from_transfer`,
+  `convert_item_to_transfer` (MCP); `update_transaction` deriva a `editTransferPair`.
+- **Tests**: `receiptVision.test.js` (14 tests: par, swap atómico, invariante de
+  suma de saldos, conversiones).
+- **Bug detectado en el camino**: `applyPairBalances` aplicaba la entrada al
+  destino viejo en un swap b→c (doble cuenta); refactor a `oldToId`/`newToId`.

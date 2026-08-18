@@ -197,3 +197,48 @@ en revisión humana, y no había telemetría. Fix completo en
 - `npm test` (**355**, +21), `npm run build` OK, 9 tests server OK.
 - Deploy `index-gj2nFZcE.js` → `/var/www/misfinanzas/`, HTTPS 200, backend `server.mjs` activo.
 - Git: `a6b91dd` (feature) + `b3c896b` (docs) → `main`; VPS alineado en `b3c896b`.
+
+## ✅ OPERACIÓN RECEIPT VISION (2026-08-17, commits `fab1faa` + `4665215`)
+
+### Diagnóstico real (refuta el wargame)
+- Acierta 4/6 huecos, pero asume `type:"transfer"` + `transferPair` (NO existe);
+  el esquema real es un PAR de transacciones con `counterpartId` mutuo.
+- `TransactionModal` ya editaba todo; el editor pobre era solo el de MCP
+  (`EditPanel`, 2 campos). El storage de recibos sí era un hueco real.
+
+### Piezas nuevas
+- `src/services/receiptStorage.js` — IndexedDB `misfinanzas_receipts/images`:
+  compresión JPEG ≤1600px q0.8, límites 500 rec/500MB, cleanup 30 días.
+- `src/hooks/useReceiptImage.js` — blob URL con revoke.
+- `src/components/ReceiptPreview.jsx` — Thumbnail + Viewer (zoom 0.5–3x, rotación 90°).
+- `src/transfers.js` — lógica pura de pares: `findTransferPair` (counterpartId
+  mutuo + importe espejado), `buildTransferPair`, `applyPairBalances`,
+  `editTransferPair` (swap de destino atómico), `convertToTransfer`,
+  `convertFromTransfer`.
+- `src/receiptVision.test.js` — 14 tests (par, swap sin duplicados, invariante
+  de suma de saldos, conversiones).
+
+### Cambios en `store.jsx`
+- `update_transaction` detecta `counterpartId` → deriva a `editTransferPair`
+  (edita el par completo, sin duplicar).
+- Casos nuevos: `edit_transfer`, `convert_to_transfer`, `convert_from_transfer`,
+  `convert_item_to_transfer` (propuestas MCP, sin revertir saldo) + telemetría.
+- `pipelineEvents` en `edit_transfer` para el pipeline MCP.
+
+### UI
+- `McpMenu` `EditPanel` → editor completo (desc/monto/fecha/categoría/cuenta) +
+  thumbnail del recibo + toggle "es una transferencia" con cuenta destino.
+- `Modals` `TransactionModal` → `scanReceipt` captura el blob, `save()` persiste
+  en IndexedDB (fire-and-forget) e incluye `receiptId`/`counterpartId`.
+- `photoScanner` `push()` → `receiptUrl` (thumbnail 800px) en los items.
+- `types.ts` → `Transaction.receiptId?`, `tags?`.
+
+### Bug detectado en el camino
+- `applyPairBalances` aplicaba la nueva entrada al destino VIEJO en un swap
+  b→c (doble cuenta en `b`); refactor a `oldToId`/`newToId` separados.
+
+### Verificación
+- `npm test` (**369**, +14), `npm run build` OK, build en VPS OK.
+- Deploy `index-D_UsUwfc.js` → `/var/www/misfinanzas/`, HTTPS 200, chunks
+  `McpMenu-et1VSZOx.js` y `ReceiptPreview` HTTP 200.
+- Git: `fab1faa` (feature) + `4665215` (docs) → `main`; VPS alineado en `4665215`.
