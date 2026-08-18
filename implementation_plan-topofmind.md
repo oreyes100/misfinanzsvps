@@ -1,6 +1,7 @@
 # Plan — Top of Mind: embeddings semánticos + precio de oro real (2026-08-17)
 
 > Repo: `oreyes100/misfinanzsvps` · Rama: `main` (HEAD `854399c`)
+> Estado: **COMPLETADO** (commits `04415fe` + `52ddc8d`, desplegado `index-7gXs00hJ.js`)
 > Alcance: 2 pendientes del Top of Mind. Plan First (>3 archivos).
 
 ## Pendiente A — Categorización IA de reglas → embedding semántico
@@ -66,3 +67,41 @@ Convertir a EUR/gramo: `usdPerOz / 31.1035 / fx.USD`. Fallback al valor fijo.
   si falla → fallback reglas (cero degradación).
 - gold-api.com puede caer → fallback al valor fijo actual.
 - No tocar el reducer síncrono con awaits.
+
+## ✅ Implementado
+
+### Pendiente A — Embeddings semánticos (commit `04415fe`)
+- **`server/server.mjs`**: `POST /api/categorize` — recibe `{text, categories}`;
+  usa `embedText` de `server/hermes/gemini.mjs` (motor de Hermes/Nous Research del
+  VPS) para embeddear el texto y un prototipo por categoría (nombre + keywords +
+  subcategorías); k-NN coseno → `{category, confidence, semantic}`. Sin key →
+  `semantic:false` (fallback a reglas).
+- **`src/utils.ts`**: `categorizeSemanticAsync` reescrita → llama a `/api/categorize`
+  con fallback a `categorize()` si no hay backend.
+- **UI**: `TransactionModal` (Modals.jsx) y `EditPanel` (McpMenu.jsx) usan la
+  sugerencia semántica async cuando su confianza supera a las reglas.
+- **Fix desplegado** (`52ddc8d`): `gemini.mjs` usaba `text-embedding-004`, que NO
+  existe en v1beta → 404. Corregido a **`gemini-embedding-001`** (validado
+  manualmente en el VPS).
+- **Validación end-to-end**: 6/6 casos correctos (Uber→Transporte, Mercadona→
+  Supermercado, Netflix→Suscripciones, alquiler→Hogar, vuelo→Ocio, tacos→Comida),
+  todos `semantic:true` con confianza 0.95.
+- Tests: `server/categorize.test.mjs` (pickByCosine, cosineSimilarity, embedText),
+  `utils.test.js` (4 tests de fallback).
+
+### Pendiente B — Precio de oro real (commit `04415fe`)
+- **`src/useFX.js`**: fetch `https://api.gold-api.com/price/XAU` (USD/onza troy,
+  sin key) junto a fiat+crypto; `goldUsdPerOzToEurPerGram()` (exportada y
+  testeable) convierte → EUR/gramo (÷31.1035 ÷fx.USD); dispatch `update_fx` con
+  `goldPriceEUR` + `priceHistory.GOLD`.
+- **`reducer.ts` / `store.jsx`**: `update_fx` acepta `goldPriceEUR`; conserva la
+  serie `GOLD` si el valor llega null (fallback al fijo del SEED).
+- **Validado en prod**: gold-api devuelve 4393.30 USD/oz → ~128.5 EUR/g (vs 68.4
+  fijo del SEED).
+- Tests: `src/useFX.test.js` (5), `reducer.test.js` (3: update_fx con oro, fallback,
+  sin incremento de _syncVersion).
+
+### Resultado
+- **369 → 381 tests** (12 nuevos), build OK, deploy OK.
+- Prod: `index-7gXs00hJ.js` contiene `gold-api.com/price/XAU` + `api/categorize` + `update_fx`.
+- Endpoint `POST /api/categorize` → HTTP 200 con `semantic:true`.

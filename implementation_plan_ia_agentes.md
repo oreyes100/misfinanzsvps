@@ -242,3 +242,38 @@ en revisión humana, y no había telemetría. Fix completo en
 - Deploy `index-D_UsUwfc.js` → `/var/www/misfinanzas/`, HTTPS 200, chunks
   `McpMenu-et1VSZOx.js` y `ReceiptPreview` HTTP 200.
 - Git: `fab1faa` (feature) + `4665215` (docs) → `main`; VPS alineado en `4665215`.
+
+## ✅ TOP OF MIND — EMBEDDINGS SEMÁNTICOS + ORO REAL (2026-08-17, commits `04415fe` + `52ddc8d`)
+
+### Pendiente 1 — Categorización IA: reglas → embedding semántico
+- **Decisión**: reutilizar el motor de embeddings de Hermes (Nous Research) que
+  ya corre en el VPS (`server/hermes/gemini.mjs`) vía un endpoint propio.
+- **`POST /api/categorize`** (server.mjs): k-NN coseno entre el texto y un
+  prototipo por categoría (nombre + keywords + subcategorías). Proveedor por
+  env; key de Gemini del config de Hermes. Sin key/fallo → `semantic:false`
+  (fallback a reglas, cero degradación).
+- **`categorizeSemanticAsync`** (utils.ts): ahora llama al endpoint con fallback
+  a `categorize()`.
+- **UI**: `TransactionModal` + `EditPanel` (McpMenu) usan la sugerencia semántica
+  async cuando supera la confianza de reglas.
+- **Bug desplegado y corregido**: `gemini.mjs` usaba `text-embedding-004` (404 en
+  v1beta) → `gemini-embedding-001` (validado). 6/6 casos reales correctos
+  (Uber→Transporte, Mercadona→Supermercado, Netflix→Suscripciones, alquiler→Hogar,
+  vuelo→Ocio, tacos→Comida), confianza 0.95.
+
+### Pendiente 2 — Precio de oro real en useFX
+- **`useFX.js`**: fetch `api.gold-api.com/price/XAU` (USD/onza, sin key) →
+  `goldUsdPerOzToEurPerGram()` (÷31.1035 ÷fx.USD) → dispatch `update_fx` con
+  `goldPriceEUR` + `priceHistory.GOLD`.
+- **`reducer.ts` / `store.jsx`**: `update_fx` acepta `goldPriceEUR`; conserva la
+  serie GOLD si llega null.
+- **Validado en prod**: 4393.30 USD/oz → ~128.5 EUR/g (vs 68.4 fijo del SEED).
+
+### Verificación
+- `npm test` (**381**, +12), build OK local y VPS.
+- Deploy `index-7gXs00hJ.js` → `/var/www/misfinanzas/` (contiene
+  `gold-api.com/price/XAU` + `api/categorize`), HTTPS 200.
+- Endpoint `POST /api/categorize` → `semantic:true`; server reiniciado
+  (`misfinanzas-server.service`).
+- Git: `04415fe` (feature) + `52ddc8d` (fix modelo embeddings) → `main`;
+  VPS alineado en `52ddc8d`.
