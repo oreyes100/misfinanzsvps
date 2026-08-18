@@ -5,7 +5,8 @@ import { migrate } from "./migrations.js";
 import useFX from "./useFX.js";
 import { mergeSyncStates } from "./merge.js";
 import { createPersistenceOrchestrator } from "./mcp/persistence-integration.js";
-import { enqueueItem, acceptItem, dismissItem, acceptAllReviewable, dismissAll, cleanupReviewQueue } from "./review.js";
+import { enqueueItem, acceptItem, dismissItem, acceptAllReviewable, dismissAll, cleanupReviewQueue, buildUnreviewedItems } from "./review.js";
+import { pushPipelineEvents } from "./utils/pipelineDiagnostics.js";
 
 export { accrueInterest };
 
@@ -83,6 +84,7 @@ const SEED = {
   _syncVersion: 0,
   deletedAccountIds: [],
   reviewQueue: { pending: [], resolved: [], dismissed: [] },
+  pipelineEvents: [],
 };
 
 // ---------- Reducer ----------
@@ -109,6 +111,8 @@ function innerReducer(state, action) {
       }
       // reviewQueue es un slice nuevo: si el estado remoto aún no lo trae, se rellena.
       if (cleaned && !cleaned.reviewQueue) cleaned = { ...cleaned, reviewQueue: SEED.reviewQueue };
+      // pipelineEvents (GHOST PIPELINE): slice volátil de telemetría, siempre se rellena.
+      if (cleaned && !cleaned.pipelineEvents) cleaned = { ...cleaned, pipelineEvents: [] };
       // settings.googlePhotos es nuevo: merge con defaults si el estado viejo no lo trae.
       if (cleaned && cleaned.settings) cleaned = { ...cleaned, settings: defaultSettings(cleaned.settings) };
       return cleaned;
@@ -137,7 +141,22 @@ function innerReducer(state, action) {
       const accounts = state.accounts.map((a) =>
         a.id === tx.accountId ? { ...a, balance: Math.round((a.balance + tx.amount) * 100) / 100 } : a
       );
-      return { ...state, transactions: [tx, ...state.transactions], accounts };
+      const unreviewed = buildUnreviewedItems([tx], { accounts });
+      const reviewQueue = unreviewed.reduce((q, item) => enqueueItem(q, item), state.reviewQueue || SEED.reviewQueue);
+      return {
+        ...state,
+        transactions: [tx, ...state.transactions],
+        accounts,
+        reviewQueue,
+        pipelineEvents: unreviewed.length
+          ? pushPipelineEvents(state.pipelineEvents, unreviewed.map((i) => ({
+              ts: Date.now(),
+              source: "sync",
+              kind: "auto_capture",
+              detail: `${i.preview.description}`,
+            })))
+          : state.pipelineEvents,
+      };
     }
 
     case "update_transaction": {
@@ -419,6 +438,13 @@ function innerReducer(state, action) {
         return !dts || dts <= ((t._updatedAt || 0));
       });
       const mergedScheduled = mergeByID(state.scheduled, s.scheduled);
+      const resolvedQueue = state.reviewQueue || SEED.reviewQueue;
+      const resolvedIds = new Set([
+        ...(resolvedQueue.resolved || []).map((i) => i.id),
+        ...(resolvedQueue.dismissed || []).map((i) => i.id),
+      ]);
+      const unreviewedItems = buildUnreviewedItems(mergedTxs, { accounts: mergedAccounts, resolvedIds });
+      const mergedQueue = unreviewedItems.reduce((q, item) => enqueueItem(q, item), resolvedQueue);
       return accrueInterest({
         ...state,
         _syncVersion: Math.max(state._syncVersion, s._syncVersion || 0),
@@ -428,6 +454,15 @@ function innerReducer(state, action) {
         scheduled: mergedScheduled,
         deletedTransactions: mergedDeleted,
         deletedAccountIds: mergedDeletedAccountIds,
+        reviewQueue: mergedQueue,
+        pipelineEvents: unreviewedItems.length
+          ? pushPipelineEvents(state.pipelineEvents, unreviewedItems.map((i) => ({
+              ts: Date.now(),
+              source: "sync",
+              kind: "auto_capture",
+              detail: `${i.preview.description}`,
+            })))
+          : state.pipelineEvents,
         categories: mergeByID(state.categories, s.categories, "id"),
         assets: (() => {
           const mergedAssets = s.assets ? { ...state.assets, ...s.assets, crypto: mergeByID(state.assets.crypto, s.assets.crypto, "id"), realEstate: mergeByID(state.assets.realEstate, s.assets.realEstate, "id"), depreciating: mergeByID(state.assets.depreciating || [], s.assets.depreciating || [], "id") } : state.assets;
@@ -515,6 +550,70 @@ function innerReducer(state, action) {
 
     case "review_cleanup":
       return { ...state, reviewQueue: cleanupReviewQueue(state.reviewQueue) };
+
+    // ---- Telemetría del pipeline (GHOST PIPELINE) ----
+    case "mcp_record":
+      return { ...state, pipelineEvents: pushPipelineEvents(state.pipelineEvents, action.event) };
+
+    case "mcp_batch":
+      return { ...state, pipelineEvents: pushPipelineEvents(state.pipelineEvents, action.events) };
+
+    // Re-ejecuta la auto-captura sobre las transacciones actuales (reparación manual).
+    case "pipeline_recheck": {
+      const resolvedQueue = state.reviewQueue || SEED.reviewQueue;
+      const resolvedIds = new Set([
+        ...(resolvedQueue.resolved || []).map((i) => i.id),
+        ...(resolvedQueue.dismissed || []).map((i) => i.id),
+      ]);
+      const unreviewed = buildUnreviewedItems(state.transactions, { accounts: state.accounts, resolvedIds });
+      const reviewQueue = unreviewed.reduce((q, item) => enqueueItem(q, item), resolvedQueue);
+      if (!unreviewed.length && reviewQueue === (state.reviewQueue || SEED.reviewQueue)) return state;
+      return {
+        ...state,
+        reviewQueue,
+        pipelineEvents: unreviewed.length
+          ? pushPipelineEvents(state.pipelineEvents, unreviewed.map((i) => ({
+              ts: Date.now(),
+              source: "manual",
+              kind: "recheck",
+              detail: `${i.preview.description}`,
+            })))
+          : state.pipelineEvents,
+      };
+    }
+
+    // Demo de onboarding: encola un item de ejemplo marcado demo (no destructivo).
+    case "pipeline_demo": {
+      const demoItem = {
+        id: `demo-${Date.now()}`,
+        source: "demo",
+        classification: "needs_review",
+        confidence: 0.7,
+        createdAt: Date.now(),
+        demo: true,
+        preview: {
+          description: "Demo — el pipeline funciona (pe. Dominos Pizza)",
+          amount: -18.4,
+          currency: "EUR",
+          category: "Comida",
+          categoryId: null,
+          accountId: state.accounts[0]?.id ?? null,
+          accountName: state.accounts[0]?.name ?? "Corriente",
+          date: todayISO(),
+        },
+        action: null,
+      };
+      return {
+        ...state,
+        reviewQueue: enqueueItem(state.reviewQueue || SEED.reviewQueue, demoItem),
+        pipelineEvents: pushPipelineEvents(state.pipelineEvents, {
+          ts: Date.now(),
+          source: "demo",
+          kind: "onboarding",
+          detail: "Demo de pipeline",
+        }),
+      };
+    }
 
     default:
       return state;

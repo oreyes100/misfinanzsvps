@@ -82,13 +82,16 @@ export default function PhotoSelector({ onClose, onImport }) {
     if (!keys.length) return;
     setEnqueueing(true);
     let count = 0;
+    const events = [];
     for (const key of keys) {
       const res = results[Number(key)];
       for (const item of buildQueueItems(res, { accounts: state.accounts })) {
         dispatch({ type: "review_enqueue", item });
+        events.push({ ts: Date.now(), source: "ocr", kind: "enqueue", detail: item.preview?.description || "item" });
         count++;
       }
     }
+    if (events.length) dispatch({ type: "mcp_batch", events });
     onImport(count);
   };
 

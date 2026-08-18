@@ -5,6 +5,7 @@ import { Btn, Field, Glass, Money } from "./UI.jsx";
 import { useVirtualScroll } from "../hooks/useVirtualScroll.js";
 import { pendingCounts, CLASS_NEEDS_FIX, CLASS_NEEDS_REVIEW } from "../review.js";
 import { categorize } from "../utils.js";
+import McpPipelineHealth from "./McpPipelineHealth.jsx";
 
 // ═══ Constantes ═══
 const PAGE_SIZE = 20;
@@ -15,6 +16,8 @@ const SOURCE_META = {
   ocr: { icon: "📷", label: "OCR" },
   ai: { icon: "🤖", label: "IA" },
   manual: { icon: "✍️", label: "Manual" },
+  sync: { icon: "🔁", label: "Sync" },
+  demo: { icon: "🎬", label: "Demo" },
 };
 
 const DAY_MS = 86_400_000;
@@ -167,6 +170,17 @@ export default function McpMenu() {
         </p>
       </header>
 
+      {/* Salud del pipeline (GHOST PIPELINE) */}
+      <McpPipelineHealth />
+
+      {/* Onboarding: primera visita sin actividad */}
+      {counts.total === 0 && !(state.pipelineEvents?.length) && (
+        <div className="mb-4 rounded-2xl border border-dashed border-accent/40 bg-accent/10 p-3 text-xs text-ink-dim">
+          El pipeline está listo. Pide algo al <strong className="text-ink">asistente</strong> o escanea un comprobante en
+          Google Photos para verlo en acción. O prueba con el botón <strong className="text-ink">🎬 Ver demo</strong> de arriba.
+        </div>
+      )}
+
       {/* Tabs (FASE 6: ARIA tabs) */}
       <div role="tablist" aria-label="Secciones de revisión" className="mb-3 flex gap-1.5">
         {tabs.map((t) => (
@@ -199,6 +213,8 @@ export default function McpMenu() {
           <option value="ocr">📷 OCR</option>
           <option value="ai">🤖 IA</option>
           <option value="manual">✍️ Manual</option>
+          <option value="sync">🔁 Sync</option>
+          <option value="demo">🎬 Demo</option>
         </select>
         <select value={date} onChange={(e) => setDate(e.target.value)} aria-label="Filtrar por fecha" className="pressable rounded-lg border border-white/12 bg-white/6 px-2 py-1 text-xs">
           <option value="all">Cualquier fecha</option>

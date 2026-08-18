@@ -112,6 +112,10 @@ export default function Assistant({ onNavigate = () => {} }) {
     };
 
     dispatch({ type: "review_enqueue", item });
+    dispatch({
+      type: "mcp_record",
+      event: { ts: Date.now(), source: "assistant", kind: "enqueue", detail: `${intent.type} ${Math.round((item.confidence) * 100)}%` },
+    });
     logAction(intent, "queued", `classification:${classification}`);
     push({
       role: "ai",

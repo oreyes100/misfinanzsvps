@@ -147,6 +147,71 @@ export function cleanupReviewQueue(queue, now = Date.now()) {
   return { ...queue, resolved, dismissed };
 }
 
+// ═══ Auto-captura de revisión (GHOST PIPELINE) ═══
+// El server marca cada transacción ingerida con `_categoryConfidence` y
+// `needsCategoryReview`. Estas txs NO generaban items de revisión en el frontend:
+// el pipeline existía pero era silencioso. Aquí se materializan como items
+// `unreviewed-<txId>` que entran a la cola (dedupe por id en enqueueItem).
+
+const MAX_AUTO_ENQUEUE_PER_BATCH = 50; // cap: no inundar la cola en un restore grande
+
+/**
+ * Convierte transacciones sin categoría / con categoría fallback / confianza baja
+ * en items de revisión. Devuelve array de items listos para enqueueItem.
+ * - tx con `category` vacía/null            → classification = needs_fix (no clasificada)
+ * - tx con `needsCategoryReview === true`   → classification vía classifyConfidence
+ * - tx con `_categoryConfidence < 0.8`      → classification vía classifyConfidence
+ * - tx con `category` válida y confianza >= 0.8 → NO genera item
+ * - tx ya aceptada/descartada (ids en `resolvedIds`) → NO genera item (idempotente)
+ */
+export function buildUnreviewedItems(txs, { accounts = [], resolvedIds = new Set() } = {}) {
+  if (!Array.isArray(txs)) return [];
+  const items = [];
+  for (const tx of txs) {
+    if (!tx?.id) continue;
+    if (resolvedIds.has(`unreviewed-${tx.id}`)) continue;
+    const confidence = Number(tx._categoryConfidence);
+    const hasConfidence = Number.isFinite(confidence) && tx._categoryConfidence !== undefined;
+    const cat = typeof tx.category === "string" ? tx.category.trim() : "";
+    const needsReview =
+      !cat ||
+      cat === "null" ||
+      tx.needsCategoryReview === true ||
+      (hasConfidence && confidence < REVIEW_THRESHOLD);
+
+    if (!needsReview) continue;
+
+    const classification = hasConfidence ? classifyConfidence(confidence) : CLASS_NEEDS_FIX;
+    if (classification === CLASS_AUTO_OK) continue; // confianza >= 0.8 no entra a pending
+
+    const accountName =
+      accounts.find((a) => a.id === tx.accountId)?.name ||
+      (tx.currency ? `${tx.currency.toUpperCase()}` : "Desconocida");
+
+    items.push({
+      id: `unreviewed-${tx.id}`,
+      source: "sync",
+      classification,
+      confidence: hasConfidence ? confidence : 0,
+      createdAt: Date.now(),
+      autoCaptured: true,
+      preview: {
+        description: tx.description || "Sin descripción",
+        amount: tx.amount ?? 0,
+        currency: tx.currency ?? null,
+        category: cat || null,
+        categoryId: null,
+        accountId: tx.accountId,
+        accountName,
+        date: tx.date || null,
+      },
+      action: null, // no hay acción staged: solo categorización
+    });
+    if (items.length >= MAX_AUTO_ENQUEUE_PER_BATCH) break;
+  }
+  return items;
+}
+
 // ═══ Cálculos derivados (selectores pequeños) ═══
 
 /** Cuenta de pendientes por severidad. */
