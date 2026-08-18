@@ -220,6 +220,11 @@ export function buildUnreviewedItems(txs, { accounts = [], resolvedIds = new Set
     const classification = hasConfidence ? classifyConfidence(confidence) : CLASS_NEEDS_FIX;
     if (classification === CLASS_AUTO_OK) continue; // confianza >= 0.8 no entra a pending
 
+    // WG11: conflictos OCR llegan como txs sin resolver (pendingResolution) —
+    // el item los hereda para que el EditPanel muestre motivo y evidencia.
+    const pendingResolution = tx.pendingResolution || null;
+    const conflict = !!pendingResolution;
+
     const accountName =
       accounts.find((a) => a.id === tx.accountId)?.name ||
       (tx.currency ? `${tx.currency.toUpperCase()}` : "Desconocida");
@@ -227,10 +232,12 @@ export function buildUnreviewedItems(txs, { accounts = [], resolvedIds = new Set
     items.push({
       id: `unreviewed-${tx.id}`,
       source: "sync",
-      classification,
+      classification: conflict ? CLASS_NEEDS_FIX : classification,
       confidence: hasConfidence ? confidence : 0,
       createdAt: Date.now(),
       autoCaptured: true,
+      pendingResolution,
+      receiptUrl: tx.evidenceUrl ? `/api/evidence/${tx.evidenceUrl}` : undefined,
       preview: {
         description: tx.description || "Sin descripción",
         amount: tx.amount ?? 0,
@@ -241,7 +248,20 @@ export function buildUnreviewedItems(txs, { accounts = [], resolvedIds = new Set
         accountName,
         date: tx.date || null,
       },
-      action: null, // no hay acción staged: solo categorización
+      action: conflict
+        ? {
+            type: "add_transaction",
+            tx: {
+              description: tx.description || "",
+              amount: tx.amount ?? 0,
+              currency: tx.currency ?? null,
+              accountId: tx.accountId || null,
+              category: null,
+              date: tx.date || null,
+              pendingResolution,
+            },
+          }
+        : null, // no hay acción staged: solo categorización
     });
     if (items.length >= MAX_AUTO_ENQUEUE_PER_BATCH) break;
   }

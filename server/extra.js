@@ -20,6 +20,8 @@ import path from "node:path";
 import { getSyncDoc, putSyncDoc, DATA_DIR } from "./db.mjs";
 import { mergeStates } from "../api/_merge.js";
 import { classifyImage } from "../lib/ai.js";
+import { ocrImage } from "./hermes/ocr.mjs";
+import { parseOcrText } from "./hermes/local.mjs";
 import { sendMessage, answerCallbackQuery, editMessageReplyMarkup, getFile, downloadFile, inlineKeyboard, registerWebhook, webhookInfo } from "../lib/telegram.js";
 
 const BLOB_DIR = path.join(DATA_DIR, "blobs");
@@ -401,6 +403,14 @@ export async function handleTelegram(req, res, rawBody, db) {
 
 async function handleMessage(db, update, binding, chatId) {
   const msg = update.message; let msgId = msg.message_id;
+
+  // WG11 (F4): aprendizaje por lenguaje natural. Si el texto es una enseñanza
+  // (sin imagen), se persiste en config.json vía /api/learn y se confirma.
+  if (typeof msg.text === "string" && msg.text.trim()) {
+    const learned = await learnFromText(db, binding, msg.text.trim());
+    if (learned) { await sendMessage(binding.botToken, chatId, learned); return; }
+  }
+
   let fileId = null, fileName = null, mime = null;
   if (Array.isArray(msg.photo) && msg.photo.length) { fileId = msg.photo[msg.photo.length - 1].file_id; mime = "image/jpeg"; }
   else if (msg.document) {
@@ -419,16 +429,108 @@ async function handleMessage(db, update, binding, chatId) {
   const accounts = state.accounts || []; const categories = state.categories || []; const aliases = state.transferAliases || {};
   const provider = binding.aiProvider || "gemini";
   const apiKey = binding.aiApiKey || process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY || process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) { await sendMessage(binding.botToken, chatId, "El bot no tiene clave de IA configurada (vincúlala desde la app)."); return; }
 
-  let result;
-  try { result = await classifyImage({ mime: isImageMime(mime, fileName) && mime !== "application/pdf" ? mime : (mime || "image/jpeg"), base64: buf.toString("base64") }, { provider, apiKey, categories, accounts, aliases }); }
-  catch (e) { await sendMessage(binding.botToken, chatId, `No pude leer la imagen con la IA: ${e.message}`); return; }
+  // WG11 (F1): Paddle local primero — sin costo, sin límite de IA.
+  let result = await paddleFirst(buf, { mime });
+
+  if (!result) {
+    // Fallback: IA de pago (Gemini por defecto).
+    if (!apiKey) { await sendMessage(binding.botToken, chatId, "El bot no tiene clave de IA configurada (vincúlala desde la app)."); return; }
+    try { result = await classifyImage({ mime: isImageMime(mime, fileName) && mime !== "application/pdf" ? mime : (mime || "image/jpeg"), base64: buf.toString("base64") }, { provider, apiKey, categories, accounts, aliases }); }
+    catch (e) { await sendMessage(binding.botToken, chatId, `No pude leer la imagen con la IA: ${e.message}`); return; }
+  }
 
   const rows = (result.transactions || []).map((t) => ({ description: t.description, amount: t.amount, direction: t.direction, currency: result.currency || accounts[0]?.currency || "EUR", category: t.category || null, date: t.date || result.date || null, accountId: result.accountId || null }));
   const defaultAccountName = binding.defaultAccountId ? (accounts.find((a) => a.id === binding.defaultAccountId)?.name || null) : null;
   const sent = await sendMessage(binding.botToken, chatId, buildReplyText(result, defaultAccountName), { reply_markup: inlineKeyboard([[{ text: "✅ Registrar", data: `ap:${msgId}` }, { text: "❌ Descartar", data: `rj:${msgId}` }]]) });
   await kvWriteJSON(proposalKey(chatId, msgId), { id: msgId, chatId, status: "pending", createdAt: new Date().toISOString(), syncCode: binding.syncCode, result, rows, hints: result.accountHints || [], messageId: sent?.message_id || msgId, fileName });
+}
+
+// WG11 (F1): OCR local (Paddle) ANTES de la IA de pago. Devuelve un result en el
+// MISMO formato de classifyImage si el parseo local reconoce el comprobante;
+// null si no hay OCR local o el texto no se interpreta (entonces → Gemini).
+async function paddleFirst(buf, { mime }) {
+  if (!/^image\//.test(mime || "")) return null; // PDF → directo a IA
+  let filePath = null;
+  try {
+    const ext = /png$/i.test(mime) ? ".png" : /webp$/i.test(mime) ? ".webp" : ".jpg";
+    filePath = path.join(BLOB_DIR, `ocr-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`);
+    await writeFile(filePath, buf);
+    const raw = await ocrImage(filePath, { url: process.env.OCR_URL || "http://127.0.0.1:8765", timeoutMs: 90000 });
+    const parsed = parseOcrText(raw);
+    if (!parsed?.ok || !parsed.result) return null;
+    const r = parsed.result;
+
+    const transactions = [];
+    if (r.type === "receipt") {
+      if (r.total > 0) transactions.push({ description: r.merchant || "Compra", amount: r.total, direction: "out", category: null, date: null });
+    } else if (r.type === "transfer" && r.transfer) {
+      transactions.push({ description: `Transferencia ${r.transfer.from ? `de ${r.transfer.from}` : ""}${r.transfer.to ? ` a ${r.transfer.to}` : ""}`.trim() || "Transferencia", amount: r.transfer.amount, direction: "out", category: null, date: null });
+    } else if (r.type === "statement") {
+      for (const m of r.movements || []) transactions.push({ description: m.description, amount: m.amount, direction: m.direction, category: m.category || null, date: m.date || null });
+    }
+    if (!transactions.length) return null;
+
+    return {
+      type: r.type,
+      merchant: r.merchant || null,
+      date: null,
+      currency: null,
+      total: r.total || null,
+      accountHints: [],
+      confidence: 0.5,
+      transactions,
+      accountHint: null,
+      accountId: null,
+      accountName: null,
+      accountConfident: false,
+      source: "paddle",
+    };
+  } catch {
+    return null;
+  } finally {
+    if (filePath) { try { await import("node:fs/promises").then((f) => f.unlink(filePath)); } catch {} }
+  }
+}
+
+// WG11 (F4): aprende de un mensaje de texto del usuario en lenguaje natural.
+// Patrones soportados:
+//   "<alias> es la cuenta de <nombre>"   → bankAccountMap[alias] = cuenta
+//   "<merchant> es <categoría>"          → merchantCategoryMap[merchant] = categoría
+// Devuelve el texto de confirmación, o null si no era una enseñanza.
+async function learnFromText(db, binding, text) {
+  const state = loadSyncState(db, binding.syncCode);
+  if (!state) return null;
+  const accounts = state.accounts || [];
+  const accountsByName = new Map(accounts.map((a) => [a.name.toLowerCase(), a.id]));
+
+  // 1) "<alias> es la cuenta de <cuenta>"
+  const m1 = text.match(/^(.+?)\s+es\s+la\s+cuenta\s+(?:de|del|de la)\s+(.+)$/i);
+  if (m1) {
+    const alias = m1[1].trim(); const target = m1[2].trim().toLowerCase();
+    const accountId = accountsByName.get(target);
+    if (!accountId) return `No conozco ninguna cuenta llamada "${m1[2].trim()}".`;
+    await fetch("http://127.0.0.1:" + (process.env.PORT || 3000) + "/api/learn", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind: "account", merchant: alias, accountId }),
+    });
+    return `✅ Aprendido: "${alias}" → cuenta ${m1[2].trim()}.`;
+  }
+
+  // 2) "<merchant> es <categoría>"
+  const m2 = text.match(/^(.+?)\s+es\s+(.+)$/i);
+  if (m2) {
+    const merchant = m2[1].trim(); const category = m2[2].trim();
+    const known = (state.categories || []).some((c) => (c.name || "").toLowerCase() === category.toLowerCase());
+    if (!known) return `No conozco la categoría "${category}". Mírala en la app.`;
+    await fetch("http://127.0.0.1:" + (process.env.PORT || 3000) + "/api/learn", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind: "category", merchant, category }),
+    });
+    return `✅ Aprendido: "${merchant}" → categoría ${category}.`;
+  }
+
+  return null;
 }
 
 async function handleCallback(db, update, binding, chatId) {

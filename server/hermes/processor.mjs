@@ -22,6 +22,7 @@ export function loadProcessorConfig(configPath, overrides = {}) {
     watchDir: "/home/devops/obsidian-vault/images/inbox",
     processedDir: "/home/devops/obsidian-vault/images/processed",
     reviewDir: "/home/devops/obsidian-vault/images/review",
+    evidenceDir: "/home/devops/obsidian-vault/evidence",
     journalFile: "/home/devops/hermes-agent/journal.jsonl",
     pollIntervalMs: 15000,
     maxAuditRounds: 3,
@@ -59,6 +60,22 @@ function effectiveGeminiKey(cfg, state) {
 
 function r2(n) {
   return Math.round(n * 100) / 100;
+}
+
+// WG11: copia la imagen conflictiva a evidenceDir para que el endpoint
+// /api/evidence/:name la sirva al cliente (menú MCP). Devuelve el nombre
+// de archivo en evidenceDir (o null si no hay imagen / no se pudo copiar).
+function saveEvidenceImage(cfg, file) {
+  if (!file || !fs.existsSync(file)) return null;
+  try {
+    const ext = path.extname(file) || ".jpg";
+    const name = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`;
+    fs.mkdirSync(cfg.evidenceDir, { recursive: true });
+    fs.copyFileSync(file, path.join(cfg.evidenceDir, name));
+    return name;
+  } catch {
+    return null;
+  }
 }
 
 function resolveAccountFor(cfg, state, result, file) {
@@ -187,7 +204,23 @@ function handleTransfer(cfg, state, result, file, source) {
     };
   }
 
-  throw new Error(`cuentas de transferencia no resueltas: from="${t.from}" to="${t.to}"`);
+  // WG11: sin punta conocida → NO abortar: crear transacción CONFLICTIVA que
+  // llega al menú MCP (needs_fix) con evidencia (imagen) para corregir en la app.
+  const conflicto = apply.addConflictTransaction(state, {
+    description: `Transferencia sin resolver: ${t.from || "?"} → ${t.to || "?"}`,
+    amount: -r2(t.amount),
+    currency: state.accounts?.[0]?.currency || "EUR",
+    category: null,
+    date: result.date || null,
+    notes: `Ingresado por Hermes desde comprobante [${source}]`,
+    auto: true,
+    pendingResolution: { reason: "cuentas no resueltas", from: t.from, to: t.to },
+    evidenceUrl: saveEvidenceImage(cfg, file),
+  });
+  return {
+    state: conflicto,
+    actions: [{ kind: "conflict_unresolved", from: t.from, to: t.to, amount: -r2(t.amount) }],
+  };
 }
 
 async function handleStatement(cfg, state, result, file, source) {
@@ -336,7 +369,7 @@ async function extractFromImage(cfg, state, imgPath, sourceBase) {
 // ---------- Procesamiento de una imagen (devuelve acciones; no mueve archivos) ----------
 
 export async function processImage(db, cfg, imagePath, sourceBase) {
-  const state = apply.loadState(db, cfg.syncCode);
+  const state = await apply.loadState(db, cfg.syncCode);
   const { result, local } = await extractFromImage(cfg, state, imagePath, sourceBase);
 
   let next = state;
@@ -357,7 +390,7 @@ export async function processImage(db, cfg, imagePath, sourceBase) {
     throw new Error(`tipo no soportado: ${result.type}`);
   }
 
-  const finalState = apply.saveState(db, cfg.syncCode, next);
+  const finalState = await apply.saveState(db, cfg.syncCode, next);
   appendJournal(cfg.journalFile, {
     event: "processed",
     file: sourceBase,

@@ -1,8 +1,10 @@
 // apply.mjs — Mutaciones de estado compatibles con el reducer del cliente.
 // Replica add_transaction / transfer / update balance de src/reducer.ts para que
 // Hermes inyecte transacciones idénticas a las que crearía el usuario en la app.
+// Nota: db.mjs se importa lazy (solo en loadState/saveState) para que las
+// funciones puras (addTransaction, addConflictTransaction) sean testeables
+// sin mejor-sqlite3 instalado localmente.
 
-import { getSyncDoc, putSyncDoc } from "../db.mjs";
 import { ensureCategory } from "./categoryGuard.mjs";
 
 export const uid = () => Math.random().toString(36).slice(2, 10);
@@ -11,13 +13,15 @@ export const todayISO = () => new Date().toISOString().slice(0, 10);
 
 const r2 = (n) => Math.round(n * 100) / 100;
 
-export function loadState(db, code) {
+export async function loadState(db, code) {
+  const { getSyncDoc } = await import("../db.mjs");
   const doc = getSyncDoc(db, code);
   if (!doc || !doc.state) throw new Error(`sync doc ${code} no encontrado`);
   return doc.state;
 }
 
-export function saveState(db, code, state) {
+export async function saveState(db, code, state) {
+  const { putSyncDoc } = await import("../db.mjs");
   const next = { ...state, _syncVersion: (state._syncVersion || 0) + 1 };
   putSyncDoc(db, code, next, Date.now());
   return next;
@@ -46,6 +50,32 @@ export function addTransaction(state, t) {
     a.id === tx.accountId ? { ...a, balance: r2((a.balance || 0) + tx.amount) } : a
   );
   return { ...state, accounts, transactions: [tx, ...(state.transactions || [])] };
+}
+
+// WG11: transacción CONFLICTIVA (OCR no resuelto). No se asigna cuenta ni
+// categoría: entra a la cola de revisión del menú MCP con pendingResolution y
+// evidenceUrl para que el usuario corrija (y el sistema aprenda) en la app.
+export function addConflictTransaction(state, t) {
+  const tx = {
+    id: uid(),
+    date: t.date || todayISO(),
+    _updatedAt: Date.now(),
+    description: String(t.description || "").slice(0, 60),
+    amount: t.amount,
+    currency: t.currency,
+    accountId: t.accountId || null,
+    category: null,
+    subcategory: null,
+    auto: t.auto || false,
+    counterpartId: null,
+    notes: t.notes || null,
+    _categorySource: "conflict",
+    _categoryConfidence: 0,
+    _needsCategoryReview: true,
+    pendingResolution: t.pendingResolution || { reason: "conflicto OCR" },
+    evidenceUrl: t.evidenceUrl || null,
+  };
+  return { ...state, transactions: [tx, ...(state.transactions || [])] };
 }
 
 export function addTransfer(state, { fromId, toId, amount, date, notes, fromDesc, toDesc }) {

@@ -11,6 +11,7 @@ import {
   dismissAll,
   cleanupReviewQueue,
   buildEvidence,
+  buildUnreviewedItems,
   pendingCounts,
   CLASS_NEEDS_FIX,
   CLASS_NEEDS_REVIEW,
@@ -189,5 +190,41 @@ describe("buildEvidence (WG10: evidencia completa)", () => {
 
   it("item null → none", () => {
     expect(buildEvidence(null).kind).toBe("none");
+  });
+});
+
+describe("WG11 · conflicto OCR (pendingResolution + evidenceUrl)", () => {
+  const conflictTx = {
+    id: "t1",
+    description: "Transferencia sin resolver: BBVA → UALA",
+    amount: -1200,
+    currency: "EUR",
+    accountId: null,
+    category: null,
+    _categoryConfidence: 0,
+    _needsCategoryReview: true,
+    pendingResolution: { reason: "cuentas no resueltas", from: "BBVA", to: "UALA" },
+    evidenceUrl: "1750000000000-abc123.jpg",
+  };
+
+  it("genera item needs_fix con pendingResolution y receiptUrl remoto", () => {
+    const items = buildUnreviewedItems([conflictTx], { accounts: [] });
+    expect(items).toHaveLength(1);
+    expect(items[0].classification).toBe("needs_fix");
+    expect(items[0].pendingResolution).toEqual(conflictTx.pendingResolution);
+    expect(items[0].receiptUrl).toBe("/api/evidence/1750000000000-abc123.jpg");
+  });
+
+  it("el item trae action add_transaction con la tx (corregible en EditPanel)", () => {
+    const items = buildUnreviewedItems([conflictTx], { accounts: [] });
+    expect(items[0].action.type).toBe("add_transaction");
+    expect(items[0].action.tx.pendingResolution).toBeDefined();
+    expect(items[0].action.tx.accountId).toBeNull();
+  });
+
+  it("tx sin conflicto NO recibe receiptUrl de evidencia", () => {
+    const items = buildUnreviewedItems([{ id: "t2", description: "Mercadona", amount: -30, category: null }], { accounts: [] });
+    expect(items[0].receiptUrl).toBeUndefined();
+    expect(items[0].pendingResolution).toBeNull();
   });
 });

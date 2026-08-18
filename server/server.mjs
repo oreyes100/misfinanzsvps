@@ -491,6 +491,22 @@ const server = http.createServer(async (req, res) => {
     if (urlPath === "/api/telegram") return await routeExtra(handleTelegram, req, res, db);
     if (urlPath === "/api/telegram-config") return await routeExtra(handleTelegramConfig, req, res, db);
     if (urlPath === "/api/categorize") return await routeExtra(handleCategorize, req, res, db);
+
+    // WG11: /api/evidence/:name — sirve imágenes guardadas por Hermes (evidencia
+    // de transacciones conflictivas del OCR) al cliente para el menú MCP.
+    const evidenceMatch = urlPath.match(/^\/api\/evidence\/([A-Za-z0-9._-]+)$/);
+    if (req.method === "GET" && evidenceMatch) {
+      const { sendEvidence } = await import("./evidence.mjs");
+      return await sendEvidence(req, res, evidenceMatch[1]);
+    }
+
+    // WG11: /api/learn — persiste aprendizaje del usuario (correcciones del
+    // EditPanel / enseñanzas del bot Telegram) en config.json de Hermes.
+    if (urlPath === "/api/learn" && req.method === "POST") {
+      const { handleLearn } = await import("./learn.mjs");
+      return await handleLearn(req, res, await readBody(req));
+    }
+
     return sendJson(res, 404, { error: "No encontrado." });
   } catch (e) {
     if (e.message === "bad_json") return sendJson(res, 400, { error: "JSON inválido." });

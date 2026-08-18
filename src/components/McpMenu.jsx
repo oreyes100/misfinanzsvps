@@ -142,6 +142,25 @@ export default function McpMenu() {
   const onSaveFix = useCallback(
     (item, patch) => {
       const action = item.action;
+      // WG11: si el item venía de un conflicto OCR (pendingResolution), el guardado
+      // ES una corrección → se aprende de ella (fire-and-forget a /api/learn).
+      if (item.pendingResolution) {
+        const merchant = (patch.description ?? item.preview?.description ?? "").slice(0, 48);
+        if (patch.accountId && merchant) {
+          fetch("/api/learn", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ kind: "account", merchant, accountId: patch.accountId }),
+          }).catch(() => {});
+          if (patch.category) {
+            fetch("/api/learn", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ kind: "category", merchant, category: patch.category }),
+            }).catch(() => {});
+          }
+        }
+      }
       if (action?.type === "add_transaction") {
         // RECEIPT VISION: el patch puede incluir monto, fecha, descripción, categoría, cuenta.
         const base = action.tx;
