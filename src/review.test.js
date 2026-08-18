@@ -10,6 +10,7 @@ import {
   acceptAllReviewable,
   dismissAll,
   cleanupReviewQueue,
+  buildEvidence,
   pendingCounts,
   CLASS_NEEDS_FIX,
   CLASS_NEEDS_REVIEW,
@@ -157,5 +158,36 @@ describe("review · cleanup", () => {
     const many = Array.from({ length: 1100 }, (_, i) => item(`r${i}`, { resolvedAt: now - i }));
     const cleaned = cleanupReviewQueue({ ...emptyQueue(), resolved: many }, now);
     expect(cleaned.resolved.length).toBeLessThanOrEqual(1000);
+  });
+});
+
+describe("buildEvidence (WG10: evidencia completa)", () => {
+  it("OCR con recibo → receipt con receiptId", () => {
+    const res = buildEvidence({ source: "ocr", receiptId: "rec_1", receiptUrl: "blob:url" });
+    expect(res.kind).toBe("receipt");
+    expect(res.receiptId).toBe("rec_1");
+  });
+
+  it("sync → statement con los datos del movimiento (NUNCA 'sin recibo')", () => {
+    const res = buildEvidence({
+      source: "sync",
+      preview: { accountName: "BBVA Nómina", accountId: "a1", date: "2026-07-15", description: "SPEI Bodega Express", amount: -4000 },
+    });
+    expect(res.kind).toBe("statement");
+    expect(res.accountName).toBe("BBVA Nómina");
+    expect(res.amount).toBe(-4000);
+  });
+
+  it("ocr sin recibo → kind ocr (verificar importe)", () => {
+    const res = buildEvidence({ source: "ocr", preview: { description: "Ticket" } });
+    expect(res.kind).toBe("ocr");
+  });
+
+  it("manual → none", () => {
+    expect(buildEvidence({ source: "manual" }).kind).toBe("none");
+  });
+
+  it("item null → none", () => {
+    expect(buildEvidence(null).kind).toBe("none");
   });
 });

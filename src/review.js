@@ -14,6 +14,42 @@ export const CLASS_NEEDS_FIX = "needs_fix";
 export const CLASS_NEEDS_REVIEW = "needs_review";
 export const CLASS_AUTO_OK = "auto_ok";
 
+// ═══ Evidencia de propuesta (Wargame 10) ═══
+// Regla de negocio: toda propuesta del MCP tiene evidencia real:
+//   • OCR / Google Photos → receipt (imagen en IndexedDB)
+//   • Sync / import       → statement (los datos del movimiento bancario)
+//   • Manual              → none
+// La evidencia se DERIVA del item real (preview + source + receiptId),
+// sin inventar campos que el modelo no tiene (bank/reference no existen).
+export function buildEvidence(item) {
+  if (!item) return { kind: "none" };
+  const hasReceipt = Boolean(item.receiptUrl || item.receiptBlob || item.receiptId);
+  if (hasReceipt) {
+    return {
+      kind: "receipt",
+      receiptUrl: item.receiptUrl,
+      receiptBlob: item.receiptBlob,
+      receiptId: item.receiptId,
+    };
+  }
+  const src = item.source || "manual";
+  if (src === "sync" || src === "import") {
+    const p = item.preview || {};
+    return {
+      kind: "statement",
+      accountName: p.accountName || "",
+      accountId: p.accountId || "",
+      date: p.date || "",
+      description: p.description || "",
+      amount: p.amount != null ? p.amount : null,
+    };
+  }
+  if (src === "ocr") {
+    return { kind: "ocr", description: item.preview?.description || "" };
+  }
+  return { kind: "none" };
+}
+
 /** Clasifica una confianza (0..1) en severity de revisión. */
 export function classifyConfidence(confidence) {
   const c = Number(confidence);

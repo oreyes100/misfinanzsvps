@@ -3,7 +3,7 @@ import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { useStore } from "../store.jsx";
 import { Btn, Field, Glass, Money } from "./UI.jsx";
 import { useVirtualScroll } from "../hooks/useVirtualScroll.js";
-import { pendingCounts, CLASS_NEEDS_FIX, CLASS_NEEDS_REVIEW } from "../review.js";
+import { pendingCounts, buildEvidence, CLASS_NEEDS_FIX, CLASS_NEEDS_REVIEW } from "../review.js";
 import { categorize, categorizeSemanticAsync } from "../utils.js";
 import McpPipelineHealth from "./McpPipelineHealth.jsx";
 import { ReceiptThumbnail, ReceiptViewer } from "./ReceiptPreview.jsx";
@@ -513,7 +513,7 @@ function EditPanel({ item, state, dispatch, isStillPending, onSave, onClose }) {
     onSave(patch);
   };
 
-  const hasReceipt = Boolean(item.receiptUrl || item.receiptBlob || item.receiptId);
+  const evidence = buildEvidence(item);
   const baseAccount = tx?.accountId || item.preview?.accountId || state.accounts[0]?.id;
   const transferTargets = state.accounts.filter((a) => a.id !== accountId && a.id !== baseAccount);
   const meta = SOURCE_META[item.source] || { icon: "📦", label: "MCP" };
@@ -558,17 +558,17 @@ function EditPanel({ item, state, dispatch, isStillPending, onSave, onClose }) {
               </div>
             )}
 
-            {/* Fuente y evidencia (WG9): muestra de dónde salió la propuesta */}
+            {/* Evidencia de la propuesta (WG10): toda tx del MCP muestra recibo o estado de cuenta */}
             <div className="mb-4 rounded-xl border border-white/10 bg-white/4 p-3">
               <p className="mb-2 text-xs font-medium text-ink-dim">
-                {meta.sourceIcon} Origen: {meta.sourceLabel}
+                {meta.sourceIcon} {meta.sourceLabel}
               </p>
-              {hasReceipt ? (
+              {evidence.kind === "receipt" ? (
                 <div className="flex items-center gap-3">
                   <ReceiptThumbnail
-                    receiptUrl={item.receiptUrl}
-                    receiptBlob={item.receiptBlob}
-                    receiptId={item.receiptId}
+                    receiptUrl={evidence.receiptUrl}
+                    receiptBlob={evidence.receiptBlob}
+                    receiptId={evidence.receiptId}
                     alt={item.preview?.description || "recibo"}
                     onClick={() => setShowReceipt(true)}
                   />
@@ -579,17 +579,25 @@ function EditPanel({ item, state, dispatch, isStillPending, onSave, onClose }) {
                     </button>
                   </div>
                 </div>
-              ) : (
-                <div className="py-2 text-center">
-                  <p className="text-2xl" aria-hidden="true">{meta.sourceIcon}</p>
-                  <p className="text-xs text-ink-dim">
-                    {item.source === "sync"
-                      ? "Datos del banco (sincronización) — sin recibo adjunto"
-                      : item.source === "ocr"
-                        ? "Extraído por OCR — verifica el importe"
-                        : "Propuesta sin recibo adjunto"}
-                  </p>
+              ) : evidence.kind === "statement" ? (
+                <div className="space-y-1 text-xs text-ink-dim">
+                  <p className="mb-1 text-[11px] font-medium">📄 Estado de cuenta (movimiento bancario)</p>
+                  {evidence.accountName && <p>🏦 {evidence.accountName}</p>}
+                  {evidence.date && <p>📅 {evidence.date}</p>}
+                  {evidence.description && <p>📝 “{evidence.description}”</p>}
+                  {evidence.amount != null && (
+                    <p>💵 Monto: <Money value={evidence.amount} /></p>
+                  )}
                 </div>
+              ) : evidence.kind === "ocr" ? (
+                <div className="py-2 text-center">
+                  <p className="text-2xl" aria-hidden="true">📷</p>
+                  <p className="text-xs text-ink-dim">Extraído por OCR — verifica el importe.</p>
+                </div>
+              ) : (
+                <p className="py-2 text-center text-xs text-ink-dim">
+                  ✍️ Registro manual — sin evidencia adjunta
+                </p>
               )}
             </div>
 
