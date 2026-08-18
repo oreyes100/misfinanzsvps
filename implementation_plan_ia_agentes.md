@@ -358,3 +358,48 @@ cuenta). Aplicado con Ground Truth: el modelo NO tiene `bank`/`reference`/
   cuenta (movimiento bancario)", "Extraído por OCR", "Registro manual — sin
   evidencia"). API `semantic:true` (0.95). Health OK.
 - Git: `26218b3` → main; VPS alineado en `26218b3`.
+
+## ✅ WARGAME 11 — OPERACIÓN APRENDIZAJE CONTINUO (2026-08-18, commit `30014ca`)
+
+Objetivo: cerrar el ciclo aprendizaje → corrección → re-aprendizaje. La IA deja
+de ser una caja negra: las correcciones del usuario y las enseñanzas del bot
+quedan persistidas y re-utilizadas por el pipeline.
+
+### F1 — PaddleOCR por defecto en el bot Telegram (server/extra.js)
+- `paddleFirst(buf, { mime })`: OCR local (`ocrImage` → Paddle `:8765`) +
+  `parseOcrText` ANTES de cualquier IA de pago. Convierte el resultado local a
+  formato `classifyImage` (receipt/transfer/statement → `transactions`).
+- Gemini (o proveedor configurado) solo como FALLBACK cuando el OCR local no
+  reconoce el comprobante. Elimina el incidente de límite de Gemini en el bot.
+
+### F2 — Transacciones conflictivas del OCR → menú MCP CON su imagen
+- `apply.addConflictTransaction` (server/hermes/apply.mjs): tx con `accountId: null`,
+  `category: null`, `_needsCategoryReview: true`, `pendingResolution` (motivo,
+  from, to) y `evidenceUrl`. NO toca balances.
+- `processor.mjs` `handleTransfer`: en vez de `throw` ("cuentas no resueltas"),
+  crea la tx conflictiva + `saveEvidenceImage` copia el comprobante a
+  `cfg.evidenceDir`.
+- `GET /api/evidence/:name` (server/evidence.mjs): sirve la imagen con MIME por
+  extensión, protegido contra path traversal.
+- `buildUnreviewedItems` (src/review.js): propaga `pendingResolution` y
+  `receiptUrl: /api/evidence/<file>` al item → entra al MCP como `needs_fix` con
+  imagen remota (`ReceiptThumbnail` ya soporta URLs remotas).
+- `apply.mjs` ahora importa `db.mjs` de forma lazy → funciones puras testeables
+  sin mejor-sqlite3 local.
+
+### F3 — Aprendizaje desde el EditPanel (POST /api/learn)
+- `server/learn.mjs`: persiste en `server/hermes/config.json` de forma atómica:
+  `bankAccountMap` (merchant→cuenta), `merchantCategoryMap` (merchant→categoría),
+  `transferRules` (from|to → ids). Valida que los accountIds existan en el estado.
+- `McpMenu.jsx` `onSaveFix`: si el item venía de `pendingResolution`, al guardar
+  dispara `/api/learn` (cuenta + categoría) fire-and-forget.
+
+### F4 — Enseñanza por lenguaje natural en Telegram
+- `learnFromText` (server/extra.js): patrones `<alias> es la cuenta de <cuenta>`
+  → `bankAccountMap`, y `<merchant> es <categoría>` → `merchantCategoryMap`.
+  Responde "✅ Aprendido" o error si la cuenta/categoría no existe.
+
+### Verificación
+- 389 tests OK (+3 `review.test.js` WG11, +2 `apply.test.mjs`), build OK.
+- Git: `30014ca` → main (pusheado). Deploy VPS pendiente por SSH caído
+  (207.248.113.8:2223 timeout; app viva en HTTP).
