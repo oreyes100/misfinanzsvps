@@ -54,7 +54,7 @@ describe("diagnosePipeline", () => {
 
 describe("summarizeDiagnosis", () => {
   it("formatea el resumen legible", () => {
-    expect(summarizeDiagnosis(diagnosePipeline(baseState))).toBe("ok (5/5)");
+    expect(summarizeDiagnosis(diagnosePipeline(baseState))).toBe("ok (6/6)");
     const degraded = diagnosePipeline({ reviewQueue: { pending: [], resolved: [], dismissed: [] } });
     expect(summarizeDiagnosis(degraded)).toContain("degraded");
     expect(summarizeDiagnosis(degraded)).toContain("telemetry");

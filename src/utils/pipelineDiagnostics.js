@@ -2,12 +2,15 @@
 // Inspecciona los eslabones del flujo: SEED → reducer → fuentes → cola → UI → badge → telemetría.
 // Puro, sin side-effects. Devuelve un reporte con cada eslabón + un health global.
 
+import { categoryHealth } from "../selectors.js";
+
 export const PIPELINE_LINKS = [
   { id: "seed", label: "SEED.reviewQueue", ok: (s) => Boolean(s?.reviewQueue) },
   { id: "reducer", label: "Reducer review_enqueue", ok: (s) => s?.reviewQueue !== undefined && s?.reviewQueue !== null },
   { id: "queue", label: "Cola pendiente", ok: (s) => Array.isArray(s?.reviewQueue?.pending) },
   { id: "sync", label: "Sync incluye cola", ok: (s) => s?.reviewQueue?.pending !== undefined && s?.reviewQueue?.resolved !== undefined },
   { id: "telemetry", label: "Telemetría mcp_record", ok: (s) => Array.isArray(s?.pipelineEvents) },
+  { id: "categories", label: "Categorías <5% null", ok: (s) => { try { const h = categoryHealth(s); return h.nullPct < 5; } catch { return false; } } },
 ];
 
 /**

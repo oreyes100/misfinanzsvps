@@ -1,6 +1,7 @@
 // reducer.ts — Reductor puro con tipos completos
 import type { AppState, Action, NetWorth, PendingCardPayment, Account, Transaction } from "./types.ts";
 import { BASE_FX, DEFAULT_CATEGORIES, DAY_MS, DEMO_ACCOUNT_IDS, categorize, cleanOrphanTransactions, stripDemoAccounts, todayISO, uid } from "./utils.ts";
+import { ensureCategory } from "./categoryGuard.ts";
 import type { Currency, Category } from "./types.ts";
 import { accrueInterest } from "./interest.ts";
 import { migrate } from "./migrations.ts";
@@ -121,7 +122,7 @@ function innerReducer(state: AppState, action: Action): AppState {
 
     case "add_transaction": {
       const t = action.tx;
-      const cat = t.category || categorize(t.description, state.categories).category;
+      const cat = ensureCategory(t.category as any, t.description || "", state.categories, null, t.amount);
       const tx: Transaction = { id: uid(), date: t.date || todayISO(), _updatedAt: Date.now(), ...t, category: cat } as Transaction;
       const accounts = state.accounts.map((a) =>
         a.id === tx.accountId ? { ...a, balance: Math.round((a.balance + tx.amount) * 100) / 100 } : a
@@ -132,7 +133,13 @@ function innerReducer(state: AppState, action: Action): AppState {
     case "update_transaction": {
       const old = state.transactions.find((t) => t.id === action.id);
       if (!old) return state;
-      const next = { ...old, ...action.patch };
+      const patch = { ...action.patch } as any;
+      if ("category" in patch) {
+        const desc = (patch.description ?? old.description) as string;
+        const amt = (patch.amount ?? old.amount) as number;
+        patch.category = ensureCategory(patch.category, desc, state.categories, null, amt);
+      }
+      const next = { ...old, ...patch };
       const accounts = state.accounts.map((a) => {
         let bal = a.balance;
         if (a.id === old.accountId) bal -= old.amount;
