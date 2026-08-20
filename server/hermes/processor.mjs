@@ -12,6 +12,7 @@ import { parseOcrText } from "./local.mjs";
 import * as apply from "./apply.mjs";
 import { reviewStatement, reviewStatementLocal, reconcileEndingBalance } from "./review.mjs";
 import { appendJournal } from "./journal.mjs";
+import { categoryFromMap, transferRuleFor } from "./learning.mjs";
 
 export const IMAGE_EXT = [".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"];
 
@@ -29,6 +30,7 @@ export function loadProcessorConfig(configPath, overrides = {}) {
     folderAccountMap: {},
     bankAccountMap: {},
     geminiKey: null,
+    ocrProvider: "paddle",
     ocrUrl: null,
     // Sección Drive (usada por drive-mcp.mjs):
     drive: {
@@ -105,7 +107,25 @@ function resolveAccountFor(cfg, state, result, file) {
 function handleReceipt(cfg, state, result, file, source) {
   const items = Array.isArray(result.items) ? result.items : [];
   const acc = resolveAccountFor(cfg, state, result, file);
-  if (!acc) throw new Error("cuenta del recibo no resuelta");
+
+  // WG11: sin cuenta resuelta → CONFLICTO (con imagen) en vez de abortar.
+  if (!acc) {
+    const total = r2((result.total || items.reduce((s, it) => s + Math.abs(it.amount || 0), 0)) || 0);
+    const conflicto = apply.addConflictTransaction(state, {
+      description: `Recibo sin cuenta: ${result.merchant || "comercio desconocido"}`,
+      amount: -Math.abs(total),
+      currency: state.accounts?.[0]?.currency || "EUR",
+      date: result.date || null,
+      notes: `Ingresado por Hermes desde recibo [${source}]`,
+      auto: true,
+      pendingResolution: { reason: "cuenta del recibo no resuelta", merchant: result.merchant || null, total },
+      evidenceUrl: saveEvidenceImage(cfg, file),
+    });
+    return {
+      state: conflicto,
+      actions: [{ kind: "conflict_unresolved", reason: "receipt_account", merchant: result.merchant, total }],
+    };
+  }
 
   // Si los ítems no traen montos (tickets: importes en columnas separadas que
   // el OCR no empareja con el producto), usamos el TOTAL del recibo como una
@@ -113,22 +133,23 @@ function handleReceipt(cfg, state, result, file, source) {
   const itemTotal = r2(items.reduce((s, it) => s + Math.abs(it.amount || 0), 0));
   if (items.length === 0 || itemTotal <= 0) {
     if (!(result.total > 0)) throw new Error("recibo sin total ni ítems");
+    const cat = categoryFromMap(cfg, result.merchant, result.merchant) || "Otros";
     const tx = apply.addTransaction(state, {
       description: result.merchant || "Compra",
       amount: -r2(result.total),
       currency: acc.currency,
       accountId: acc.id,
-      category: "Otros",
+      category: cat,
       date: result.date || null,
       notes: `Ingresado por Hermes desde recibo [${source}]`,
       auto: true,
     });
-    return { state: tx, actions: [{ kind: "receipt", desc: result.merchant || "Compra", amount: -r2(result.total), accountId: acc.id }] };
+    return { state: tx, actions: [{ kind: "receipt", desc: result.merchant || "Compra", amount: -r2(result.total), accountId: acc.id, category: cat }] };
   }
 
   const groups = new Map();
   for (const it of items) {
-    const key = it.category || "Otros";
+    const key = categoryFromMap(cfg, result.merchant, it.name) || it.category || "Otros";
     const g = groups.get(key) || { category: key, total: 0, desc: [] };
     g.total = r2(g.total + Math.abs(it.amount || 0));
     g.desc.push(it.name);
@@ -158,9 +179,31 @@ function handleTransfer(cfg, state, result, file, source) {
   const t = result.transfer;
   if (!t || !(t.amount > 0)) throw new Error("comprobante sin importe");
 
-  // Resolver ambas puntas. Si alguna no resuelve a una cuenta propia, en lugar
-  // de fallar se degrada a un movimiento simple (egreso/ingreso) en la cuenta
-  // que sí se conozca; el texto de la contraparte queda en la descripción.
+  // WG11: consultar primero las reglas de transferencia aprendidas (Fase 3).
+  // Si el par (from|to) ya se resolvió antes, se reutiliza sin preguntar.
+  const rule = transferRuleFor(cfg, t.from, t.to);
+  if (rule?.fromId && rule?.toId && rule.fromId !== rule.toId) {
+    const fromAcc = (state.accounts || []).find((a) => a.id === rule.fromId);
+    const toAcc = (state.accounts || []).find((a) => a.id === rule.toId);
+    if (fromAcc && toAcc) {
+      const next = apply.addTransfer(state, {
+        fromId: rule.fromId,
+        toId: rule.toId,
+        amount: t.amount,
+        date: result.date || null,
+        notes: `Ingresado por Hermes desde comprobante [${source}]${rule.note ? ` — ${rule.note}` : ""}`,
+      });
+      return {
+        state: next,
+        actions: [
+          { kind: "transfer_out", fromId: rule.fromId, toId: rule.toId, amount: -r2(t.amount) },
+          { kind: "transfer_in", fromId: rule.fromId, toId: rule.toId, amount: r2(t.amount) },
+        ],
+      };
+    }
+  }
+
+  // Resolver ambas puntas con cuentas propias.
   const aliases = state.transferAliases || {};
   const from = apply.findAccount(state, t.from, aliases) || resolveAccountFor(cfg, state, { merchant: t.from, transfer: t, type: "transfer" }, file);
   const to = apply.findAccount(state, t.to, aliases) || resolveAccountFor(cfg, state, { merchant: t.to, transfer: t, type: "transfer" }, file);
@@ -182,46 +225,32 @@ function handleTransfer(cfg, state, result, file, source) {
     };
   }
 
-  // Degradación: una sola punta conocida -> movimiento simple en esa cuenta.
-  const acc = from || to;
-  if (acc) {
-    const out = !!from; // salió de la cuenta conocida -> egreso
-    const amount = out ? -r2(t.amount) : r2(t.amount);
-    const counterpart = out ? t.to : t.from;
-    const next = apply.addTransaction(state, {
-      description: counterpart ? `Transferencia ${out ? "a" : "desde"} ${counterpart}` : "Transferencia",
-      amount,
-      currency: acc.currency,
-      accountId: acc.id,
-      category: "Otros",
-      date: result.date || null,
-      notes: `Ingresado por Hermes desde comprobante [${source}]`,
-      auto: true,
-    });
-    return {
-      state: next,
-      actions: [{ kind: out ? "transfer_out" : "transfer_in", accountId: acc.id, amount, counterpart }],
-    };
-  }
-
-  // WG11: sin punta conocida → NO abortar: crear transacción CONFLICTIVA que
-  // llega al menú MCP (needs_fix) con evidencia (imagen) para corregir en la app.
+  // WG11: punta(s) sin resolver → CONFLICTO (ya NO degrada a movimiento simple).
+  // La tx llega al menú MCP como ⚠️ Corregir CON imagen, para que el usuario
+  // complete la cuenta faltante y el sistema aprenda la regla de transferencia.
   const conflicto = apply.addConflictTransaction(state, {
     description: `Transferencia sin resolver: ${t.from || "?"} → ${t.to || "?"}`,
     amount: -r2(t.amount),
-    currency: state.accounts?.[0]?.currency || "EUR",
-    category: null,
+    currency: (from || to)?.currency || state.accounts?.[0]?.currency || "EUR",
     date: result.date || null,
     notes: `Ingresado por Hermes desde comprobante [${source}]`,
     auto: true,
-    pendingResolution: { reason: "cuentas no resueltas", from: t.from, to: t.to },
+    pendingResolution: {
+      reason: "cuentas no resueltas",
+      from: t.from,
+      to: t.to,
+      resolvedId: (from || to)?.id || null, // punta ya conocida, para pre-llenar
+    },
     evidenceUrl: saveEvidenceImage(cfg, file),
   });
   return {
     state: conflicto,
-    actions: [{ kind: "conflict_unresolved", from: t.from, to: t.to, amount: -r2(t.amount) }],
+    actions: [{ kind: "conflict_unresolved", from: t.from, to: t.to, amount: -r2(t.amount), resolvedId: (from || to)?.id || null }],
   };
 }
+
+// WG11: busca en cfg.transferRules un par (from|to) normalizado que coincida.
+// (ver server/hermes/learning.mjs)
 
 async function handleStatement(cfg, state, result, file, source) {
   const movements = Array.isArray(result.movements) ? result.movements.filter((m) => m && m.amount > 0) : [];
@@ -242,7 +271,7 @@ async function handleStatement(cfg, state, result, file, source) {
       amount,
       currency: acc.currency,
       accountId: acc.id,
-      category: m.category || null,
+      category: categoryFromMap(cfg, result.merchant, m.description) || m.category || null,
       date: m.date || null,
       notes: `Ingresado por Hermes desde estado de cuenta [${source}]`,
       auto: true,
@@ -312,11 +341,12 @@ async function handleStatementLocal(cfg, state, result, file, source) {
 // ---------- OCR + parseo ----------
 
 async function extractFromImage(cfg, state, imgPath, sourceBase) {
-  // Paso 1: OCR local (PaddleOCR). Reintenta con backoff si el servidor está
-  // ocupado o la inferencia falla por razones transitorias; si falla no
-  // bloquea el flujo (luego entra Gemini).
+  // Paso 1: OCR local (PaddleOCR) si el provider es "paddle" (default).
+  // Reintenta con backoff si el servidor está ocupado o la inferencia falla por
+  // razones transitorias; si falla no bloquea el flujo (luego entra Gemini).
   let ocrText = null;
-  if (cfg.ocrUrl) {
+  const ocrProvider = cfg.ocrProvider || "paddle";
+  if (ocrProvider === "paddle" && cfg.ocrUrl) {
     const maxOcr = cfg.ocrRetries ?? 2;
     for (let attempt = 1; attempt <= maxOcr; attempt++) {
       try {
@@ -356,12 +386,30 @@ async function extractFromImage(cfg, state, imgPath, sourceBase) {
   if (!result) {
     const geminiKey = effectiveGeminiKey(cfg, state);
     if (!geminiKey) throw new Error("sin GEMINI key: pon settings.geminiKey en la app, config.geminiKey o env GEMINI_API_KEY");
-    result = await aiExtractFromFile(imgPath, geminiKey, {
-      categories: state.categories || [],
-      accounts: state.accounts || [],
-      ocrText,
-    });
-    appendJournal(cfg.journalFile, { event: "extract_gemini", file: sourceBase, type: result.type });
+    try {
+      result = await aiExtractFromFile(imgPath, geminiKey, {
+        categories: state.categories || [],
+        accounts: state.accounts || [],
+        ocrText,
+      });
+      appendJournal(cfg.journalFile, { event: "extract_gemini", file: sourceBase, type: result.type });
+    } catch (e) {
+      // WG11: Gemini en límite/falla → NO descartar. Se degrada a un resultado
+      // mínimo de tipo "receipt" sin cuentas: el flujo lo marcará como
+      // CONFLICTO en el menú MCP (con imagen) en vez de abortar la imagen.
+      console.warn(`[processor] Gemini falló ${sourceBase}: ${e.message}`);
+      appendJournal(cfg.journalFile, { event: "gemini_fallback_conflict", file: sourceBase, error: String(e.message || e).slice(0, 300) });
+      result = {
+        type: "receipt",
+        merchant: null,
+        date: null,
+        total: null,
+        items: [],
+        movements: [],
+        transfer: null,
+        statementBalance: null,
+      };
+    }
   }
   return { result, local };
 }

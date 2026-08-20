@@ -16,6 +16,7 @@
     "wal mart": "a55lyg5r"
   },
   "geminiKey": null,
+  "ocrProvider": "paddle",
   "ocrUrl": "http://127.0.0.1:8765",
   "ocrRetries": 2,
   "drive": {

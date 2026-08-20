@@ -16,6 +16,7 @@
 // se guardan en FS local bajo server/data/blobs/, espejo de las claves de Vercel Blob.
 // El estado sincronizado sigue viviendo en SQLite (sync_docs).
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { getSyncDoc, putSyncDoc, DATA_DIR } from "./db.mjs";
 import { mergeStates } from "../api/_merge.js";
@@ -468,13 +469,16 @@ async function paddleFirst(buf, { mime }) {
     if (!parsed?.ok || !parsed.result) return null;
     const r = parsed.result;
 
+    // WG11: categorías aprendidas (merchantCategoryMap) para pre-clasificar.
+    const catMap = readMerchantCategoryMap();
+
     const transactions = [];
     if (r.type === "receipt") {
-      if (r.total > 0) transactions.push({ description: r.merchant || "Compra", amount: r.total, direction: "out", category: null, date: null });
+      if (r.total > 0) transactions.push({ description: r.merchant || "Compra", amount: r.total, direction: "out", category: catMap ? matchCategory(catMap, r.merchant) : null, date: null });
     } else if (r.type === "transfer" && r.transfer) {
       transactions.push({ description: `Transferencia ${r.transfer.from ? `de ${r.transfer.from}` : ""}${r.transfer.to ? ` a ${r.transfer.to}` : ""}`.trim() || "Transferencia", amount: r.transfer.amount, direction: "out", category: null, date: null });
     } else if (r.type === "statement") {
-      for (const m of r.movements || []) transactions.push({ description: m.description, amount: m.amount, direction: m.direction, category: m.category || null, date: m.date || null });
+      for (const m of r.movements || []) transactions.push({ description: m.description, amount: m.amount, direction: m.direction, category: m.category || (catMap ? matchCategory(catMap, m.description) : null) || null, date: m.date || null });
     }
     if (!transactions.length) return null;
 
@@ -498,6 +502,40 @@ async function paddleFirst(buf, { mime }) {
   } finally {
     if (filePath) { try { await import("node:fs/promises").then((f) => f.unlink(filePath)); } catch {} }
   }
+}
+
+// WG11: lee merchantCategoryMap del config.json de Hermes (mismo almacén que
+// /api/learn) y lo normaliza a { claveNormalizada → categoría }.
+function readMerchantCategoryMap() {
+  try {
+    const p = process.env.HERMES_CONFIG || path.join(path.dirname(path.resolve(import.meta.url)), "hermes", "config.json");
+    const cfg = JSON.parse(readFileSync(p, "utf8"));
+    const map = cfg.merchantCategoryMap || {};
+    const out = {};
+    for (const [k, v] of Object.entries(map)) out[normText(k)] = v;
+    return Object.keys(out).length ? out : null;
+  } catch {
+    return null;
+  }
+}
+
+function normText(s) {
+  return String(s || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+function matchCategory(catMap, text) {
+  const t = normText(text);
+  if (!t || !catMap) return null;
+  for (const [k, cat] of Object.entries(catMap)) {
+    if (!k) continue;
+    if (t === k || t.includes(k) || k.includes(t)) return cat;
+  }
+  return null;
 }
 
 // WG11 (F4): aprende de un mensaje de texto del usuario en lenguaje natural.
