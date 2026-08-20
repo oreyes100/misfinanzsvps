@@ -25,6 +25,9 @@ import { ocrImage } from "./hermes/ocr.mjs";
 import { parseOcrText } from "./hermes/local.mjs";
 import { sendMessage, answerCallbackQuery, editMessageReplyMarkup, getFile, downloadFile, inlineKeyboard, registerWebhook, webhookInfo } from "../lib/telegram.js";
 
+import { makeUpdateIdStore } from "./idempotency.mjs";
+const telegramStore = makeUpdateIdStore({ persistPath: path.join(DATA_DIR, "blobs", "telegram", "processed_updates.json"), max: 5000 });
+
 const BLOB_DIR = path.join(DATA_DIR, "blobs");
 const SYNC_CODE_RE = /^[a-z0-9-]{16,64}$/i;
 const MAX_BYTES = 1_000_000;
@@ -396,6 +399,13 @@ export async function handleTelegram(req, res, rawBody, db) {
   const header = req.headers["x-telegram-bot-api-secret-token"];
   if (secret && header !== secret) return { status: 401, body: { error: "Unauthorized" } };
 
+  // W1 Fase 3: idempotencia — mismo update_id no crea transacción duplicada
+  if (update.update_id != null) {
+    const uid = String(update.update_id);
+    if (telegramStore.has(uid)) return { status: 200, body: { ok: true, dedup: true } };
+    telegramStore.add(uid);
+  }
+
   // WG11-FIX: responder 200 AL INSTANTE y procesar en background. El OCR Paddle
   // (CPU, puede tardar minutos) + Gemini exceden el timeout del webhook de
   // Telegram: si esperamos, Telegram reintenta el MISMO update y encola todos
@@ -557,7 +567,7 @@ async function learnFromText(db, binding, text) {
     const accountId = accountsByName.get(target);
     if (!accountId) return `No conozco ninguna cuenta llamada "${m1[2].trim()}".`;
     await fetch("http://127.0.0.1:" + (process.env.PORT || 3000) + "/api/learn", {
-      method: "POST", headers: { "Content-Type": "application/json" },
+      method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${binding.syncCode}` },
       body: JSON.stringify({ kind: "account", merchant: alias, accountId }),
     });
     return `✅ Aprendido: "${alias}" → cuenta ${m1[2].trim()}.`;
@@ -578,7 +588,7 @@ async function learnFromText(db, binding, text) {
     if (!known) return `No conozco la categoría "${category}". Mírala en la app.`;
     if (!merchant) return null;
     await fetch("http://127.0.0.1:" + (process.env.PORT || 3000) + "/api/learn", {
-      method: "POST", headers: { "Content-Type": "application/json" },
+      method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${binding.syncCode}` },
       body: JSON.stringify({ kind: "category", merchant, category }),
     });
     return `✅ Aprendido: "${merchant}" → categoría ${category}.`;

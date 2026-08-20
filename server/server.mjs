@@ -9,9 +9,27 @@ import { openDb, initSchema, getUsers, replaceUsers, getSyncDoc, putSyncDoc, get
 import { mergeStates } from "../api/_merge.js";
 import { syncableHash } from "../api/_hash.js";
 import { handleGoogleImport, handleGoogleAuth, handleTelegramConfig, handleTelegram } from "./extra.js";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, existsSync, copyFileSync, readdirSync, unlinkSync } from "node:fs";
+import { makeRateLimiter } from "./ratelimit.mjs";
+import { makeCircuitBreaker } from "./circuit.mjs";
+import { validateCategorizePayload, validateLearnPayload } from "./validate.mjs";
+import { checkLearnAuth } from "./auth.mjs";
+import { makeUpdateIdStore } from "./idempotency.mjs";
+import path from "node:path";
 
 mkdirSync(DATA_DIR, { recursive: true });
+
+// ── W1 Fortress: hardening ──
+const categorizeLimiter = makeRateLimiter({ windowMs: 60_000, max: 30 });
+const learnLimiter = makeRateLimiter({ windowMs: 60_000, max: 30 });
+const snapshotLimiter = makeRateLimiter({ windowMs: 60_000, max: 60 });
+const geminiCircuit = makeCircuitBreaker({ threshold: 3, resetMs: 300_000 });
+const telegramStore = makeUpdateIdStore({ persistPath: path.join(DATA_DIR, "blobs", "telegram", "processed_updates.json"), max: 5000 });
+
+function clientIp(req) {
+  const fwd = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
+  return fwd || req.socket?.remoteAddress || "unknown";
+}
 const db = openDb();
 initSchema(db);
 
@@ -119,11 +137,17 @@ async function categorizeByEmbeddings(text, categories, provider, apiKey) {
 
 async function handleCategorize(req, res, rawBody) {
   const body = rawBody || {};
+  const v = validateCategorizePayload(body);
+  if (!v.ok) return { status: 400, body: { error: v.error } };
   const text = String(body.text || "").trim();
   const categories = Array.isArray(body.categories) ? body.categories : null;
-  if (!text) return { status: 400, body: { error: "text requerido" } };
   const provider = embedProviderFromEnv();
   const apiKey = embedApiKey();
+
+  // Circuit breaker: si Gemini está OPEN, no intentar llamada externa → fallback inmediato.
+  if (!geminiCircuit.canExecute()) {
+    return { status: 200, body: { category: "Otros", confidence: 0.3, provider, semantic: false, circuit: "open" } };
+  }
 
   // Sin key → fallback a reglas (misma semántica que categorize()).
   if (!apiKey) {
@@ -131,9 +155,14 @@ async function handleCategorize(req, res, rawBody) {
   }
   try {
     const r = await categorizeByEmbeddings(text, categories || [], provider, apiKey);
+    geminiCircuit.onSuccess();
     if (r) return { status: 200, body: { ...r, provider, semantic: true } };
     return { status: 200, body: { category: "Otros", confidence: 0.3, provider, semantic: false } };
   } catch (e) {
+    const msg = String(e?.message || "");
+    const isRateLimit = /429|quota|rate/i.test(msg);
+    if (isRateLimit) geminiCircuit.onRateLimit();
+    else geminiCircuit.onFailure();
     console.error("[server] categorize error:", e);
     return { status: 200, body: { category: "Otros", confidence: 0.3, provider, semantic: false } };
   }
@@ -453,10 +482,10 @@ async function readBodyAllowEmpty(req) {
   if (!len) return null;
   return readBody(req);
 }
-async function routeExtra(handler, req, res, db) {
+async function routeExtra(handler, req, res, db, preBody) {
   const isJson = (req.headers["content-type"] || "").includes("application/json");
-  let rawBody = null;
-  if (req.method === "POST") {
+  let rawBody = preBody !== undefined ? preBody : null;
+  if (rawBody === null && req.method === "POST") {
     rawBody = isJson ? await readBody(req) : await readRaw(req);
   }
   let r;
@@ -506,13 +535,27 @@ const server = http.createServer(async (req, res) => {
   try {
     if (urlPath === "/api/users") return await handleUsers(req, res, req.method === "POST" ? await readBody(req) : null);
     if (urlPath === "/api/sync") return await handleSync(req, res, req.method === "POST" ? await readBody(req) : null);
-    if (urlPath === "/api/snapshot") return await handleSnapshot(req, res);
+    if (urlPath === "/api/snapshot") {
+      const rl = snapshotLimiter.isAllowed(clientIp(req));
+      if (!rl.allowed) {
+        res.setHeader("Retry-After", String(Math.ceil((rl.resetAt - Date.now())/1000)));
+        return sendJson(res, 429, { error: "Demasiadas peticiones. Intenta de nuevo más tarde." });
+      }
+      return await handleSnapshot(req, res);
+    }
     if (urlPath === "/api/signup") return await handleSignup(req, res, await readBody(req));
     if (urlPath === "/api/google-import") return await routeExtra(handleGoogleImport, req, res, db);
     if (urlPath === "/api/google-auth") return await routeExtra(handleGoogleAuth, req, res, db);
     if (urlPath === "/api/telegram") return await routeExtra(handleTelegram, req, res, db);
     if (urlPath === "/api/telegram-config") return await routeExtra(handleTelegramConfig, req, res, db);
-    if (urlPath === "/api/categorize") return await routeExtra(handleCategorize, req, res, db);
+    if (urlPath === "/api/categorize") {
+      const rl = categorizeLimiter.isAllowed(clientIp(req));
+      if (!rl.allowed) {
+        res.setHeader("Retry-After", String(Math.ceil((rl.resetAt - Date.now())/1000)));
+        return sendJson(res, 429, { error: "Demasiadas peticiones. Intenta de nuevo más tarde." });
+      }
+      return await routeExtra(handleCategorize, req, res, db);
+    }
 
     // WG11: /api/evidence/:name — sirve imágenes guardadas por Hermes (evidencia
     // de transacciones conflictivas del OCR) al cliente para el menú MCP.
@@ -525,8 +568,24 @@ const server = http.createServer(async (req, res) => {
     // WG11: /api/learn — persiste aprendizaje del usuario (correcciones del
     // EditPanel / enseñanzas del bot Telegram) en config.json de Hermes.
     if (urlPath === "/api/learn" && req.method === "POST") {
+      const auth = checkLearnAuth(req);
+      if (!auth.ok) return sendJson(res, auth.status, { error: auth.error });
+      const rl = learnLimiter.isAllowed(clientIp(req));
+      if (!rl.allowed) {
+        res.setHeader("Retry-After", String(Math.ceil((rl.resetAt - Date.now()) / 1000)));
+        return sendJson(res, 429, { error: "Demasiadas peticiones. Intenta de nuevo más tarde." });
+      }
+      let learnBody;
+      try { learnBody = await readBody(req); }
+      catch (e) {
+        if (e.message === "bad_json") return sendJson(res, 400, { error: "JSON inválido." });
+        if (e.message === "too_large") return sendJson(res, 413, { error: "Cuerpo demasiado grande." });
+        throw e;
+      }
+      const v = validateLearnPayload(learnBody);
+      if (!v.ok) return sendJson(res, 400, { error: v.error });
       const { handleLearn } = await import("./learn.mjs");
-      return await handleLearn(req, res, await readBody(req));
+      return await handleLearn(req, res, learnBody);
     }
 
     return sendJson(res, 404, { error: "No encontrado." });
@@ -538,7 +597,42 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+// ── W1 Fase 5: WAL garantizado + backup diario + integrity_check
+try { db.pragma("journal_mode = WAL"); } catch {}
+function runBackup() {
+  try {
+    const src = path.join(DATA_DIR, "misfinanzas.db");
+    if (!existsSync(src)) return;
+    const dir = path.join(DATA_DIR, "backups");
+    mkdirSync(dir, { recursive: true });
+    const stamp = new Date().toISOString().slice(0, 10);
+    const dst = path.join(dir, `misfinanzas-${stamp}.db`);
+    if (!existsSync(dst)) {
+      copyFileSync(src, dst);
+      try { copyFileSync(src + "-wal", dst + "-wal"); } catch {}
+      console.log(`[backup] creado ${dst}`);
+    }
+    // retention 7 días
+    const files = readdirSync(dir).filter((f) => f.startsWith("misfinanzas-") && f.endsWith(".db")).sort();
+    while (files.length > 7) {
+      const old = files.shift();
+      try { unlinkSync(path.join(dir, old)); console.log(`[backup] eliminado ${old}`); } catch {}
+    }
+  } catch (e) { console.error("[backup] error:", e.message); }
+}
+function runIntegrityCheck() {
+  try {
+    const r = db.prepare("PRAGMA integrity_check;").get();
+    const ok = r && (r.integrity_check === "ok" || Object.values(r)[0] === "ok");
+    if (!ok) console.error("[integrity] fallo:", r);
+  } catch (e) { console.error("[integrity] error:", e.message); }
+}
+runBackup();
+runIntegrityCheck();
+setInterval(runBackup, 24 * 60 * 60 * 1000);
+setInterval(runIntegrityCheck, 24 * 60 * 60 * 1000);
+
 server.listen(PORT, HOST, () => {
   console.log(`[misfinanzas-server] SQLite local escuchando en http://${HOST}:${PORT}`);
-  console.log(`  BD: ${DATA_DIR}/misfinanzas.db  |  docs: ${db.prepare("SELECT COUNT(*) c FROM sync_docs").get().c}`);
+  console.log(`  BD: ${DATA_DIR}/misfinanzas.db  |  docs: ${db.prepare("SELECT COUNT(*) c FROM sync_docs").get().c}  |  WAL`);
 });

@@ -35,7 +35,7 @@ const DAY_MS = 86_400_000;
  * - FASE 6: tabs ARIA, aria-live, focus, labels, prefers-reduced-motion.
  */
 export default function McpMenu() {
-  const { state, dispatch } = useStore();
+  const { state, dispatch, sync } = useStore();
   const queue = state.reviewQueue ?? { pending: [], resolved: [], dismissed: [] };
   const { pending, resolved, dismissed } = queue;
   const counts = pendingCounts(queue);
@@ -147,15 +147,16 @@ export default function McpMenu() {
       if (item.pendingResolution) {
         const merchant = (patch.description ?? item.preview?.description ?? "").slice(0, 48);
         if (patch.accountId && merchant) {
+          const authHeader = sync?.id ? { Authorization: `Bearer ${sync.id}` } : {};
           fetch("/api/learn", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json", ...authHeader },
             body: JSON.stringify({ kind: "account", merchant, accountId: patch.accountId }),
           }).catch(() => {});
           if (patch.category) {
             fetch("/api/learn", {
               method: "POST",
-              headers: { "Content-Type": "application/json" },
+              headers: { "Content-Type": "application/json", ...authHeader },
               body: JSON.stringify({ kind: "category", merchant, category: patch.category }),
             }).catch(() => {});
           }
@@ -182,7 +183,7 @@ export default function McpMenu() {
       }
       dispatch({ type: "review_accept", itemId: item.id });
     },
-    [dispatch]
+    [dispatch, sync]
   );
 
   const tabs = [
