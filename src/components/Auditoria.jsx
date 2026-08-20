@@ -14,10 +14,7 @@ const MAX_SIZE = 20 * 1024 * 1024; // 20 MB
 // Extrae texto de un PDF usando renderizado a canvas + OCR
 async function pdfPageToImage(file, pageNum = 1) {
   const pdfjs = await import("pdfjs-dist");
-  pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-    "pdfjs-dist/build/pdf.worker.min.mjs",
-    import.meta.url
-  ).href;
+  pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.js";
   const arr = file instanceof File ? await file.arrayBuffer() : file;
   const doc = await pdfjs.getDocument({ data: arr }).promise;
   const page = await doc.getPage(pageNum);
@@ -33,10 +30,7 @@ async function pdfPageToImage(file, pageNum = 1) {
 // Convierte todo un PDF a imágenes (página por página)
 async function pdfToImages(file) {
   const pdfjs = await import("pdfjs-dist");
-  pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-    "pdfjs-dist/build/pdf.worker.min.mjs",
-    import.meta.url
-  ).href;
+  pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.js";
   const arr = file instanceof File ? await file.arrayBuffer() : file;
   const doc = await pdfjs.getDocument({ data: arr }).promise;
   const blobs = [];
