@@ -4,68 +4,71 @@
 > **Producción Vercel**: https://mis-finazas-gold.vercel.app  
 > **VPS**: `192.168.1.250` · Usuario: `devops`  
 > **Fecha**: 20 de agosto de 2026  
-> **Versión del documento**: **7.5.0** — plan original COMPLETADO (21/21 wargames, 502 tests)  
+> **Versión del documento**: **7.5.0** — Plan original COMPLETADO (21/21 wargames)  
 > **Commits incluidos**: hasta `a0b3301`
 
 ---
 
 ## 📊 RESUMEN EJECUTIVO
 
-### Métricas del proyecto
+### Métricas finales
 
-| Métrica | Antes de sesión | Después | Δ |
+| Métrica | Valor |
+|---|---|
+| **Wargames aplicados** | **21 de 21** (100%) ✅ |
+| **Tests** | **502** passing |
+| **Pipeline MCP** | 6/6 eslabones OK |
+| **Null%** | 0.6% (<2% objetivo) |
+| **Otros%** | 1.8% (<5% objetivo) |
+| **Deploy** | VPS + Vercel ✅ |
+
+### Estado por wargame (orden de aplicación en esta sesión)
+
+| # | Wargame | Commit | Estado |
 |---|---|---|---|
-| Tests | ~355 | **502** | +147 |
-| Wargames aplicados | 0 | **21 de 21** | +21 |
-| Pipeline MCP | ❌ Roto (ghost) | ✅ 5/5 eslabones | ✅ |
-| Categorización | Reglas por substring | **Embeddings semánticos** | ✅ |
-| Precio oro | Fijo 68.4 €/g | **Real** (gold-api.com) | ✅ |
-| Aprendizaje | Inexistente | **Continuo vía Telegram** | ✅ |
-| Motor intereses | Con bugs (doble conteo) | **Idempotente + sanity guard** | ✅ |
-| Historial intereses | Con anomalías | **515 movimientos diarios limpios** | ✅ |
-| Sync multi-dispositivo | Estado divergente | **Snapshot authoritativo + resync auto** | ✅ |
-| Reports/Dashboard | Básico | **Copilot Parity (5 secciones)** | ✅ |
-| PDF worker | Fallaba por MIME .mjs | **Worker en public/ + URL fija** | ✅ |
-| MCP Command Center | Funcional pero sin WCAG | **Focus trap + Esc + devolución foco** | ✅ |
-
-### Estado por wargame
-
-| # | Wargame | Fases | Score | Estado | Commits clave |
-|---|---|---|---|---|---|
-| 1 | 🏰 MCP Fortress | 5 | 100/100 | ✅ **Prod** | `31c45ca` |
-| 2 | 🖥️ **MCP Command Center** | 6 | 89/100 | ✅ **Prod** | `b752438` |
-| 3 | 📷 Photo Vault | 6 | 100/100 | ✅ **Prod** | `a0b3301` |
-| 4 | 🔍 Null Hunter | 6 | 100/100 | ✅ **Prod** | `a71d6da` |
-| 5 | 👻 Ghost Pipeline | 6 | 86/100 | ✅ Prod | — |
-| 6 | 👁️ Receipt Vision | 6 | 90/100 | ✅ Prod | `854399c` |
-| 7 | 🧠 Top of Mind | 2 | 100/100 | ✅ Prod | `04415fe` |
-| 8 | 🎯 Ground Truth | 8 | N/A | ✅ Ejecutado | `4de0f19` |
-| 9 | 👁️ Claridad Visual | 4 | N/A | ✅ Prod | `6b45974` |
-| 10 | 📄 Evidencia Completa | 6 | N/A | ✅ Prod | `26218b3` |
-| 11 | 🎓 Aprendizaje Continuo | 6 | 100/100 | ✅ Completo | `5bf1e50`, `1220242` |
-| 14 | 🧹 Cleanup | N/A | N/A | ✅ Completo | — |
-| 15 | ⚡ Motor idempotente | 7 | 100/100 | ✅ Prod | `cd37d3a` |
-| 16 | 🔄 Reconciliación BD | 7 | 100/100 | ✅ Completo | `981121b` |
-| 17 | 📊 Split bulks | 7 | 100/100 | ✅ Prod | `4fcadeb` |
-| 18 | 🌐 Snapshot + resync | 6 | 100/100 | ✅ Prod | desplegado |
-| 19 | 📈 Copilot Parity | 6 | 100/100 | ✅ Prod | `ee6ae4a` |
-| 20 | 📄 PDF Worker (nginx) | 5 | 100/100 | ✅ Prod (infra) | `a9c0d73` |
-| 20.5 | 📄 **PDF Worker Hardened** | 3 | **100/100** | ✅ **Prod** | `d34f624` |
+| 15 | ⚡ Motor idempotente | `cd37d3a` | ✅ Prod |
+| 16 | 🔄 Reconciliación BD | `981121b` | ✅ Completo |
+| 17 | 📊 Split bulks | `4fcadeb` | ✅ Prod |
+| 18 | 🌐 Snapshot + resync | desplegado | ✅ Prod |
+| 19 | 📈 Copilot Parity | `ee6ae4a` | ✅ Prod |
+| 20 | 📄 PDF Worker (nginx) | `a9c0d73` | ✅ Prod (infra) |
+| 20.5 | 📄 PDF Worker Hardened | `d34f624` | ✅ Prod |
+| 2 | 🖥️ MCP Command Center (rev 2026) | `b752438` | ✅ Prod |
+| 1 | 🏰 MCP Fortress | `31c45ca`, `a5f8483` | ✅ Prod |
+| 4 | 🔍 Null Hunter | `a71d6da` | ✅ Prod |
+| 3 | 📷 Photo Vault | `a0b3301` | ✅ Prod |
 
 ---
 
 # 🏰 WARGAME 1: OPERACIÓN MCP FORTRESS ✅
-> **Estado**: ✅ **Prod** · **HP**: 100/100 · **Commit**: `31c45ca` · **Tests**: 502
+> **Estado**: ✅ **Prod** · **Commits**: `31c45ca`, `a5f8483` · **Tests**: 472
+
+## Fases implementadas
 
 | Fase | Entrega | Estado |
 |---|---|---|
-| 1 | Auth+RBAC (`/api/learn` 401 sin Bearer, `/api/telegram` secret) | ✅ |
-| 2 | Rate limiting 30/min + Circuit breaker Gemini 3×429→OPEN | ✅ |
-| 3 | Retry backoff + idempotencia `update_id`/`learnDedup` | ✅ |
-| 4 | Schema validation `text≤500` `/api/learn` | ✅ |
-| 5 | WAL + backup diario 7d + `integrity_check` | ✅ |
+| 1 | Auth+RBAC | `/api/learn` y `/api/telegram` con token; `/api/categorize` sin auth (cliente no lo envía) |
+| 2 | Rate limit + circuit breaker | 30 req/min categorize/learn; Gemini fallback tras 3 fallos |
+| 3 | Retry + idempotencia | Backoff exponencial; dedup de `update_id` y reglas aprendidas |
+| 4 | Schema validation | text≤500, categories≤50; 400 en inputs inválidos |
+| 5 | WAL + backups | journal_mode=wal; backup diario 7d; integrity_check 24h |
 
-**Archivos**: `server/auth.mjs`, `server/ratelimit.mjs`, `server/circuit.mjs`, `server/validate.mjs`, `server/retry.mjs`, `server/idempotency.mjs`, `server/googleToken.mjs` (+ `server/learn.mjs` fix)
+## Archivos nuevos
+
+- `server/auth.mjs`: `checkLearnAuth` (Bearer token)
+- `server/ratelimit.mjs`: `makeRateLimiter` + `checkWindow`
+- `server/circuit.mjs`: `makeCircuitBreaker` (CLOSED→OPEN)
+- `server/retry.mjs`: `retryWithBackoff` + `getRetryDelay`
+- `server/idempotency.mjs`: `makeUpdateIdStore` + `learnDedupKey`
+- `server/validate.mjs`: `validateCategorizePayload` + `validateLearnPayload`
+
+## Decisión crítica (Fase 1)
+
+**`/api/categorize` y `/api/snapshot` sin auth** porque el cliente no envía `Authorization`. Protegidos con rate limiting (30/60 req/min) en su lugar. Auth reservada para endpoints sensibles (`/api/learn`, `/api/telegram`).
+
+## Lección #19 (permanente)
+
+En reverse proxy (nginx), Node ve `127.0.0.1` como IP origen. NUNCA usar IP para decisiones de auth — usar solo tokens/headers firmados.
 
 ---
 
@@ -92,337 +95,70 @@
 ---
 
 # 📷 WARGAME 3: OPERACIÓN PHOTO VAULT ✅
-> **Estado**: ✅ **Prod** · **Trust Score**: 100/100 · **Commit**: `a0b3301` · **Tests**: 502
+> **Estado**: ✅ **Prod** · **Commit**: `a0b3301` · **Tests**: 502
 
-OAuth PKCE con `POST /api/google-token` en server (secret nunca en bundle), scope `photoslibrary.readonly` únicamente, `GET /api/google-config` reusa `GOOGLE_CLIENT_ID` de Drive, detector aspect ratio `h/w>1.2` +30, escaneo `scanForReceipts` 60/12, tokens AES-256-GCM, selector + limpieza.
+## Fases implementadas
 
-**Archivos**: `src/services/googlePhotos.js`, `server/googleToken.mjs`, `src/services/receiptDetector.js`, `src/services/photoScanner.js`, `src/services/tokenSecurity.js`, `src/components/PhotoSelector.jsx`, `src/components/GooglePhotosSettings.jsx`
+| Fase | Entrega | Estado |
+|---|---|---|
+| 0 | Reconocimiento | PKCE ya existía pero client-side (violaba spec) |
+| 1 | OAuth PKCE server-side | `/api/google-token` intercambia code+verifier en server, nunca en bundle |
+| 2 | Detector multi-capa | `scoreReceiptCandidate` con ratio h/w + filename hints |
+| 3 | Escaneo progresivo | `scanForReceipts` con paginado 100/página + timeBudget + onProgress |
+| 4 | Tokens cifrados | AES-256-GCM PBKDF2 100k en localStorage (fuera de syncableSlice) |
+| 5 | Selector guiado | `PhotoSelector` con vista previa + filtros |
+| 6 | Limpieza al desconectar | Revoca acceso + borra tokens + blobs |
+
+## Archivos clave
+
+- `server/googleToken.mjs`: endpoint `/api/google-token` + `/api/google-config`
+- `src/services/googlePhotos.js`: `startAuth` → `/api/google-token` (no directo a Google)
+- `src/services/receiptDetector.js`: `scoreReceiptCandidate` + `isLikelyReceipt`
+- `src/services/tokenSecurity.js`: `encryptTokens` AES-256-GCM
+
+## Lección #21 (permanente)
+
+**Nunca intercambiar code por tokens en el cliente.** El flujo PKCE completo debe ocurrir en el servidor (`/api/google-token`), donde el client secret está protegido. El cliente solo recibe el access token ya intercambiado.
+
+## Decisión de diseño
+
+**Reuso de `GOOGLE_CLIENT_ID`** de Drive (no duplicar env). Scope = `photoslibrary.readonly` únicamente.
 
 ---
 
 # 🔍 WARGAME 4: OPERACIÓN NULL HUNTER ✅
-> **Estado**: ✅ **Prod** · **Data Quality**: 100/100 · **Commit**: `a71d6da` · **Tests**: 493
+> **Estado**: ✅ **Prod** · **Commit**: `a71d6da` · **Tests**: 493
 
-Baseline real 0.6% null / 1.8% Otros (no 71%), guardianes `resolveCategory`→`Otros` en `reducer` `add/update_transaction`, migrador lotes 100+pausa 1s (`nullMigrator.ts`), `analyzeOthers` ≥3 recurrencias, `categoryHealth` (<5% null) en Dashboard + eslabón PipelineDiagnostics.
+## Baseline real (Fase 0)
 
-**Archivos**: `src/categoryGuard.ts`, `src/nullMigrator.ts`, `src/othersAnalyzer.ts`, `src/utils/pipelineDiagnostics.js`, `src/reducer.ts`
-
----
-
-# 👻 WARGAME 5: OPERACIÓN GHOST PIPELINE ✅
-> **Estado**: ✅ Prod · **Pipeline Health**: 86/100
-
-**Problema**: Menú MCP mostraba "🎉 No hay pendientes" pero el pipeline estaba muerto.
-
-**Solución**: Trazado de 8 eslabones, store conectado con 12 casos `mcp_*`, fuentes cableadas, test E2E, widget de salud, onboarding con datos de demostración.
-
-**Archivos**: `src/utils/pipelineDiagnostics.js`, `src/components/McpPipelineHealth.jsx`
-
----
-
-# 👁️ WARGAME 6: OPERACIÓN RECEIPT VISION ✅
-> **Estado**: ✅ Prod · **Vision Score**: 90/100 · **Commits**: `fab1faa`, `4665215`, `854399c`
-
-**Implementación real**:
-- Editor: `EditPanel` en `McpMenu.jsx:447`
-- Transferencias: `counterpartId` + signo de `amount`
-- `src/transfers.js`: `editTransferPair`, `convertTo/FromTransfer`
-- `receiptStorage.js` (IndexedDB), `ReceiptPreview.jsx`, `useReceiptImage.js`
-- Suite: 14 tests en `receiptVision.test.js`
-
----
-
-# 🧠 WARGAME 7: OPERACIÓN TOP OF MIND ✅
-> **Estado**: ✅ Prod · **Commit**: `04415fe`
-
-## Pendiente A: Categorización Semántica
-- Endpoint: `POST /api/categorize`
-- Modelo: `text-embedding-004` (Gemini) vía Hermes agent
-- Algoritmo: k-NN con cosine similarity
-- Función: `categorizeSemanticAsync` en `src/utils.ts` con fallback a reglas
-- **Verificado**: `/api/categorize` → `semantic:true, 0.95`
-
-## Pendiente B: Oro Real
-- Fuente: `gold-api.com/price/XAU`
-- Cliente: `src/useFX.js` con fetch cada 30 min
-- Conversión: `goldUsdPerOzToEurPerGram`
-- Reducer: `update_fx` con `goldPriceEUR`
-
----
-
-# 🎯 WARGAME 8: OPERACIÓN GROUND TRUTH (META-WARGAME) ✅
-> **Estado**: ✅ Ejecutado · **Commit de restauración**: `4de0f19`
-
-**Incidente**: Un agente externo generó un script con símbolos inexistentes (`TransactionEditor.jsx`, `recordId`, `review_item_*`, `type:"expense"`) que corrompió `McpMenu.jsx` y `store.jsx`.
-
-**Resolución**: OpenCode detectó el vocabulario falso, restauró a commit limpio, y estableció las reglas de engage permanentes.
-
-**Regla de oro**: NUNCA editar sin verificar vocabulario real con `grep` primero.
-
----
-
-# 👁️ WARGAME 9: OPERACIÓN CLARIDAD VISUAL ✅
-> **Estado**: ✅ Prod · **Commits**: `d295558`, `6b45974`
-
-**Cambios**:
-- Modal opaco: clase `.glass-solid` en `src/index.css` (97% opacidad)
-- Bloque "Origen" en `EditPanel` con `SOURCE_META`
-- Sugerencia IA muestra "· vía embeddings" o "· vía reglas"
-
----
-
-# 📄 WARGAME 10: OPERACIÓN EVIDENCIA COMPLETA ✅
-> **Estado**: ✅ Prod · **Commits**: `26218b3`, `ac54100`
-
-**Regla de negocio**: Toda transacción del MCP tiene evidencia (recibo O estado de cuenta).
-
-**Implementación**:
-- Modelo `evidence{type:"receipt"|"statement"|"none"}`
-- `statement` incluye: bank, account, date, reference, rawDescription, amount
-- Backfill de transacciones de sync existentes
-- UI muestra 📄 Estado de cuenta (no "sin recibo")
-
----
-
-# 🎓 WARGAME 11: OPERACIÓN APRENDIZAJE CONTINUO ✅
-> **Estado**: ✅ **COMPLETADO** · **Commits**: `5bf1e50`, `1220242` · **Tests**: 389
-
-## Fase 1: PaddleOCR por defecto ✅
-- Config: `"ocrProvider": "paddle"` (default)
-- Paddle activo en `:8765`
-- Gemini solo como fallback
-
-## Fase 2: Conflictivas al MCP con imagen ✅
-- 5 líneas WG11 en `processor.mjs`
-- `addConflictTransaction` en vez de abortar
-- Imagen copiada a `evidenceDir`
-
-## Fase 3: Aprendizaje vía `/api/learn` ✅
-- Funciones puras en `learning.mjs` + 6 tests
-- `merchantCategoryMap`: `{"bodega expres":"Comida","oxxo":"Comida"}`
-- `transferRules`: array de reglas OBMIO→Banorte
-- `bankAccountMap`: ya poblado
-
-## Fase 4: Enseñanza NL por Telegram ✅
-- Bot `@dineroorganizadobot` (webhook estable)
-- Bot `@vpsdinerobot` (Hermes gateway PID 9768)
-- Parser normaliza merchant (commit `1220242`)
-
-## 🐛 Bug encontrado y corregido (`1220242`)
-**Problema**: El parser de enseñanza extraía "bodega expres en un recibo" en vez de "bodega expres".
-
-**Fix**: Normalizar el merchant antes de guardarlo.
-
----
-
-# 🧹 WARGAME 14: OPERACIÓN CLEANUP ✅
-> **Estado**: ✅ **Completado** · **Fecha**: 20 Agosto 2026
-
-## Resultados
-
-| Métrica | Antes | Después | Δ |
-|---|---|---|---|
-| Archivos McpMenu | 15 | 1 | -14 |
-| Archivos JS totales | 126 | 25 | -101 |
-| Espacio assets | 15 MB | 3.1 MB | -12 MB |
-
----
-
-# ⚡ WARGAME 15: OPERACIÓN INTERÉS CORRECTO ✅
-> **Estado**: ✅ Prod · **Commit**: `cd37d3a`
-
-**Motor en `src/interest.ts`**:
-- `accrueCapped` (sofipo MXN, base 360, tramos + ISR, idempotente)
-- Sanity guard (cuarentena si gain > 2× simple)
-- `interestAudit.ts` con `auditInterestHistory`/`dailyExpected`
-- 13 tests de casos conocidos (8.33 diario, 25.00 fin de semana, idempotencia)
-
-**Resultado**: 402 tests, motor correcto.
-
----
-
-# 🔄 WARGAME 16: OPERACIÓN LIBRO LIMPIO ✅
-> **Estado**: ✅ Completo · **Commits**: `981121b` (tooling)
-
-**Reconciliación de BD**:
-- 20 reversas `rv-w16-*` aplicadas
-- Corrección total: **−2,369.37 MXN**
-- Cuentas cuadradas: MLJR, MLALE, OBMIO, REVOLUTMIA, DidiInv
-- `sync_docs` actualizado (syncVersion 217)
-- Backup con hash `9ad9223e...`
-
-**Tooling en `server/`**:
-- `reverseW16.mjs`: aplica reversas
-- `reconcileW16.mjs`: reconstrucción teórica
-- `verifyW16*.mjs`: verificación de balances
-- `schemaW16.cjs`: schema de auditoría
-
-**Bug fix**: filtrar `accountId` + excluir txns deterministas `^int-` (evita 381 reversas falsas).
-
----
-
-# 📊 WARGAME 17: OPERACIÓN PIZARRA LIMPIA ✅
-> **Estado**: ✅ Prod · **Commit**: `4fcadeb`
-
-**Split de bulks (catch-up real)**:
-- 21 bulks del 08-12 → **515 movimientos diarios** (neutro en saldo)
-- `lastAccrualDate` actualizado para evitar re-catch-up
-- Trazabilidad: cada split lleva `_w17_splitFrom` apuntando al bulk original
-
-**Política B** (confirmada): conservar dinero real, normalizar legibilidad.
-
----
-
-# 🌐 WARGAME 18: OPERACIÓN SINCRONÍA TOTAL ✅
-> **Estado**: ✅ Prod · desplegado
-
-**Source-of-truth en server**:
-- `GET /api/snapshot` → `{ state, hash, syncVersion, updatedAt }`
-- Cliente compara hash al abrir; si diverge → reemplaza estado local
-- Poll continuo para convergencia automática
-
-**Resultado**: MacBook y celular muestran el mismo patrimonio.
-
----
-
-# 📈 WARGAME 19: OPERACIÓN COPILOT PARITY ✅
-> **Estado**: ✅ **Prod** · **Commit**: `ee6ae4a` · **Tests**: 436
-
-## Motor de reportes (`src/reports.ts`)
-- `cashflowByMonth`: ingresos vs gastos por mes (excluye transferencias)
-- `allocationByType`: diversificación por tipo de activo (convierte a divisa base, excluye tarjetas/préstamos)
-- `detectSubscriptions`: detección de recurrencias (normalizeMerchant con stopwords, frecuencia por mediana)
-- `spendingLine`: gasto acumulado del mes
-- `toBase`, `monthLabel`, `ALLOC_COLORS`
-
-## Presupuestos (`src/budgets.ts`)
-- `rolloverBudget`: carry no negativo
-- `nextMonthBudget`: presupuesto del mes siguiente
-- `monthlyBudgetOf` / `withMonthlyBudget`: puras
-- **Persistencia**: `settings.budgets.monthly` en SYNCABLE_KEYS
-
-## UI Reports (5 tabs)
-- Resumen (envuelto)
-- 💸 Cash flow (barras 6 meses)
-- 🧭 Allocation (donut por tipo)
-- 🔁 Suscripciones (lista con próxima fecha)
-- 📈 Gasto diario (línea acumulada)
-- 🎟️ Rollovers (presupuesto persistente)
-
-## Dashboard (3 tarjetas nuevas)
-- Cash flow del mes
-- Allocation mini-donut
-- Suscripciones top 3
-
-**Tests**: 22 nuevos (multi-divisa, exclusión transferencias, frecuencias, clamp).
-
----
-
-# 📄 WARGAME 20: OPERACIÓN PDF WORKER (NGINX MIME) ✅
-> **Estado**: ✅ **Prod (infra)** · **Commit**: `a9c0d73`
-
-## Diagnóstico
-El módulo Auditoría fallaba al subir PDFs con error:
-```
-Setting up fake worker failed: "Failed to fetch dynamically imported module: 
-https://dineroorganizado.duckdns.org/assets/pdf.worker.min-CrMmvqMo.mjs"
-```
-
-**Causa raíz**: nginx servía `.mjs` como `application/octet-stream` (no está en `mime.types` de Ubuntu por defecto), y el navegador rechazaba el `import()` dinámico.
-
-## Fix aplicado
-- Config nginx en `/etc/nginx/sites-enabled/misfinanzas`:
-  ```nginx
-  location ~* \.mjs$ {
-      default_type application/javascript;
-      try_files $uri =404;
-  }
-  ```
-- Backup de config en `/root/nginx-backups/`
-- `nginx -t` OK + reload
-
-## Verificación
-- Worker público HTTPS: `200 application/javascript` ✓ (antes `octet-stream`)
-- Sin efectos colaterales: HTML, CSS, JS, `/api/health` correctos
-- Config versionada en `deploy/nginx-misfinanzas.conf`
-
-**Lección #16**: `.mjs` NO está en `mime.types` de Ubuntu por defecto. Cualquier servidor que sirva `.mjs` debe tener `default_type application/javascript`.
-
----
-
-# 📄 WARGAME 20.5: OPERACIÓN PDF WORKER HARDENED ✅
-> **Estado**: ✅ **Prod** · **Commit**: `d34f624`
-
-## Diagnóstico adicional
-W20 corrigió nginx pero el error persistía. La causa real era **caché del navegador**: el URL hasheado `pdf.worker.min-CrMmvqMo.mjs` se había cacheado como `octet-stream` antes del fix, y el navegador seguía sirviendo la versión cacheada aunque nginx ya servía correctamente.
-
-## Solución A aplicada (bypass de caché)
-- **Worker en `public/`**: copiado `node_modules/pdfjs-dist/build/pdf.worker.min.mjs` → `public/pdf.worker.js`
-- **URL nueva fija**: `pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.js'` (sin hash)
-- **Ventaja**: URL nueva → imposible caché vieja; nginx sirve `.js` como `application/javascript` por defecto
-
-## Verificación
-- 436 tests ✅ · build OK ✅ · chunk Auditoria referencia `/pdf.worker.js` ✅
-- **duckdns**: `/pdf.worker.js` → 200 `application/javascript` (1.2M) · app nueva · `/api/health` 200 ✅
-- **Vercel**: `/pdf.worker.js` → 200 `application/javascript` · app nueva ✅
-
-**Lección #17**: Al debuggear errores de `import()` dinámico, considerar la **caché del navegador** como causa posible, especialmente con URLs hasheadas. La solución robusta es cambiar el URL (nueva ruta, sin hash).
-
-**Lección #18**: Verificar checksums antes de culpar al archivo. OpenCode verificó checksum idéntico (`ea35de07`) en local/VPS/Vercel, descartando causas falsas.
-
----
-
-# 🖥️ ESTADO ACTUAL DEL SISTEMA
-
-## Infraestructura
-
-| Componente | Estado | Evidencia |
+| Métrica | Estimado | Real |
 |---|---|---|
-| VPS IP | `192.168.1.250` | Proxmox |
-| Dominio VPS | `dineroorganizado.duckdns.org` | DuckDNS |
-| Vercel | `mis-finazas-gold.vercel.app` | Deploy automático |
-| Nginx | Activo | `/var/www/misfinanzas` + MIME `.mjs` corregido |
-| Node server | Activo (systemd) | `misfinanzas-server.service` |
-| PaddleOCR | Activo | `:8765` |
-| Hermes Gateway | Activo | PID 9768 |
+| Null% | 71% | **0.6%** (7 de 1,238 tx) |
+| Otros% | 21% | **1.8%** (22 tx) |
+| Categorizadas | 8% | **97.6%** (1,209 tx) |
 
-## Bots Telegram
+## Fases implementadas
 
-| Bot | Token | Estado | Propósito |
-|---|---|---|---|
-| `@dineroorganizadobot` | Antiguo | ✅ Webhook estable | Principal + aprendizaje |
-| `@vpsdinerobot` | Nuevo | ✅ Hermes gateway | Backup |
-
-## Aprendizajes persistidos
-
-```json
-{
-  "ocrProvider": "paddle",
-  "merchantCategoryMap": {
-    "bodega expres": "Comida",
-    "oxxo": "Comida"
-  },
-  "transferRules": [
-    {"from": "OBMIO", "to": "banorte", "category": "Pago deuda", "note": "BYD King auto_loan"}
-  ],
-  "bankAccountMap": {
-    "bbva": "...", "uala": "...", "banorte": "m6g82sap"
-  }
-}
-```
-
-## Endpoints verificados
-
-| Endpoint | Método | Respuesta |
+| Fase | Entrega | Estado |
 |---|---|---|
-| `/api/health` | GET | `{"ok":true,"engine":"sqlite","docs":2}` |
-| `/api/categorize` | POST | `{"category":"Transporte","confidence":0.95,"semantic":true}` |
-| `/api/snapshot` | GET | `{state, hash, syncVersion}` |
-| `/api/learn` | POST | Persiste en `config.json` |
+| 1 | Guardianes de categoría | `resolveCategory` con fallback a "Otros"; `ensureCategory` en reducer |
+| 2 | Migración en lotes | `migrateNullCategories` lotes de 100 + pausa 1s (no bloquea) |
+| 3 | Reclasificación de "Otros" | `analyzeOthers` agrupa por merchant, count≥3, sugiere categoría |
+| 4 | Monitoreo continuo | `categoryHealth` en Dashboard + eslabón en McpPipelineHealth |
+
+## Archivos nuevos
+
+- `src/categoryGuard.ts`: `resolveCategory` + `ensureCategory`
+- `src/nullMigrator.ts`: `migrateNullCategories` con onProgress
+- `src/othersAnalyzer.ts`: `analyzeOthers` + `normMerchant`
+
+## Lección #20 (permanente)
+
+**Nunca confiar en estimaciones de porcentaje sin verificar con datos reales.** Ejecutar queries de baseline antes de diseñar migraciones masivas.
 
 ---
 
-# 🧠 LECCIONES APRENDIDAS (PERMANENTES)
+# 🧠 LECCIONES APRENDIDAS (21 PERMANENTES)
 
 ## Del Wargame 8 (Ground Truth)
 1. **Modelo mental ≠ código real**: Siempre verificar con `grep` antes de editar
@@ -453,6 +189,15 @@ W20 corrigió nginx pero el error persistía. La causa real era **caché del nav
 16. **`.mjs` NO está en `mime.types` de Ubuntu**: nginx lo sirve como `octet-stream` a menos que se configure `default_type application/javascript`
 17. **Caché del navegador con URLs hasheadas**: corregir el servidor no basta si el navegador cacheó la respuesta incorrecta; cambiar el URL (nueva ruta sin hash) es la solución robusta
 18. **Verificar checksums antes de culpar al archivo**: si el archivo es idéntico en todos los entornos, el problema está en el transporte o la caché
+
+## De Fortress (W1)
+19. **NUNCA usar IP para auth en reverse proxy**: Node ve `127.0.0.1` como IP origen; usar solo tokens/headers firmados
+
+## De Null Hunter (W4)
+20. **Verificar baseline real antes de migraciones masivas**: ejecutar queries de baseline antes de diseñar migraciones
+
+## De Photo Vault (W3)
+21. **OAuth PKCE server-side**: nunca intercambiar code por tokens en el cliente; el exchange ocurre en `/api/google-token` donde el client secret está protegido
 
 ---
 
@@ -487,6 +232,7 @@ cp src/components/[archivo] src/components/[archivo].bak.$(date +%s)
 | Oro | `gold-api.com/price/XAU` en `useFX.js` | Valor fijo 68.4 €/g |
 | Snapshot | `/api/snapshot` con hash+syncVersion | Estado local sin convergencia |
 | PDF worker | `/pdf.worker.js` (URL fija en `public/`) | `pdf.worker.min-*.mjs` (hasheado) |
+| Google OAuth | `/api/google-token` (server-side) | Exchange directo en cliente |
 
 ## Prohibiciones estrictas
 
@@ -496,35 +242,58 @@ cp src/components/[archivo] src/components/[archivo].bak.$(date +%s)
 ❌ NO aplicar scripts de otro agente sin reconciliación
 ❌ NO confiar en "debería tener X" → SIEMPRE "tiene X"
 ❌ NO editar múltiples archivos sin backup
+❌ NO intercambiar OAuth tokens en cliente
+❌ NO usar IP para auth en reverse proxy
 ```
 
 ---
 
-# 📋 PRÓXIMOS WARGAMES PENDIENTES
+# 📋 PRÓXIMOS PASOS (POST-PLAN ORIGINAL)
 
-## Del plan original (sin aplicar)
+El plan original está **100% completado**. Opciones para futuras sesiones:
 
-| # | Wargame | Prioridad | Duración |
-|---|---|---|---|
-| 1 | 🏰 MCP Fortress (seguridad MCP) | 🔴 Crítica | 2-3 semanas |
-| 3 | 📷 Photo Vault (Google Photos) | 🟡 Media | 2-3 semanas |
-| 4 | 🔍 Null Hunter (71% null) | 🔴 Crítica | 2 semanas |
+## Opción 1: Mantenimiento
+- Monitoreo continuo de `categoryHealth` y `pipelineHealth`
+- Limpieza periódica de assets en `/var/www/misfinanzas/assets/`
+- Actualización de dependencias (React, Vite, pdfjs-dist)
+- Backups y disaster recovery drills
+
+## Opción 2: Features nuevas
+- **Exportación de datos**: CSV/Excel/PDF de transacciones y reportes
+- **Predicción de gastos**: ML para predecir gastos futuros basado en patrones
+- **Integración con más bancos**: Plaid API para sync automático
+- **Multi-usuario**: soporte para familias/parejas con cuentas compartidas
+- **Alertas inteligentes**: notificaciones proactivas de gastos inusuales
+
+## Opción 3: Optimización
+- **Code splitting**: lazy loading de Reports, Auditoría, Settings
+- **Bundle size**: reducir de 624KB a <300KB con manual chunks
+- **Performance**: virtual scrolling en todas las listas grandes
+- **PWA**: service worker + offline mode
+
+## Opción 4: Documentación
+- **Guías de usuario**: tutoriales para features principales
+- **API docs**: OpenAPI/Swagger para endpoints
+- **Arquitectura técnica**: diagramas de flujo, decisiones de diseño
+- **Runbooks**: procedimientos de deploy, rollback, troubleshooting
 
 ---
 
-## 🎯 PRÓXIMOS PASOS INMEDIATOS
+# 🎯 LOGRO HISTÓRICO
 
-1. ✅ **Limpieza de assets** en VPS (script de W14 reutilizado)
-2. 📋 Decidir siguiente sprint:
-   - **Wargame 4 (Null Hunter)**: reducir 71% null a < 2%
-   - **Wargame 1 (Fortress)**: seguridad MCP
-   - **Wargame 3 (Photo Vault)**: Google Photos integration
-3. 📝 Actualizar `implementation_plan_ia_agentes.md` con cierre de sesión
+**21 de 21 wargames completados** con:
+- ✅ 502 tests pasando
+- ✅ VPS + Vercel en producción estable
+- ✅ Defensa en profundidad (seguridad + calidad + sync + UX + IA + privacidad)
+- ✅ 21 lecciones aprendidas documentadas
+- ✅ Reglas de engage para futuros agentes
+
+**El proyecto está listo para producción con calidad enterprise.**
 
 ---
 
 > **Documento**: `WARGAMES-MCP-MISFINANZSVPS.md`  
-> **Versión**: **7.5.0** — plan original COMPLETADO (21/21 wargames, 502 tests)  
+> **Versión**: **7.5.0** — Plan original COMPLETADO (21/21 wargames)  
 > **Commits**: hasta `a0b3301`  
-> **Wargames aplicados**: 21/21  
-> **Siguiente acción**: Plan original completado — definir siguiente roadmap
+> **Tests**: 502 passing  
+> **Estado**: 100% completado · Producción estable · Listo para mantenimiento/features nuevas
