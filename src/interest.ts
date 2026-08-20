@@ -85,10 +85,12 @@ interface AccrueTier {
 interface AccrueCappedResult {
   account: Account;
   txs: Transaction[];
+  anomalies: InterestAnomaly[];
 }
 
 function accrueCapped(acc: Account, now: string, existingIds: Set<string>): AccrueCappedResult {
   const txs: Transaction[] = [];
+  const anomalies: InterestAnomaly[] = [];
   let balance = acc.balance;
   const startBalance = acc.balance;
   const cap1 = acc.balanceCap1 || 0;
@@ -126,6 +128,16 @@ function accrueCapped(acc: Account, now: string, existingIds: Set<string>): Accr
     let gain = t.base * (Math.pow(1 + periodicRate, periods) - 1);
     if (gain > room) gain = room;
     gain = r2(gain);
+
+    // W15: sanity guard idéntico a la rama simple — si el gain excede el tope
+    // matemático (2× interés simple del periodo), se cuarentena en anomalía en
+    // vez de abonarlo. Evita doble devengo por lastAccrualN corrupto.
+    const cap = interestSanityCap({ ...acc, balance: t.base, rate: t.rate }, periods * periodDays);
+    if (gain > cap) {
+      anomalies.push({ accountId: acc.id, accountName: acc.name, date: now, gain, cap: r2(cap), days: periods * periodDays });
+      out[`lastAccrual${t.n}`] = newLast;
+      continue;
+    }
 
     const taxDivisor = t.accrual === "daily" ? DAYS_PER_YEAR : 12;
     const tax = r2(isrRate > 0 ? t.base * (isrRate / taxDivisor) * periods : 0);
@@ -203,7 +215,7 @@ function accrueCapped(acc: Account, now: string, existingIds: Set<string>): Accr
     out[`lastAccrual${t.n}`] = newLast;
   }
 
-  return { account: { ...acc, balance, lastAccrual: now, ...out, ...(txs.length > 0 ? { _updatedAt: Date.now() } : {}) } as Account, txs };
+  return { account: { ...acc, balance, lastAccrual: now, ...out, ...(txs.length > 0 ? { _updatedAt: Date.now() } : {}) } as Account, txs, anomalies };
 }
 
 export const isCappedAccount = (a: Account): boolean =>
@@ -221,9 +233,10 @@ export function accrueInterest(state: AppState): AppState {
 
   for (const acc of state.accounts) {
     if (isCappedAccount(acc)) {
-      const { account, txs } = accrueCapped(acc, now, existingIds);
+      const { account, txs, anomalies: capAnoms } = accrueCapped(acc, now, existingIds);
       accounts.push(account);
       newTx.push(...txs);
+      anomalies.push(...capAnoms);
       continue;
     }
 
