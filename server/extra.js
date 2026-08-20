@@ -542,6 +542,7 @@ function matchCategory(catMap, text) {
 // Patrones soportados:
 //   "<alias> es la cuenta de <nombre>"   → bankAccountMap[alias] = cuenta
 //   "<merchant> es <categoría>"          → merchantCategoryMap[merchant] = categoría
+//   "cuando veo 'X' en un recibo es [categoría] Y, aprende" → merchantCategoryMap
 // Devuelve el texto de confirmación, o null si no era una enseñanza.
 async function learnFromText(db, binding, text) {
   const state = loadSyncState(db, binding.syncCode);
@@ -562,12 +563,16 @@ async function learnFromText(db, binding, text) {
     return `✅ Aprendido: "${alias}" → cuenta ${m1[2].trim()}.`;
   }
 
-  // 2) "<merchant> es <categoría>"
-  const m2 = text.match(/^(.+?)\s+es\s+(.+)$/i);
+  // 2) "<merchant> es <categoría>" — o variantes naturales:
+  //    "cuando veo 'X' es categoría Y, aprende" / "X en un recibo es Y"
+  const m2 = text.match(/^(.+?)\s+es\s+(?:categor[ií]a\s+|cat\.\s+)?(.+)$/i);
   if (m2) {
-    const merchant = m2[1].trim(); const category = m2[2].trim();
+    let merchant = m2[1].trim().replace(/^(cuando veo|cuando ves|si veo|si ves|en un recibo|en un comprobante)\s+/i, "").trim();
+    let category = m2[2].trim().replace(/[,.\s]*(aprende|aprender|ens[ée]nalo|ense[ñn]a)\s*$/i, "").trim();
+    merchant = merchant.replace(/^['"“`]+|['"”`]+$/g, "").trim();
     const known = (state.categories || []).some((c) => (c.name || "").toLowerCase() === category.toLowerCase());
     if (!known) return `No conozco la categoría "${category}". Mírala en la app.`;
+    if (!merchant) return null;
     await fetch("http://127.0.0.1:" + (process.env.PORT || 3000) + "/api/learn", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ kind: "category", merchant, category }),
