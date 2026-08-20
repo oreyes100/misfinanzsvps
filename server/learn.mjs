@@ -84,8 +84,9 @@ export async function handleLearn(req, res, body) {
   // Estado sincronizado: solo para validar que los ids existen.
   let state = { accounts: [] };
   try {
-    const { getSyncDoc } = await import("./db.mjs");
-    const doc = cfg.syncCode ? getSyncDoc(cfg.syncCode) : null;
+    const { openDb, getSyncDoc } = await import("./db.mjs");
+    const db = openDb();
+    const doc = cfg.syncCode ? getSyncDoc(db, cfg.syncCode) : null;
     state = (doc && doc.state) || state;
   } catch {}
 
