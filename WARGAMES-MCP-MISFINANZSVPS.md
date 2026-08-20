@@ -4,8 +4,8 @@
 > **Producción Vercel**: https://mis-finazas-gold.vercel.app  
 > **VPS**: `192.168.1.250` · Usuario: `devops`  
 > **Fecha**: 20 de agosto de 2026  
-> **Versión del documento**: **7.2.0** — Cierre de sesión (W2, W20, W20.5)  
-> **Commits incluidos**: hasta `b752438`
+> **Versión del documento**: **7.5.0** — plan original COMPLETADO (21/21 wargames, 502 tests)  
+> **Commits incluidos**: hasta `a0b3301`
 
 ---
 
@@ -15,8 +15,8 @@
 
 | Métrica | Antes de sesión | Después | Δ |
 |---|---|---|---|
-| Tests | ~355 | **447** | +92 |
-| Wargames aplicados | 0 | **18 de 19** | +18 |
+| Tests | ~355 | **502** | +147 |
+| Wargames aplicados | 0 | **21 de 21** | +21 |
 | Pipeline MCP | ❌ Roto (ghost) | ✅ 5/5 eslabones | ✅ |
 | Categorización | Reglas por substring | **Embeddings semánticos** | ✅ |
 | Precio oro | Fijo 68.4 €/g | **Real** (gold-api.com) | ✅ |
@@ -32,10 +32,10 @@
 
 | # | Wargame | Fases | Score | Estado | Commits clave |
 |---|---|---|---|---|---|
-| 1 | 🏰 MCP Fortress | 5 | 85/100 | 📋 Plan | — |
+| 1 | 🏰 MCP Fortress | 5 | 100/100 | ✅ **Prod** | `31c45ca` |
 | 2 | 🖥️ **MCP Command Center** | 6 | 89/100 | ✅ **Prod** | `b752438` |
-| 3 | 📷 Photo Vault | 6 | 87/100 | 📋 Plan | — |
-| 4 | 🔍 Null Hunter | 6 | 84/100 | 📋 Plan | — |
+| 3 | 📷 Photo Vault | 6 | 100/100 | ✅ **Prod** | `a0b3301` |
+| 4 | 🔍 Null Hunter | 6 | 100/100 | ✅ **Prod** | `a71d6da` |
 | 5 | 👻 Ghost Pipeline | 6 | 86/100 | ✅ Prod | — |
 | 6 | 👁️ Receipt Vision | 6 | 90/100 | ✅ Prod | `854399c` |
 | 7 | 🧠 Top of Mind | 2 | 100/100 | ✅ Prod | `04415fe` |
@@ -54,18 +54,18 @@
 
 ---
 
-# 🏰 WARGAME 1: OPERACIÓN MCP FORTRESS
-> **Estado**: 📋 Plan · **HP**: 85/100
+# 🏰 WARGAME 1: OPERACIÓN MCP FORTRESS ✅
+> **Estado**: ✅ **Prod** · **HP**: 100/100 · **Commit**: `31c45ca` · **Tests**: 502
 
-| Fase | Ataque | Solución |
+| Fase | Entrega | Estado |
 |---|---|---|
-| 1 | Escaneo de servers | Capability Negotiation + RBAC |
-| 2 | Flood de tool calls | Circuit Breaker + Rate Limiter |
-| 3 | Retry storm | Backoff + jitter + idempotencia |
-| 4 | Schema poisoning | 5 capas: Registry, Validation, Sanitization, Sandbox, HITL |
-| 5 | State corruption | WAL + Checkpoints SHA-256 + Recovery |
+| 1 | Auth+RBAC (`/api/learn` 401 sin Bearer, `/api/telegram` secret) | ✅ |
+| 2 | Rate limiting 30/min + Circuit breaker Gemini 3×429→OPEN | ✅ |
+| 3 | Retry backoff + idempotencia `update_id`/`learnDedup` | ✅ |
+| 4 | Schema validation `text≤500` `/api/learn` | ✅ |
+| 5 | WAL + backup diario 7d + `integrity_check` | ✅ |
 
-**Archivos**: `src/mcp/resilience/`, `src/mcp/security/`, `src/mcp/persistence/`
+**Archivos**: `server/auth.mjs`, `server/ratelimit.mjs`, `server/circuit.mjs`, `server/validate.mjs`, `server/retry.mjs`, `server/idempotency.mjs`, `server/googleToken.mjs` (+ `server/learn.mjs` fix)
 
 ---
 
@@ -91,25 +91,21 @@
 
 ---
 
-# 📷 WARGAME 3: OPERACIÓN PHOTO VAULT
-> **Estado**: 📋 Plan · **Trust Score**: 87/100
+# 📷 WARGAME 3: OPERACIÓN PHOTO VAULT ✅
+> **Estado**: ✅ **Prod** · **Trust Score**: 100/100 · **Commit**: `a0b3301` · **Tests**: 502
 
-Integración de Google Photos con OAuth PKCE, detector multi-capa, escaneo progresivo, tokens cifrados AES-256-GCM, selector guiado, limpieza al desconectar.
+OAuth PKCE con `POST /api/google-token` en server (secret nunca en bundle), scope `photoslibrary.readonly` únicamente, `GET /api/google-config` reusa `GOOGLE_CLIENT_ID` de Drive, detector aspect ratio `h/w>1.2` +30, escaneo `scanForReceipts` 60/12, tokens AES-256-GCM, selector + limpieza.
 
-**Archivos**: `src/services/googlePhotos.js`, `receiptDetector.js`, `photoScanner.js`, `tokenSecurity.js`, `PhotoSelector.jsx`
+**Archivos**: `src/services/googlePhotos.js`, `server/googleToken.mjs`, `src/services/receiptDetector.js`, `src/services/photoScanner.js`, `src/services/tokenSecurity.js`, `src/components/PhotoSelector.jsx`, `src/components/GooglePhotosSettings.jsx`
 
 ---
 
-# 🔍 WARGAME 4: OPERACIÓN NULL HUNTER
-> **Estado**: 📋 Plan · **Data Quality**: 84/100
+# 🔍 WARGAME 4: OPERACIÓN NULL HUNTER ✅
+> **Estado**: ✅ **Prod** · **Data Quality**: 100/100 · **Commit**: `a71d6da` · **Tests**: 493
 
-Reducir null de 71% a < 2% mediante:
-- 7 fuentes de null identificadas
-- Guardianes de categoría (`resolveCategory()`)
-- Pipeline de migración en lotes
-- Corrección batch con IA
-- Reclasificación de "Otros"
-- Monitoreo continuo
+Baseline real 0.6% null / 1.8% Otros (no 71%), guardianes `resolveCategory`→`Otros` en `reducer` `add/update_transaction`, migrador lotes 100+pausa 1s (`nullMigrator.ts`), `analyzeOthers` ≥3 recurrencias, `categoryHealth` (<5% null) en Dashboard + eslabón PipelineDiagnostics.
+
+**Archivos**: `src/categoryGuard.ts`, `src/nullMigrator.ts`, `src/othersAnalyzer.ts`, `src/utils/pipelineDiagnostics.js`, `src/reducer.ts`
 
 ---
 
@@ -528,7 +524,7 @@ cp src/components/[archivo] src/components/[archivo].bak.$(date +%s)
 ---
 
 > **Documento**: `WARGAMES-MCP-MISFINANZSVPS.md`  
-> **Versión**: **7.2.0** — Cierre de sesión (W2, W20, W20.5)  
-> **Commits**: hasta `b752438`  
-> **Wargames aplicados**: 18/19  
-> **Siguiente acción**: Limpieza de assets + decidir Null Hunter vs Fortress vs Photo Vault
+> **Versión**: **7.5.0** — plan original COMPLETADO (21/21 wargames, 502 tests)  
+> **Commits**: hasta `a0b3301`  
+> **Wargames aplicados**: 21/21  
+> **Siguiente acción**: Plan original completado — definir siguiente roadmap
