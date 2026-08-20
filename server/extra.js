@@ -567,7 +567,11 @@ async function learnFromText(db, binding, text) {
   //    "cuando veo 'X' es categoría Y, aprende" / "X en un recibo es Y"
   const m2 = text.match(/^(.+?)\s+es\s+(?:categor[ií]a\s+|cat\.\s+)?(.+)$/i);
   if (m2) {
-    let merchant = m2[1].trim().replace(/^(cuando veo|cuando ves|si veo|si ves|en un recibo|en un comprobante)\s+/i, "").trim();
+    let merchant = m2[1].trim()
+      .replace(/^(cuando veo|cuando ves|si veo|si ves)\s+/i, "")
+      .replace(/\s+(en un recibo|en un comprobante|en los recibos|en el recibo|en el comprobante)\s*$/i, "")
+      .replace(/^(en un recibo|en un comprobante|en los recibos|en el recibo|en el comprobante)\s+/i, "")
+      .replace(/^['"“`]+|['"”`]+$/g, "").trim();
     let category = m2[2].trim().replace(/[,.\s]*(aprende|aprender|ens[ée]nalo|ense[ñn]a)\s*$/i, "").trim();
     merchant = merchant.replace(/^['"“`]+|['"”`]+$/g, "").trim();
     const known = (state.categories || []).some((c) => (c.name || "").toLowerCase() === category.toLowerCase());
