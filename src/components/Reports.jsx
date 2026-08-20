@@ -3,7 +3,9 @@ import { motion } from "framer-motion";
 import { useStore } from "../store.jsx";
 import { catColor, convert, fmtMoney, fmtPct, downloadReportCSV, downloadReportPDF } from "../utils.js";
 import { Glass, Btn, inputCls } from "./UI.jsx";
-import { BarChart, PieChart } from "./Charts.jsx";
+import { BarChart, LineChart, PieChart } from "./Charts.jsx";
+import { ALLOC_COLORS, allocationByType, cashflowByMonth, detectSubscriptions, spendingLine, toBase } from "../reports.js";
+import { rolloverBudget } from "../budgets.js";
 
 const PERIODS = [
   { id: 3, label: "3 meses" },
@@ -47,6 +49,285 @@ function monthKey(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 
+const REPORTS_TABS = [
+  { id: "resumen", label: "📊 Resumen" },
+  { id: "cashflow", label: "💸 Cash flow" },
+  { id: "allocation", label: "🎯 Allocation" },
+  { id: "subs", label: "🔁 Suscripciones" },
+  { id: "line", label: "📈 Gasto diario" },
+  { id: "rollovers", label: "🎟️ Rollovers" },
+];
+
+function CashflowTab({ state, base }) {
+  const rows = cashflowByMonth(state.transactions, state.fx, base, 6);
+  const totalIncome = rows.reduce((s, m) => s + m.income, 0);
+  const totalExpense = rows.reduce((s, m) => s + m.expense, 0);
+  const net = totalIncome - totalExpense;
+  const maxBar = Math.max(1, ...rows.map((m) => Math.max(m.income, m.expense)));
+
+  return (
+    <>
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {[
+          ["Ingresos (6m)", fmtMoney(totalIncome, base), "text-gain"],
+          ["Gastos (6m)", fmtMoney(totalExpense, base), "text-loss"],
+          ["Flujo neto", fmtMoney(net, base), net >= 0 ? "text-gain" : "text-loss"],
+          ["Tasa de ahorro", fmtPct(totalIncome > 0 ? net / totalIncome : 0), net >= 0 ? "text-gain" : "text-gold"],
+        ].map(([label, value, color]) => (
+          <Glass key={label} className="!p-3">
+            <p className="text-xs text-ink-dim">{label}</p>
+            <p className={`mt-1 text-xl font-bold tabular-nums ${color}`}>{value}</p>
+          </Glass>
+        ))}
+      </div>
+
+      <Glass aria-label="Cash flow mensual">
+        <h3 className="mb-3 text-sm font-semibold">Cash flow por mes</h3>
+        <div className="flex items-end gap-2" style={{ height: 160 }} role="img"
+          aria-label={rows.map((m) => `${m.label}: ingresos ${fmtMoney(m.income, base, { compact: true })}, gastos ${fmtMoney(m.expense, base, { compact: true })}`).join("; ")}>
+          {rows.map((m) => (
+            <div key={m.key} className="flex flex-1 flex-col items-center gap-1">
+              <div className="flex w-full items-end justify-center gap-0.5" style={{ height: 130 }}>
+                <motion.div
+                  initial={{ height: 0 }} animate={{ height: `${(m.income / maxBar) * 100}%` }}
+                  className="w-2/5 rounded-t bg-gradient-to-t from-emerald-600 to-emerald-400" title={`Ingresos ${fmtMoney(m.income, base)}`} />
+                <motion.div
+                  initial={{ height: 0 }} animate={{ height: `${(m.expense / maxBar) * 100}%` }}
+                  className="w-2/5 rounded-t bg-gradient-to-t from-rose-700 to-rose-400" title={`Gastos ${fmtMoney(m.expense, base)}`} />
+              </div>
+              <span className="text-[10px] text-ink-dim">{m.label}</span>
+            </div>
+          ))}
+        </div>
+        <div className="mt-2 flex gap-4 text-xs text-ink-dim">
+          <span className="flex items-center gap-1"><span className="size-2 rounded-sm bg-emerald-500" aria-hidden="true" /> Ingresos</span>
+          <span className="flex items-center gap-1"><span className="size-2 rounded-sm bg-rose-500" aria-hidden="true" /> Gastos</span>
+        </div>
+      </Glass>
+
+      <Glass aria-label="Detalle mensual del cash flow">
+        <h3 className="mb-2 text-sm font-semibold">Detalle mensual</h3>
+        <ul className="space-y-1 text-xs">
+          {[...rows].reverse().map((m) => (
+            <li key={m.key} className="flex justify-between border-b border-white/6 pb-1">
+              <span className="capitalize">{m.label}</span>
+              <span className="tabular-nums">
+                <span className="text-gain">{fmtMoney(m.income, base, { compact: true })}</span>
+                <span className="text-ink-dim"> / </span>
+                <span className="text-loss">{fmtMoney(m.expense, base, { compact: true })}</span>
+                <span className="text-ink-dim"> → </span>
+                <span className={m.net >= 0 ? "text-ink" : "text-loss"}>{fmtMoney(m.net, base, { compact: true })}</span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      </Glass>
+    </>
+  );
+}
+
+/** Allocation: diversificación de activos por tipo de cuenta (SVG donut). */
+function AllocationTab({ state, base }) {
+  const slices = allocationByType(state.accounts, state.fx, base)
+    .map((s, i) => ({ ...s, color: ALLOC_COLORS[i % ALLOC_COLORS.length] }));
+  const total = slices.reduce((s, x) => s + x.value, 0);
+
+  return (
+    <Glass aria-label="Distribución de activos por tipo de cuenta">
+      <h3 className="mb-3 text-sm font-semibold">Allocation · activos</h3>
+      {slices.length ? (
+        <>
+          <PieChart
+            slices={slices}
+            size={150}
+            totalLabel={fmtMoney(total, base, { compact: true })}
+            fmtValue={(v) => fmtMoney(v, base, { compact: true })}
+          />
+          <p className="mt-2 text-[10px] text-ink-dim">
+            Saldo de cuentas de activo (corriente, ahorro, depósito, inversión, sofipo) convertido a {base}. Excluye tarjetas y préstamos.
+          </p>
+        </>
+      ) : (
+        <p className="text-sm text-ink-dim">Sin cuentas de activo.</p>
+      )}
+    </Glass>
+  );
+}
+
+/** Suscripciones: recurrentes detectados por descripción normalizada (≥2 cobros). */
+const FREQ_LABEL = { semanal: "semanal", mensual: "mensual", anual: "anual", irregular: "irregular" };
+
+function SubscriptionsTab({ state, base }) {
+  const subs = detectSubscriptions(state.transactions, state.fx, base);
+  const monthly = subs.reduce(
+    (s, x) => s + (x.freq === "semanal" ? x.amount * 4.33 : x.freq === "anual" ? x.amount / 12 : x.amount),
+    0
+  );
+
+  return (
+    <Glass aria-label="Suscripciones detectadas">
+      <div className="mb-2 flex items-baseline justify-between">
+        <h3 className="text-sm font-semibold">Suscripciones detectadas</h3>
+        <span className="text-xs text-ink-dim">≈ {fmtMoney(monthly, base)}/mes</span>
+      </div>
+      {subs.length ? (
+        <ul className="space-y-2">
+          {subs.slice(0, 10).map((s) => (
+            <li key={s.merchant} className="flex items-center justify-between rounded-xl bg-white/5 px-3 py-2 text-sm">
+              <div>
+                <p className="font-medium capitalize">{s.merchant}</p>
+                <p className="text-xs text-ink-dim">
+                  último cobro {s.lastDate} · {s.count} cobros · {FREQ_LABEL[s.freq] || s.freq}
+                </p>
+              </div>
+              <p className="font-semibold tabular-nums">{fmtMoney(s.amount, base)}</p>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-sm text-ink-dim">Sin recurrentes detectadas (2+ cobros con la misma descripción).</p>
+      )}
+      <p className="mt-2 text-[10px] text-ink-dim">Agrupadas por descripción normalizada. Se ignora si llevan más de 3 ciclos sin actividad.</p>
+    </Glass>
+  );
+}
+
+/** Gasto diario del mes seleccionado (línea SVG) + KPIs. */
+function SpendingTab({ state, base }) {
+  const now = new Date();
+  const [ym, setYm] = useState(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`);
+  const [y, m] = ym.split("-").map(Number);
+  const days = spendingLine(state.transactions, state.fx, base, y, m);
+  const total = days.reduce((s, d) => s + d.value, 0);
+  const avg = days.length ? total / days.length : 0;
+  const top = days.reduce((a, b) => (b.value > a.value ? b : a), days[0]);
+
+  return (
+    <>
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold">Gasto diario</h3>
+        <input type="month" value={ym} onChange={(e) => setYm(e.target.value)} className={inputCls + " !w-40"} aria-label="Mes a visualizar" />
+      </div>
+      <Glass aria-label={`Gasto diario de ${ym}`}>
+        <div className="grid grid-cols-3 gap-2">
+          <div className="rounded-xl bg-white/5 px-3 py-2">
+            <p className="text-[10px] uppercase tracking-wide text-ink-dim">Total del mes</p>
+            <p className="text-base font-bold tabular-nums text-loss">{fmtMoney(total, base, { compact: true })}</p>
+          </div>
+          <div className="rounded-xl bg-white/5 px-3 py-2">
+            <p className="text-[10px] uppercase tracking-wide text-ink-dim">Media / día</p>
+            <p className="text-base font-bold tabular-nums">{fmtMoney(avg, base, { compact: true })}</p>
+          </div>
+          <div className="rounded-xl bg-white/5 px-3 py-2">
+            <p className="text-[10px] uppercase tracking-wide text-ink-dim">Día pico</p>
+            <p className="text-base font-bold tabular-nums">{top && top.value > 0 ? `día ${top.day} · ${fmtMoney(top.value, base, { compact: true })}` : "—"}</p>
+          </div>
+        </div>
+        <div className="mt-3">
+          <LineChart data={days.map((d) => d.value)} stroke="auto" height={110} label={`Gasto diario ${ym}`} />
+        </div>
+        <p className="mt-1 text-[10px] text-ink-dim">Excluye transferencias internas. Divisas convertidas a {base}.</p>
+      </Glass>
+    </>
+  );
+}
+
+/** Rollovers: presupuesto mensual con carry-over (regla estilo YNAB/Copilot). */
+function RolloversTab({ state, base }) {
+  const now = new Date();
+  const expenseOf = (key) => {
+    let sum = 0;
+    for (const t of state.transactions) {
+      if (!t || !t.date || !t.date.startsWith(key) || t.amount >= 0 || t.category === "Transferencia") continue;
+      sum += toBase(Math.abs(t.amount), t.currency, state.fx, base);
+    }
+    return sum;
+  };
+  const keys = [];
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    keys.push({
+      key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`,
+      label: d.toLocaleDateString("es-ES", { month: "short", year: "2-digit" }),
+    });
+  }
+  const prevExpenses = keys.slice(0, 5).map((k) => expenseOf(k.key));
+  const defaultAlloc = Math.round(prevExpenses.reduce((s, v) => s + v, 0) / Math.max(1, prevExpenses.length));
+  const [allocation, setAllocation] = useState(defaultAlloc);
+
+  const rows = [];
+  let carry = 0;
+  for (const { key, label } of keys) {
+    const opening = allocation + carry;
+    const expenses = expenseOf(key);
+    const r = rolloverBudget(key, expenses, opening);
+    carry = r.carry;
+    rows.push({ key, label, opening, expenses, carry });
+  }
+  const last = rows[rows.length - 1];
+  const next = allocation + last.carry;
+
+  return (
+    <>
+      <Glass aria-label="Configuración del presupuesto mensual">
+        <div className="flex flex-wrap items-center gap-3">
+          <div>
+            <label className="block text-[10px] text-ink-dim">Presupuesto mensual ({base})</label>
+            <input
+              type="number"
+              min="0"
+              step="50"
+              value={allocation}
+              onChange={(e) => setAllocation(Math.max(0, Number(e.target.value) || 0))}
+              className={inputCls + " !w-40"}
+              aria-label="Presupuesto mensual"
+            />
+          </div>
+          <p className="text-xs text-ink-dim">
+            El sobrante de cada mes se suma al siguiente (rollover). No se arrastran déficits.
+          </p>
+        </div>
+      </Glass>
+
+      <Glass aria-label="Simulación de rollover por mes">
+        <h3 className="mb-2 text-sm font-semibold">Simulación de rollover</h3>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="bg-white/5">
+                <th className="p-1 text-left">Mes</th>
+                <th className="p-1 text-right">Presupuesto</th>
+                <th className="p-1 text-right">Gastos</th>
+                <th className="p-1 text-right">Carry →</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.key} className="border-t border-white/5">
+                  <td className="p-1 font-medium capitalize">{r.label}</td>
+                  <td className="p-1 text-right tabular-nums">{fmtMoney(r.opening, base, { compact: true })}</td>
+                  <td className="p-1 text-right tabular-nums text-loss">{fmtMoney(r.expenses, base, { compact: true })}</td>
+                  <td className={`p-1 text-right font-semibold tabular-nums ${r.carry > 0 ? "text-gain" : "text-ink-dim"}`}>
+                    {fmtMoney(r.carry, base, { compact: true })}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr className="border-t border-white/10 font-semibold">
+                <td className="p-1">Próximo mes</td>
+                <td className="p-1 text-right text-gain" colSpan={3}>
+                  {fmtMoney(next, base)} = {fmtMoney(allocation, base, { compact: true })} + carry {fmtMoney(last.carry, base, { compact: true })}
+                </td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </Glass>
+    </>
+  );
+}
+
 /** Reportes históricos estilo corporativo, adaptado a finanzas personales. */
 export default function Reports() {
   const { state } = useStore();
@@ -56,6 +337,7 @@ export default function Reports() {
   const [endDate, setEndDate] = useState('');
   const [selectedPeriod, setSelectedPeriod] = useState(null);
   const [drillCat, setDrillCat] = useState(null); // { type: 'income'|'expense', cat }
+  const [tab, setTab] = useState("resumen");
 
   // Reset period/drill-down when granularity or dates change
   useEffect(() => { setSelectedPeriod(null); setDrillCat(null); }, [gran, startDate, endDate]);
@@ -202,6 +484,22 @@ export default function Reports() {
 
   return (
     <div className="space-y-4">
+      {/* Tabs: resumen actual + secciones estilo Copilot */}
+      <div className="flex flex-wrap gap-1 rounded-full bg-white/5 p-1" role="tablist" aria-label="Secciones de reportes">
+        {REPORTS_TABS.map((t) => (
+          <button
+            key={t.id}
+            role="tab"
+            aria-selected={tab === t.id}
+            onClick={() => setTab(t.id)}
+            className={`rounded-full px-3 py-1 text-xs font-medium transition ${tab === t.id ? "bg-accent text-base-950" : "text-ink-dim"}`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === "resumen" && (<>
       {/* Selector de periodo */}
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-bold">Reportes</h2>
@@ -560,6 +858,13 @@ export default function Reports() {
           <span className="text-[10px] text-ink-dim self-center">Excel: abre el CSV en Excel / Google Sheets</span>
         </div>
       </Glass>
+      </>)}
+
+      {tab === "cashflow" && <CashflowTab state={state} base={base} />}
+      {tab === "allocation" && <AllocationTab state={state} base={base} />}
+      {tab === "subs" && <SubscriptionsTab state={state} base={base} />}
+      {tab === "line" && <SpendingTab state={state} base={base} />}
+      {tab === "rollovers" && <RolloversTab state={state} base={base} />}
     </div>
   );
 }

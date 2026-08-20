@@ -206,6 +206,9 @@ export const DASHBOARD_CARDS: DashboardCard[] = [
   { id: "deudas", label: "Total de deudas" },
   { id: "cuentas", label: "Cuentas" },
   { id: "gastosIngresos", label: "Gastos e ingresos" },
+  { id: "copilotCashflow", label: "Cash flow del mes" },
+  { id: "copilotAllocation", label: "Allocation" },
+  { id: "copilotSubs", label: "Suscripciones top 3" },
 ];
 
 export const cardOn = (settings: AppState["settings"] | undefined, id: string): boolean =>

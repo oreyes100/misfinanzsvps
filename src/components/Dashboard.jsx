@@ -4,6 +4,7 @@ import { useStore } from "../store.jsx";
 import { categoryHealth, monthSpend, netWorthEUR, pendingCardPayments } from "../selectors.js";
 import { ACCOUNT_TYPES, LIABILITY_ACCOUNT_TYPES, cardOn, catColor, convert, fmtMoney, fmtPct, groupedAccounts, sortedAccounts } from "../utils.js";
 import { BarChart, LineChart, PieChart } from "./Charts.jsx";
+import { ALLOC_COLORS, allocationByType, cashflowByMonth, detectSubscriptions, monthLabel } from "../reports.js";
 import { TransactionModal, TransferModal } from "./Modals.jsx";
 import { Btn, Glass, Money } from "./UI.jsx";
 
@@ -611,6 +612,92 @@ export default function Dashboard({ onNavigate = () => {} }) {
         <p className="mt-2 text-xs text-ink-dim">Histórico de 3, 6 y 12 meses en la sección <strong>Reportes</strong>.</p>
       </Glass>
       )}
+
+      {/* ---- Copilot: cash flow del mes + flujo neto mensual ---- */}
+      {cardOn(state.settings, "copilotCashflow") && (() => {
+        const rows = cashflowByMonth(state.transactions, state.fx, base, 6);
+        const cur = rows[rows.length - 1];
+        const prev = rows[rows.length - 2];
+        const delta = prev && prev.expense > 0 ? (cur.expense - prev.expense) / prev.expense : null;
+        return (
+          <Glass className="col-span-2 lg:col-span-1" aria-label="Cash flow del mes">
+            <div className="mb-1 flex items-baseline justify-between">
+              <h2 className="text-sm font-semibold">Cash flow · {monthLabel(cur?.key)}</h2>
+              {delta !== null && <Delta value={delta} />}
+            </div>
+            <div className="flex items-baseline gap-2">
+              <p className={`text-xl font-bold tabular-nums ${cur.net >= 0 ? "text-gain" : "text-loss"}`}>
+                {fmtMoney(cur.net, base, { compact: true })}
+              </p>
+              <span className="text-xs text-ink-dim">neto</span>
+            </div>
+            <div className="mt-1 flex justify-between text-xs text-ink-dim">
+              <span>▲ {fmtMoney(cur.income, base, { compact: true })}</span>
+              <span>▼ {fmtMoney(cur.expense, base, { compact: true })}</span>
+            </div>
+            <div className="mt-2">
+              <BarChart
+                bars={rows.map((r) => ({ label: r.label, value: r.net, title: `${r.label}: ${fmtMoney(r.net, base)}` }))}
+                color="#5b8cff"
+                fmt={(v) => fmtMoney(v, base, { compact: true })}
+                label="Flujo neto mensual"
+                height={64}
+              />
+            </div>
+          </Glass>
+        );
+      })()}
+
+      {/* ---- Copilot: allocation por tipo de cuenta (mini-donut) ---- */}
+      {cardOn(state.settings, "copilotAllocation") && (() => {
+        const slices = allocationByType(state.accounts, state.fx, base)
+          .map((s, i) => ({ ...s, color: ALLOC_COLORS[i % ALLOC_COLORS.length] }));
+        const total = slices.reduce((s, x) => s + x.value, 0);
+        return (
+          <Glass className="col-span-2 lg:col-span-1" aria-label="Allocation por tipo de cuenta">
+            <div className="mb-1 flex items-baseline justify-between">
+              <h2 className="text-sm font-semibold">Allocation</h2>
+              <span className="text-xs text-ink-dim">{fmtMoney(total, base, { compact: true })}</span>
+            </div>
+            {slices.length ? (
+              <PieChart slices={slices} size={130} fmtValue={(v) => fmtMoney(v, base, { compact: true })} />
+            ) : (
+              <p className="text-sm text-ink-dim">Sin cuentas de activo.</p>
+            )}
+          </Glass>
+        );
+      })()}
+
+      {/* ---- Copilot: suscripciones top 3 ---- */}
+      {cardOn(state.settings, "copilotSubs") && (() => {
+        const subs = detectSubscriptions(state.transactions, state.fx, base);
+        const top = subs.slice(0, 3);
+        const monthly = subs.reduce(
+          (s, x) => s + (x.freq === "semanal" ? x.amount * 4.33 : x.freq === "anual" ? x.amount / 12 : x.amount),
+          0
+        );
+        return (
+          <Glass className="col-span-2 lg:col-span-1" aria-label="Suscripciones top 3">
+            <div className="mb-1 flex items-baseline justify-between">
+              <h2 className="text-sm font-semibold">Suscripciones</h2>
+              {subs.length > 0 && <span className="text-xs text-ink-dim">≈ {fmtMoney(monthly, base, { compact: true })}/mes</span>}
+            </div>
+            {top.length ? (
+              <ul className="space-y-1 text-xs">
+                {top.map((s) => (
+                  <li key={s.merchant} className="flex items-center justify-between">
+                    <span className="truncate capitalize">{s.merchant}</span>
+                    <span className="ml-2 shrink-0 tabular-nums">{fmtMoney(s.amount, base, { compact: true })}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-sm text-ink-dim">Sin recurrentes detectadas.</p>
+            )}
+            <p className="mt-2 text-[10px] text-ink-dim">Ver todas en Reportes → Suscripciones.</p>
+          </Glass>
+        );
+      })()}
 
       <AnimatePresence>
         {modal === "transfer" && <TransferModal onClose={() => setModal(null)} />}
