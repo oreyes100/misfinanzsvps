@@ -9,13 +9,12 @@ import { openDb, initSchema, getUsers, replaceUsers, getSyncDoc, putSyncDoc, get
 import { mergeStates } from "../api/_merge.js";
 import { syncableHash } from "../api/_hash.js";
 import { handleGoogleImport, handleGoogleAuth, handleTelegramConfig, handleTelegram } from "./extra.js";
-import { mkdirSync, existsSync, copyFileSync, readdirSync, unlinkSync } from "node:fs";
+import { mkdirSync, copyFileSync, readdirSync, unlinkSync } from "node:fs";
 import { makeRateLimiter } from "./ratelimit.mjs";
 import { makeCircuitBreaker } from "./circuit.mjs";
 import { validateCategorizePayload, validateLearnPayload } from "./validate.mjs";
 import { checkLearnAuth } from "./auth.mjs";
 import { makeUpdateIdStore } from "./idempotency.mjs";
-import path from "node:path";
 
 mkdirSync(DATA_DIR, { recursive: true });
 
