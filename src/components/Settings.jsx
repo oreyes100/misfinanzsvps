@@ -104,6 +104,13 @@ function CloudSync() {
               }} className="text-xs">
                 ⬇ Forzar bajada
               </Btn>
+              <Btn variant="ghost" onClick={() => {
+                if (confirm("¿Re-sincronizar desde el servidor? El server es la fuente de verdad: se reemplazará el estado local divergente (W18).")) {
+                  sync.resync && sync.resync();
+                }
+              }} className="text-xs">
+                🔁 Re-sincronizar server
+              </Btn>
               <Btn variant="ghost" onClick={() => setChangingCode(true)} className="text-xs">
                 🔗 Cambiar código
               </Btn>

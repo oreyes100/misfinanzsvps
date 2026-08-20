@@ -7,6 +7,7 @@ import http from "node:http";
 import crypto from "node:crypto";
 import { openDb, initSchema, getUsers, replaceUsers, getSyncDoc, putSyncDoc, getPendings, writePendings, DATA_DIR } from "./db.mjs";
 import { mergeStates } from "../api/_merge.js";
+import { syncableHash } from "../api/_hash.js";
 import { handleGoogleImport, handleGoogleAuth, handleTelegramConfig, handleTelegram } from "./extra.js";
 import { mkdirSync } from "node:fs";
 
@@ -345,6 +346,26 @@ async function handleSync(req, res, rawBody) {
   return sendJson(res, 405, { error: "Método no permitido." });
 }
 
+async function handleSnapshot(req, res) {
+  const query = new URLSearchParams(req.url.split("?")[1] || "");
+  const code = String(query.get("id") || "").toLowerCase();
+  if (!ID_RE.test(code)) return sendJson(res, 400, { error: "Código de sincronización inválido." });
+  if (req.method !== "GET") return sendJson(res, 405, { error: "Método no permitido." });
+  try {
+    const doc = getSyncDoc(db, code);
+    if (!doc || !doc.state) return sendJson(res, 200, { found: false });
+    return sendJson(res, 200, {
+      found: true,
+      state: doc.state,
+      hash: syncableHash(doc.state),
+      syncVersion: doc.state._syncVersion ?? null,
+      updatedAt: doc.updatedAt,
+    });
+  } catch {
+    return sendJson(res, 500, { error: "Error leyendo el almacenamiento." });
+  }
+}
+
 async function handleSignup(req, res, rawBody) {
   const body = rawBody || {};
   // Step 1: request
@@ -485,6 +506,7 @@ const server = http.createServer(async (req, res) => {
   try {
     if (urlPath === "/api/users") return await handleUsers(req, res, req.method === "POST" ? await readBody(req) : null);
     if (urlPath === "/api/sync") return await handleSync(req, res, req.method === "POST" ? await readBody(req) : null);
+    if (urlPath === "/api/snapshot") return await handleSnapshot(req, res);
     if (urlPath === "/api/signup") return await handleSignup(req, res, await readBody(req));
     if (urlPath === "/api/google-import") return await routeExtra(handleGoogleImport, req, res, db);
     if (urlPath === "/api/google-auth") return await routeExtra(handleGoogleAuth, req, res, db);

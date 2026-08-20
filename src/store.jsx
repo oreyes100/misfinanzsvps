@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState } from "react";
-import { API_BASE, BASE_FX, DAY_MS, DEFAULT_CATEGORIES, categorize, cleanOrphanTransactions, stripDemoAccounts, todayISO, uid } from "./utils.js";
+import { API_BASE, BASE_FX, DAY_MS, DEFAULT_CATEGORIES, categorize, cleanOrphanTransactions, stripDemoAccounts, syncableHash, todayISO, uid } from "./utils.js";
 import { accrueInterest } from "./interest.js";
 import { migrate } from "./migrations.js";
 import useFX from "./useFX.js";
@@ -791,6 +791,10 @@ function syncableSlice(state) {
 export function StoreProvider({ children }) {
   const [state, dispatch] = useReducer(reducer, undefined, load);
 
+  // Estado fresco siempre disponible en callbacks asíncronos (evita stale closure).
+  const stateRef = useRef(state);
+  stateRef.current = state;
+
   // ---- Sincronización en la nube (opcional, por código único) ----
   const [syncId, setSyncId] = useState(() => localStorage.getItem(SYNC_KEY));
   const [syncStatus, setSyncStatus] = useState(syncId ? "pulling" : "off");
@@ -840,6 +844,52 @@ export function StoreProvider({ children }) {
     setSyncStatus("synced");
   }, []);
 
+  // W18: convergencia autoritativa. El server es la única fuente de verdad.
+  // 1) GET /api/snapshot (hash canónico + estado completo).
+  // 2) Si el hash difiere del local → push de cambios locales pendientes (si
+  //    los hay), re-fetch del snapshot, y REEMPLAZO del estado local.
+  // 3) Si el hash coincide → convergido.
+  // Conserva slices volátiles locales (fx/priceHistory/goldPriceEUR).
+  const resyncNow = useCallback(async (syncIdArg) => {
+    const id = syncIdArg || syncId;
+    if (!id) return { ok: false };
+    let snap = null;
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 15000);
+      const url = `${API_BASE}/api/snapshot?id=${encodeURIComponent(id)}&t=${Date.now()}`;
+      const r = await fetch(url, { signal: controller.signal, cache: "no-store" });
+      clearTimeout(timer);
+      if (!r.ok) return { ok: false, status: r.status };
+      snap = await r.json();
+    } catch {
+      return { ok: false };
+    }
+    if (!snap || !snap.found) return { ok: false, missing: true };
+
+    const localHash = await syncableHash(stateRef.current);
+    if (snap.hash === localHash) return { ok: true, converged: true };
+
+    // Divergido: subir cambios locales pendientes antes de reemplazar
+    // (el merge del server está protegido por tombstones + _updatedAt).
+    if (syncableRef.current !== lastPushedRef.current) {
+      await pushNow(id).catch(() => {});
+      try {
+        const r2 = await fetch(`${API_BASE}/api/snapshot?id=${encodeURIComponent(id)}&t=${Date.now()}`, { cache: "no-store" });
+        if (r2.ok) {
+          const s2 = await r2.json();
+          if (s2.found) snap = s2;
+        }
+      } catch { /* usar snapshot original */ }
+    }
+
+    const cur = stateRef.current;
+    const volatile = { fx: cur.fx, priceHistory: cur.priceHistory, goldPriceEUR: cur.goldPriceEUR };
+    skipPushRef.current = true;
+    dispatch({ type: "hydrate", state: { ...migrate(snap.state), ...volatile } });
+    return { ok: true, replaced: true, hash: snap.hash };
+  }, [syncId, pushNow]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Flush al salir/ocultar la pestaña: si hay cambios sin subir (p. ej. una
   // cuenta recién creada y el debounce de 1.5s aún no disparó), enviarlos ya
   // con keepalive para que la petición sobreviva a la recarga/cierre. Sin esto,
@@ -878,6 +928,15 @@ export function StoreProvider({ children }) {
       (async () => {
         setSyncStatus("pulling");
         try {
+          // W18: primero convergencia autoritativa vía snapshot (server = verdad).
+          const res = await resyncNow(syncId);
+          if (cancelled) return;
+          if (res && res.ok) {
+            cloudReadyRef.current = true; // pull OK → ya es seguro subir cambios.
+            setSyncStatus("synced");
+            return;
+          }
+          // Snapshot no disponible (server viejo) o sin estado → fallback legacy.
           const controller = new AbortController();
           const id = setTimeout(() => controller.abort(), 15000); // timeout más generoso
           const url = `${API_BASE}/api/sync?id=${encodeURIComponent(syncId)}&t=${Date.now()}`;
@@ -913,7 +972,7 @@ export function StoreProvider({ children }) {
         }
       })();
       return () => { cancelled = true; };
-    }, [syncRetry, syncId]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [syncRetry, syncId, resyncNow]); // eslint-disable-line react-hooks/exhaustive-deps
 
       // Subida automática con debounce cuando cambian datos relevantes.
   useEffect(() => {
@@ -994,12 +1053,25 @@ export function StoreProvider({ children }) {
       setSyncStatus("pulling");
       pullingRef.current = true;
       try {
-        const url = `${API_BASE}/api/sync?id=${encodeURIComponent(syncId)}&t=${Date.now()}`;
-        const r = await fetch(url, { cache: "no-store" });
-        if (!r.ok) { setSyncStatus("error"); return; }
-        const data = await r.json();
-        if (data.found && data.state) {
-          dispatch({ type: "hydrate", state: migrate(data.state) });
+        let found = false;
+        let state = null;
+        const sUrl = `${API_BASE}/api/snapshot?id=${encodeURIComponent(syncId)}&t=${Date.now()}`;
+        const sr = await fetch(sUrl, { cache: "no-store" });
+        if (sr.ok) {
+          const snap = await sr.json();
+          if (snap.found) { found = true; state = snap.state; }
+        }
+        if (!found) {
+          const url = `${API_BASE}/api/sync?id=${encodeURIComponent(syncId)}&t=${Date.now()}`;
+          const r = await fetch(url, { cache: "no-store" });
+          if (!r.ok) { setSyncStatus("error"); return; }
+          const data = await r.json();
+          if (data.found) { found = true; state = data.state; }
+        }
+        if (found && state) {
+          const cur = stateRef.current;
+          const volatile = { fx: cur.fx, priceHistory: cur.priceHistory, goldPriceEUR: cur.goldPriceEUR };
+          dispatch({ type: "hydrate", state: { ...migrate(state), ...volatile } });
           dispatch({ type: "clean_interest_duplicates" });
           setSyncStatus("synced");
           // Subir estado ya limpio para que la nube también tenga esta versión
@@ -1018,8 +1090,12 @@ export function StoreProvider({ children }) {
         cloudReadyRef.current = true;
       }
     },
+    // Re-sincronizar desde el servidor (W18): dispara la convergencia autoritativa.
+    resync: () => {
+      if (syncId && !pullingRef.current) setSyncRetry((n) => n + 1);
+    },
     retry: () => setSyncRetry(n => n + 1),
-  }), [syncId, syncStatus, pushNow]);
+  }), [syncId, syncStatus, pushNow, resyncNow]);
 
   // Persistencia local más inmediata (100ms debounce + inmediato en unload)
   const stableSave = useMemo(() => {

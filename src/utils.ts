@@ -9,6 +9,40 @@ import type {
 const isNative = typeof window !== "undefined" && window.location.protocol === "capacitor:";
 export const API_BASE: string = isNative ? "https://mis-finazas-gold.vercel.app" : "";
 
+// ---------- Hash de convergencia (W18: server = única fuente de verdad) ----------
+// El cliente y el server computan el MISMO hash sobre el MISMO slice canónico
+// (claves ordenadas) para decidir si el estado local está divergido.
+
+export const SYNCABLE_KEYS = [
+  "settings", "accounts", "assets", "transactions", "scheduled", "categories",
+  "transferAliases", "categoryAliases", "statementPatterns", "reviewQueue",
+  "_syncVersion", "deletedTransactions", "deletedAccountIds", "deletedAssetIds",
+] as const;
+
+/** Serialización canónica: claves ordenadas de forma recursiva. */
+export function stableStringify(value: unknown): string {
+  if (value === undefined) return "null";
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return "[" + value.map(stableStringify).join(",") + "]";
+  const obj = value as Record<string, unknown>;
+  return "{" + Object.keys(obj).sort().map((k) => JSON.stringify(k) + ":" + stableStringify(obj[k])).join(",") + "}";
+}
+
+/** Subconjunto del estado que viaja a la nube (mismo slice que syncableSlice). */
+export function syncableSliceOf(state: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const k of SYNCABLE_KEYS) if (k in state) out[k] = state[k];
+  return out;
+}
+
+/** SHA-256 hex del slice canónico (cliente: webcrypto). */
+export async function syncableHash(state: Record<string, unknown>): Promise<string> {
+  const text = stableStringify(syncableSliceOf(state));
+  const data = new TextEncoder().encode(text);
+  const buf = await crypto.subtle.digest("SHA-256", data);
+  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 // ---------- Monedas y conversión ----------
 
 export const CURRENCIES: Currency[] = ["EUR", "USD", "GBP", "MXN", "BTC", "ETH"];
