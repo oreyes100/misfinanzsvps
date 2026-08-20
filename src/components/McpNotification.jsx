@@ -1,19 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useStore } from "../store.jsx";
-
-// ═══ Coalescencia de notificaciones (FASE 2) ═══
-const DEBOUNCE_MS = 5000;            // 5s de debounce antes de mostrar
-const AUTO_DISMISS_MS = 5000;        // Auto-cierre tras 5s
-const MIN_TIME_BETWEEN_NOTIFS_MS = 30_000; // 30s entre notificaciones
-const MAX_NOTIFS_PER_DAY = 5;        // Máx notificaciones visibles por día
-const DAY_KEY = "mis-finazas-mcp-notif-day";
-const COUNT_KEY = "mis-finazas-mcp-notif-count";
-
-function todayKey() {
-  const d = new Date();
-  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
-}
+import {
+  DEBOUNCE_MS,
+  AUTO_DISMISS_MS,
+  MAX_NOTIFS_PER_DAY,
+  DAY_KEY,
+  COUNT_KEY,
+  todayKey,
+  shouldShowNotification,
+} from "../notificationPolicy.js";
 
 /**
  * Notificación mínima no-invasiva: solo un contador que redirige al menú MCP.
@@ -46,8 +42,16 @@ export default function McpNotification({ tab, onNavigate }) {
       try { localStorage.setItem(DAY_KEY, tk); localStorage.setItem(COUNT_KEY, "0"); } catch {}
     }
 
+    const show = shouldShowNotification({
+      pendingCount,
+      inMcp,
+      visible,
+      usedToday: usedRef.current,
+      lastShownAt: lastShownRef.current,
+    });
+
     // Supresión contextual: usuario en el menú, sin pendientes o límite diario.
-    if (inMcp || pendingCount === 0 || usedRef.current >= MAX_NOTIFS_PER_DAY) {
+    if (!show) {
       setVisible(false);
       return;
     }
@@ -55,12 +59,6 @@ export default function McpNotification({ tab, onNavigate }) {
     // Coalescencia: si ya está visible, solo actualizar el contador.
     if (visible) {
       setCount(pendingCount);
-      return;
-    }
-
-    // 30s mínimo entre notificaciones.
-    if (Date.now() - lastShownRef.current < MIN_TIME_BETWEEN_NOTIFS_MS) {
-      setVisible(false);
       return;
     }
 

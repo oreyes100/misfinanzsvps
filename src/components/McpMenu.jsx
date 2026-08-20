@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { useStore } from "../store.jsx";
 import { Btn, Field, Glass, Money } from "./UI.jsx";
@@ -481,6 +481,46 @@ function EditPanel({ item, state, dispatch, isStillPending, onSave, onClose }) {
   const [convertTo, setConvertTo] = useState(""); // "" | accountId destino
   const [conflict, setConflict] = useState(null);
   const [semanticSuggestion, setSemanticSuggestion] = useState(null);
+  const panelRef = useRef(null);
+
+  // FASE 6: dialog accesible — tecla Esc para cerrar, focus trap (WCAG 2.2
+  // 2.1.1 teclado, 2.4.3 orden de foco) y devolución de foco al cerrar.
+  useEffect(() => {
+    const prevActive = document.activeElement;
+    const panel = panelRef.current;
+    const focusables = () => {
+      if (!panel) return [];
+      return [...panel.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')]
+        .filter((el) => !el.hasAttribute("disabled"));
+    };
+    const onKeyDown = (e) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onClose();
+        return;
+      }
+      if (e.key !== "Tab") return;
+      const els = focusables();
+      if (!els.length) {
+        e.preventDefault();
+        return;
+      }
+      const first = els[0];
+      const last = els[els.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      if (prevActive && typeof prevActive.focus === "function") prevActive.focus();
+    };
+  }, [onClose]);
 
   // Top of Mind A: sugerencia semántica (embeddings en el backend) al abrir la edición.
   // Solo se muestra como badge (no se aplica automáticamente) para que el usuario decida.
@@ -538,7 +578,7 @@ function EditPanel({ item, state, dispatch, isStillPending, onSave, onClose }) {
   const meta = SOURCE_META[item.source] || { icon: "📦", label: "MCP" };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-label="Corregir transacción">
+    <div ref={panelRef} className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-label="Corregir transacción">
       <Glass className="glass-solid w-full max-w-md !rounded-2xl p-5">
         <h3 className="mb-1 text-base font-semibold">✏️ Corregir transacción</h3>
         <p className="mb-4 text-xs text-ink-dim">{item.preview?.description} · <Money value={item.preview?.amount} /></p>
