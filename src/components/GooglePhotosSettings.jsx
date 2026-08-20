@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useStore } from "../store.jsx";
-import { isConfigured, revokeTokens, startAuth } from "../services/googlePhotos.js";
+import { isConfigured, isServerConfigured, revokeTokens, startAuth } from "../services/googlePhotos.js";
 import { Btn, Glass } from "./UI.jsx";
 import PhotoSelector from "./PhotoSelector.jsx";
 
@@ -23,6 +23,12 @@ export default function GooglePhotosSettings() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
   const [selectorOpen, setSelectorOpen] = useState(false);
+  const [serverConfigured, setServerConfigured] = useState(null);
+
+  useEffect(() => {
+    if (isConfigured()) { setServerConfigured(true); return; }
+    isServerConfigured().then(setServerConfigured);
+  }, []);
 
   const flash = (tone, text) => { setMsg({ tone, text }); setTimeout(() => setMsg(null), 5000); };
 
@@ -56,7 +62,9 @@ export default function GooglePhotosSettings() {
         </span>
       </div>
 
-      {!isConfigured() ? (
+      {serverConfigured === null ? (
+        <p className="text-sm text-ink-dim">Verificando configuración de Google…</p>
+      ) : !serverConfigured && !isConfigured() ? (
         <div className="space-y-2 text-sm">
           <p className="text-ink-dim">
             Esta integración lee tu <strong className="text-ink">Google Photos</strong> para detectar recibos,

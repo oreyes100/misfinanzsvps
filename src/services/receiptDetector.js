@@ -1,8 +1,9 @@
-// receiptDetector.js — Detección heurística multi-capa de imágenes financieras.
+// receiptDetector.js — Detección heurística multi-capa de imágenes financieras (W3 Fase 2).
 //
 // Capa 1: nombre de archivo (recibo/factura/EDC/comprobante…).
-// Capa 2: señales de texto OCR (palabras clave por tipo).
-// Capa 3: tamaño del texto extraído (un recibo real rara vez son 2 palabras).
+// Capa 2: aspecto (recibos verticales, ratio >1.2).
+// Capa 3: señales de texto OCR (palabras clave por tipo).
+// Capa 4: tamaño del texto extraído (un recibo real rara vez son 2 palabras).
 //
 // Funciones puras y deterministas → testeables en Node. Alimenta al escáner
 // de Google Photos para decidir qué fotos merecen OCR completo.
@@ -39,6 +40,25 @@ export function receiptFileNameHint(name = "") {
   const n = norm(name);
   if (!n) return false;
   return FILE_HINTS.some((h) => n.includes(h));
+}
+
+/** Score por metadata de imagen (W3 Fase 2): vertical estrecho → +30. */
+export function scoreReceiptCandidate(mediaItem) {
+  let score = 0;
+  const w = mediaItem?.mediaMetadata?.width;
+  const h = mediaItem?.mediaMetadata?.height;
+  if (w && h) {
+    const ratio = h / w;
+    if (ratio > 1.2) score += 30;
+    // apaisado extremo (paisaje) penaliza
+    if (ratio < 0.8) score -= 10;
+  }
+  if (receiptFileNameHint(mediaItem?.filename || "")) score += 15;
+  return score;
+}
+
+export function isLikelyReceipt(mediaItem) {
+  return scoreReceiptCandidate(mediaItem) >= 30;
 }
 
 function wordHits(text) {

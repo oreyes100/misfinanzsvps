@@ -1,10 +1,9 @@
-// googlePhotos.js — OAuth 2.0 PKCE (S256) contra Google Photos, 100% client-side.
+// googlePhotos.js — OAuth 2.0 PKCE (S256) contra Google Photos (W3 Photo Vault).
 //
-// Flujo full-page redirect: el usuario pulsa "Conectar" → startAuth() guarda el
-// PKCE (verifier+state) y navega a la pantalla de Google → Google vuelve a
-// `${origin}/oauth/callback?code=...&state=...` → nginx sirve el SPA (try_files)
-// → App.jsx llama handleOAuthCallback() → exchange por tokens → se cifran con
-// tokenSecurity. Solo los metadatos viajan a la nube; los tokens NUNCA.
+// Flujo: startAuth() genera PKCE y navega a Google → Google vuelve a
+// `${origin}/oauth/callback?code=...&state=...` → App.jsx handleOAuthCallback()
+// → POST /api/google-token (server hace code+verifier→tokens, nunca el cliente)
+// → se cifran con tokenSecurity. Client secret nunca en bundle.
 
 import { clearTokens, decryptTokens, encryptTokens } from "./tokenSecurity.js";
 import { currentSession } from "../auth.js";
@@ -23,8 +22,33 @@ export function clientId() {
   return (typeof import.meta !== "undefined" && import.meta.env?.VITE_GOOGLE_PHOTOS_CLIENT_ID) || "";
 }
 
+/** Obtiene el Client ID desde Vite env o, si está vacío, desde el server (/api/google-config). */
+export async function getClientId() {
+  const vite = clientId();
+  if (vite) return vite;
+  try {
+    const r = await fetch("/api/google-config");
+    if (r.ok) {
+      const data = await r.json();
+      if (data.clientId) return data.clientId;
+    }
+  } catch {}
+  return "";
+}
+
 export function isConfigured() {
   return !!clientId();
+}
+
+export async function isServerConfigured() {
+  try {
+    const r = await fetch("/api/google-config");
+    if (r.ok) {
+      const data = await r.json();
+      return !!data.configured;
+    }
+  } catch {}
+  return isConfigured();
 }
 
 /** URI de retorno. El server sirve index.html para cualquier ruta (try_files). */
@@ -58,11 +82,13 @@ async function codeChallenge(verifier) {
 
 /**
  * Inicia el flujo OAuth: genera PKCE, lo persiste y navega a Google.
+ * Usa VITE env o, si está vacío, el GOOGLE_CLIENT_ID del server (reutiliza el de Drive).
+ * Scope = photoslibrary.readonly únicamente (privacidad por diseño).
  * Lanza si no hay client ID configurado.
  */
 export async function startAuth() {
-  const cid = clientId();
-  if (!cid) throw new Error("VITE_GOOGLE_PHOTOS_CLIENT_ID no está configurado.");
+  const cid = await getClientId();
+  if (!cid) throw new Error("Google Client ID no configurado (VITE_GOOGLE_PHOTOS_CLIENT_ID o GOOGLE_CLIENT_ID en server).");
   const verifier = generateVerifier();
   const state = randomHex(16);
   const challenge = await codeChallenge(verifier);
@@ -71,7 +97,7 @@ export async function startAuth() {
     client_id: cid,
     redirect_uri: redirectUri(),
     response_type: "code",
-    scope: `${PHOTOS_SCOPE} openid email`,
+    scope: PHOTOS_SCOPE,
     access_type: "offline",
     prompt: "consent",
     state,
@@ -111,29 +137,26 @@ export async function handleOAuthCallback(search = window.location.search) {
   if (Date.now() - pkce.ts > PKCE_MAX_AGE_MS) return { ok: false, reason: "expired" };
   localStorage.removeItem(PKCE_KEY);
 
-  const cid = clientId();
   const username = currentSession()?.username;
-  if (!cid) return { ok: false, reason: "not_configured" };
   if (!username) return { ok: false, reason: "no_session" };
 
-  const params = new URLSearchParams({
-    code,
-    client_id: cid,
-    redirect_uri: redirectUri(),
-    grant_type: "authorization_code",
-    code_verifier: pkce.verifier,
-  });
+  // Intercambio code→tokens EN EL SERVER (nunca en cliente) — Fase 1
   let r;
   try {
-    r = await fetch(TOKEN_ENDPOINT, {
+    r = await fetch("/api/google-token", {
       method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: params.toString(),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code, verifier: pkce.verifier, redirect_uri: redirectUri() }),
     });
   } catch {
     return { ok: false, reason: "network_error" };
   }
-  if (!r.ok) return { ok: false, reason: "exchange_failed", message: `token ${r.status}` };
+  if (!r.ok) {
+    let detail = "";
+    try { const j = await r.json(); detail = j.error || j.detail || ""; } catch {}
+    if (r.status === 503) return { ok: false, reason: "not_configured", message: detail };
+    return { ok: false, reason: "exchange_failed", message: detail || `token ${r.status}` };
+  }
 
   let data;
   try {

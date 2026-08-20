@@ -547,6 +547,15 @@ const server = http.createServer(async (req, res) => {
     if (urlPath === "/api/google-auth") return await routeExtra(handleGoogleAuth, req, res, db);
     if (urlPath === "/api/telegram") return await routeExtra(handleTelegram, req, res, db);
     if (urlPath === "/api/telegram-config") return await routeExtra(handleTelegramConfig, req, res, db);
+    // W3 Photo Vault: PKCE token exchange EN EL SERVER (nunca en cliente)
+    if (urlPath === "/api/google-token") {
+      const { handleGoogleToken } = await import("./googleToken.mjs");
+      return await handleGoogleToken(req, res, await readBody(req).catch(() => null));
+    }
+    if (urlPath === "/api/google-config" && req.method === "GET") {
+      const { handleGoogleConfig } = await import("./googleToken.mjs");
+      return await handleGoogleConfig(req, res);
+    }
     if (urlPath === "/api/categorize") {
       const rl = categorizeLimiter.isAllowed(clientIp(req));
       if (!rl.allowed) {
