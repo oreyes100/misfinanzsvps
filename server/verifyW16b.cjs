@@ -1,0 +1,16 @@
+const { DatabaseSync } = require("node:sqlite");
+const db = new DatabaseSync("data/misfinanzas.db");
+const bal = db.prepare("SELECT id, name, balance FROM accounts WHERE id IN ('14035tdz','vscgxf8c','xh8e8mai','nfwv3p02','78qi92ap')").all();
+console.log("balances:", JSON.stringify(bal));
+const sd = db.prepare("SELECT LENGTH(state_json) len, updated_at FROM sync_docs ORDER BY updated_at DESC LIMIT 1").get();
+console.log("sync_docs:", JSON.stringify(sd));
+const state = JSON.parse(db.prepare("SELECT state_json s FROM sync_docs ORDER BY updated_at DESC LIMIT 1").get().s);
+const balSt = state.state.accounts.filter(a=>['14035tdz','vscgxf8c','xh8e8mai','nfwv3p02','78qi92ap'].includes(a.id)).map(a=>[a.id,a.balance]);
+console.log("state balances:", JSON.stringify(balSt));
+const rvState = state.state.transactions.filter(t=>t.id.startsWith('rv-w16-'));
+console.log("rv in state:", rvState.length, "sum:", rvState.reduce((s,t)=>s+t.amount,0).toFixed(2));
+const last = state.state.transactions.filter(t=>t.id.startsWith('rv-w16-')).slice(-1);
+console.log("sample rv:", JSON.stringify(last));
+const stt = state.state.transactions.filter(t=>t.id.startsWith('rv-w16-')).map(t=>[t.accountId,t.amount,t.date]);
+console.log("rv detail:", JSON.stringify(stt));
+console.log("syncVersion:", state.state._syncVersion);

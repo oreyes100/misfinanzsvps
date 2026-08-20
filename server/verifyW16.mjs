@@ -1,0 +1,13 @@
+const { DatabaseSync } = require("node:sqlite");
+const db = new DatabaseSync("data/misfinanzas.db");
+const rv = db.prepare("SELECT COUNT(*) c, ROUND(SUM(amount),2) s FROM transactions WHERE id LIKE 'rv-w16-%'").get();
+console.log("rv-w16:", JSON.stringify(rv));
+const bal = db.prepare("SELECT account_id, balance FROM accounts WHERE account_id IN ('14035tdz','vscgxf8c','xh8e8mai','nfwv3p02','78qi92ap')").all();
+console.log("balances:", JSON.stringify(bal));
+const sd = db.prepare("SELECT LENGTH(state_json) len, updated_at FROM sync_docs ORDER BY updated_at DESC LIMIT 1").get();
+console.log("sync_docs:", JSON.stringify(sd));
+const state = JSON.parse(db.prepare("SELECT state_json s FROM sync_docs ORDER BY updated_at DESC LIMIT 1").get().s);
+const balSt = state.state.accounts.filter(a=>['14035tdz','vscgxf8c','xh8e8mai','nfwv3p02','78qi92ap'].includes(a.id)).map(a=>[a.id,a.balance]);
+console.log("state balances:", JSON.stringify(balSt));
+const rvState = state.state.transactions.filter(t=>t.id.startsWith('rv-w16-'));
+console.log("rv in state:", rvState.length, "sum:", rvState.reduce((s,t)=>s+t.amount,0).toFixed(2));
