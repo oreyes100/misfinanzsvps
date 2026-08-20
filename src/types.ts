@@ -150,6 +150,7 @@ export interface Settings {
   spendLimit: number;
   biometric: boolean;
   dashboardCards?: Record<string, boolean>;
+  budgets?: { monthly: number };
 }
 
 // ---------- Aprendizaje ----------

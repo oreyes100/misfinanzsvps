@@ -1,4 +1,10 @@
 // budgets.ts — Presupuestos con rollover (regla estilo YNAB/Copilot)
+import type { Settings } from "./types.ts";
+
+export interface BudgetSettings {
+  monthly: number;
+}
+
 export interface RolloverResult {
   month: string;
   openingBudget: number;
@@ -29,4 +35,16 @@ export function rolloverBudget(month: string, expenses: number, openingBudget: n
  */
 export function nextMonthBudget(month: string, monthlyAllocation: number, carry: number): number {
   return monthlyAllocation + carry;
+}
+
+/** Lee el presupuesto mensual persistido (null si aún no se ha configurado). */
+export function monthlyBudgetOf(settings: Settings | undefined): number | null {
+  return typeof settings?.budgets?.monthly === "number" && Number.isFinite(settings.budgets.monthly)
+    ? settings.budgets.monthly
+    : null;
+}
+
+/** Patch de settings para guardar el presupuesto mensual (persiste vía update_settings). */
+export function withMonthlyBudget(settings: Settings | undefined, monthly: number): { budgets: BudgetSettings } {
+  return { budgets: { monthly: Math.max(0, monthly || 0) } };
 }

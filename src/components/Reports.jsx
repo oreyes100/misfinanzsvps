@@ -5,7 +5,7 @@ import { catColor, convert, fmtMoney, fmtPct, downloadReportCSV, downloadReportP
 import { Glass, Btn, inputCls } from "./UI.jsx";
 import { BarChart, LineChart, PieChart } from "./Charts.jsx";
 import { ALLOC_COLORS, allocationByType, cashflowByMonth, detectSubscriptions, spendingLine, toBase } from "../reports.js";
-import { rolloverBudget } from "../budgets.js";
+import { rolloverBudget, monthlyBudgetOf, withMonthlyBudget } from "../budgets.js";
 
 const PERIODS = [
   { id: 3, label: "3 meses" },
@@ -233,7 +233,7 @@ function SpendingTab({ state, base }) {
 }
 
 /** Rollovers: presupuesto mensual con carry-over (regla estilo YNAB/Copilot). */
-function RolloversTab({ state, base }) {
+function RolloversTab({ state, base, dispatch }) {
   const now = new Date();
   const expenseOf = (key) => {
     let sum = 0;
@@ -253,7 +253,7 @@ function RolloversTab({ state, base }) {
   }
   const prevExpenses = keys.slice(0, 5).map((k) => expenseOf(k.key));
   const defaultAlloc = Math.round(prevExpenses.reduce((s, v) => s + v, 0) / Math.max(1, prevExpenses.length));
-  const [allocation, setAllocation] = useState(defaultAlloc);
+  const allocation = monthlyBudgetOf(state.settings) ?? defaultAlloc;
 
   const rows = [];
   let carry = 0;
@@ -278,7 +278,7 @@ function RolloversTab({ state, base }) {
               min="0"
               step="50"
               value={allocation}
-              onChange={(e) => setAllocation(Math.max(0, Number(e.target.value) || 0))}
+              onChange={(e) => dispatch({ type: "update_settings", patch: withMonthlyBudget(state.settings, Number(e.target.value) || 0) })}
               className={inputCls + " !w-40"}
               aria-label="Presupuesto mensual"
             />
@@ -330,7 +330,7 @@ function RolloversTab({ state, base }) {
 
 /** Reportes históricos estilo corporativo, adaptado a finanzas personales. */
 export default function Reports() {
-  const { state } = useStore();
+  const { state, dispatch } = useStore();
   const [period, setPeriod] = useState(6);
   const [gran, setGran] = useState('mes');
   const [startDate, setStartDate] = useState('');
@@ -864,7 +864,7 @@ export default function Reports() {
       {tab === "allocation" && <AllocationTab state={state} base={base} />}
       {tab === "subs" && <SubscriptionsTab state={state} base={base} />}
       {tab === "line" && <SpendingTab state={state} base={base} />}
-      {tab === "rollovers" && <RolloversTab state={state} base={base} />}
+      {tab === "rollovers" && <RolloversTab state={state} base={base} dispatch={dispatch} />}
     </div>
   );
 }

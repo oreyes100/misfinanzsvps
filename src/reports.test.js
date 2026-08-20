@@ -8,7 +8,7 @@ import {
   spendingLine,
   toBase,
 } from "./reports.ts";
-import { rolloverBudget, nextMonthBudget } from "./budgets.ts";
+import { rolloverBudget, nextMonthBudget, monthlyBudgetOf, withMonthlyBudget } from "./budgets.ts";
 
 const FX = { EUR: 1, USD: 0.92, MXN: 0.05, GBP: 1.17, BTC: 61500, ETH: 3120 };
 
@@ -198,5 +198,30 @@ describe("rolloverBudget", () => {
   });
   it("siguiente mes = asignación + carry", () => {
     expect(nextMonthBudget("2026-09", 500, 200)).toBe(700);
+  });
+});
+
+describe("persistencia de presupuesto (ciclo save/load)", () => {
+  it("devuelve null cuando no hay presupuesto persistido", () => {
+    expect(monthlyBudgetOf({})).toBeNull();
+    expect(monthlyBudgetOf(undefined)).toBeNull();
+    expect(monthlyBudgetOf({ budgets: {} })).toBeNull();
+  });
+  it("guarda y recupera el presupuesto", () => {
+    const settings = { baseCurrency: "EUR", spendLimit: 0, biometric: false };
+    const patch = withMonthlyBudget(settings, 1200);
+    const saved = { ...settings, ...patch };
+    expect(monthlyBudgetOf(saved)).toBe(1200);
+  });
+  it("el patch es directamente usable por update_settings (shallow merge)", () => {
+    const settings = { baseCurrency: "EUR", spendLimit: 0, biometric: false };
+    const patch = withMonthlyBudget(settings, 1500);
+    const merged = { ...settings, ...patch };
+    expect(merged.budgets).toEqual({ monthly: 1500 });
+    expect(monthlyBudgetOf(merged)).toBe(1500);
+  });
+  it("clampa negativos y no aplica NaN", () => {
+    expect(withMonthlyBudget(undefined, -100).budgets.monthly).toBe(0);
+    expect(withMonthlyBudget(undefined, NaN).budgets.monthly).toBe(0);
   });
 });
