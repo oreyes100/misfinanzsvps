@@ -394,6 +394,25 @@ async function handleSnapshot(req, res) {
   }
 }
 
+async function handleSyncVersion(req, res) {
+  const query = new URLSearchParams(req.url.split("?")[1] || "");
+  const code = String(query.get("id") || "").toLowerCase();
+  if (!ID_RE.test(code)) return sendJson(res, 400, { error: "Código de sincronización inválido." });
+  if (req.method !== "GET") return sendJson(res, 405, { error: "Método no permitido." });
+  try {
+    const doc = getSyncDoc(db, code);
+    if (!doc || !doc.state) return sendJson(res, 200, { found: false });
+    return sendJson(res, 200, {
+      found: true,
+      syncVersion: doc.state._syncVersion ?? null,
+      hash: syncableHash(doc.state),
+      updatedAt: doc.updatedAt,
+    });
+  } catch {
+    return sendJson(res, 500, { error: "Error leyendo el almacenamiento." });
+  }
+}
+
 async function handleSignup(req, res, rawBody) {
   const body = rawBody || {};
   // Step 1: request
@@ -542,6 +561,7 @@ const server = http.createServer(async (req, res) => {
       }
       return await handleSnapshot(req, res);
     }
+    if (urlPath === "/api/sync-version") return await handleSyncVersion(req, res);
     if (urlPath === "/api/signup") return await handleSignup(req, res, await readBody(req));
     if (urlPath === "/api/google-import") return await routeExtra(handleGoogleImport, req, res, db);
     if (urlPath === "/api/google-auth") return await routeExtra(handleGoogleAuth, req, res, db);

@@ -195,6 +195,8 @@ export interface AppState {
   priceHistory: PriceHistory;
   goldPriceEUR: number;
   _syncVersion: number;
+  _isDemo?: boolean;
+  _demoSeededAt?: number;
   // Para que los deletes de transacciones no reaparezcan por merge de nube
   deletedTransactions?: Record<string, number>; // txId -> delete timestamp (ms)
   deletedAccountIds?: string[]; // IDs de cuentas explícitamente borradas por el usuario

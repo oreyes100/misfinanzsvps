@@ -64,6 +64,8 @@ export const SEED: AppState = {
   },
   goldPriceEUR: 68.4,
   _syncVersion: 0,
+  _isDemo: true as boolean,
+  _demoSeededAt: Date.now() as number,
   deletedAccountIds: [] as string[],
 };
 
@@ -89,6 +91,13 @@ function mergeByID<T extends { id: string; _updatedAt?: number }>(local: T[], cl
   return changed ? [...map.values()] : local;
 }
 
+const REAL_ACTIONS = new Set([
+  "add_transaction", "update_transaction", "delete_transaction", "transfer", "schedule_transfer",
+  "add_account", "update_account", "delete_account", "add_category", "update_category", "delete_category",
+  "add_crypto", "update_crypto", "delete_crypto", "add_realestate", "update_realestate", "delete_realestate",
+  "add_depreciating", "update_depreciating", "delete_depreciating", "set_limit", "set_base_currency", "update_settings",
+]);
+
 function innerReducer(state: AppState, action: Action): AppState {
   switch (action.type) {
     case "hydrate": {
@@ -100,6 +109,7 @@ function innerReducer(state: AppState, action: Action): AppState {
       if (cleaned && cleaned.deletedTransactions && Array.isArray(cleaned.transactions)) {
         cleaned = { ...cleaned, transactions: cleaned.transactions.filter((t: any) => !cleaned.deletedTransactions[t.id]) };
       }
+      // hydrate respeta _isDemo del origen; si es demo y el local ya es real, no reintroduce demo (manejado en store resync)
       return cleaned;
     }
 
@@ -470,10 +480,16 @@ function innerReducer(state: AppState, action: Action): AppState {
 export function reducer(state: AppState, action: Action): AppState {
   const skipVersion: Action["type"][] = ["hydrate", "update_fx", "accrue"];
   const result = innerReducer(state, action);
-  if (result !== state && !skipVersion.includes(action.type)) {
-    return { ...result, _syncVersion: (result._syncVersion || 0) + 1 };
+  // W21 Fase 1: cualquier dato real limpia el flag demo (solo si hubo cambio)
+  let finalResult = result;
+  if (result !== state && result._isDemo && REAL_ACTIONS.has(action.type as string)) {
+    const { _isDemo, _demoSeededAt, ...rest } = result as any;
+    finalResult = { ...rest, _isDemo: false, _demoSeededAt: undefined } as AppState;
   }
-  return result;
+  if (finalResult !== state && !skipVersion.includes(action.type)) {
+    return { ...finalResult, _syncVersion: (finalResult._syncVersion || 0) + 1 };
+  }
+  return finalResult;
 }
 
 // ---------- Selectores ----------

@@ -7,6 +7,7 @@ import { Btn, Field, Glass, inputCls } from "./UI.jsx";
 import TelegramAgent from "./TelegramAgent.jsx";
 import Users from "./Users.jsx";
 import GooglePhotosSettings from "./GooglePhotosSettings.jsx";
+import { getLastResync } from "../syncHealth.js";
 
 const SYNC_LABEL = {
   off: ["Desactivada", "text-ink-dim"],
@@ -125,6 +126,25 @@ function CloudSync() {
               ⚠ Error de conexión — Reintentar
             </Btn>
           )}
+          {(() => {
+            const last = getLastResync();
+            if (!last) return null;
+            const age = (() => { const d = Date.now() - new Date(last.at).getTime(); if (d < 60000) return `hace ${Math.floor(d/1000)}s`; if (d < 3600000) return `hace ${Math.floor(d/60000)}m`; return `hace ${Math.floor(d/3600000)}h`; })();
+            const isDemo = (last.motivos || []).includes("local_is_demo");
+            return (
+              <div className="rounded-xl border border-white/10 bg-white/5 p-2 text-xs">
+                <p className="flex items-center justify-between">
+                  <span className="font-medium">Última sincro: {age} ({last.reason})</span>
+                  <span className={`rounded-full px-2 py-0.5 text-[10px] ${isDemo ? "bg-loss/15 text-loss" : "bg-gain/15 text-gain"}`}>{isDemo ? "auto-reparado demo" : "convergido"}</span>
+                </p>
+                <p className="mt-1 text-ink-dim">Motivos: {(last.motivos || []).join(", ") || "—"} · v {String(last.fromVersion ?? "—")}→{String(last.toVersion ?? "—")} · {last.hash ? last.hash.slice(0, 8) : "—"}</p>
+                <div className="mt-2 flex gap-2">
+                  <Btn variant="ghost" onClick={() => sync.resync && sync.resync()} className="text-xs">🔁 Re-sincronizar ahora</Btn>
+                  <Btn variant="ghost" onClick={() => alert(JSON.stringify(last, null, 2))} className="text-xs">📋 Ver diagnóstico</Btn>
+                </div>
+              </div>
+            );
+          })()}
           <p className="text-[10px] text-ink-dim/50 tabular-nums">
             Bundle: {typeof __BUILD_TIME__ !== "undefined" ? new Date(__BUILD_TIME__).toLocaleString("es-MX") : "desconocido"}
           </p>

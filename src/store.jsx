@@ -8,6 +8,7 @@ import { createPersistenceOrchestrator } from "./mcp/persistence-integration.js"
 import { enqueueItem, acceptItem, dismissItem, acceptAllReviewable, dismissAll, cleanupReviewQueue, buildUnreviewedItems } from "./review.js";
 import { pushPipelineEvents } from "./utils/pipelineDiagnostics.js";
 import { editTransferPair, convertToTransfer, convertFromTransfer, buildTransferPair } from "./transfers.js";
+import { diagnoseDivergence, shouldAutoReplace, recordResync } from "./syncHealth.ts";
 
 export { accrueInterest };
 
@@ -83,20 +84,33 @@ const SEED = {
   },
   goldPriceEUR: 68.4, // €/gramo
   _syncVersion: 0,
+  _isDemo: true,
+  _demoSeededAt: Date.now(),
   deletedAccountIds: [],
   reviewQueue: { pending: [], resolved: [], dismissed: [] },
   pipelineEvents: [],
 };
 
 // ---------- Reducer ----------
+const REAL_ACTIONS = new Set([
+  "add_transaction", "update_transaction", "delete_transaction", "transfer", "schedule_transfer",
+  "add_account", "update_account", "delete_account", "add_category", "update_category", "delete_category",
+  "add_crypto", "update_crypto", "delete_crypto", "add_realestate", "update_realestate", "delete_realestate",
+  "add_depreciating", "update_depreciating", "delete_depreciating", "set_limit", "set_base_currency", "update_settings",
+]);
 
 function reducer(state, action) {
   const skipVersion = ["hydrate", "update_fx", "accrue"];
   const result = innerReducer(state, action);
-  if (result !== state && !skipVersion.includes(action.type)) {
-    return { ...result, _syncVersion: (result._syncVersion || 0) + 1 };
+  let finalResult = result;
+  if (result !== state && result._isDemo && REAL_ACTIONS.has(action.type)) {
+    const { _isDemo, _demoSeededAt, ...rest } = result;
+    finalResult = { ...rest, _isDemo: false, _demoSeededAt: undefined };
   }
-  return result;
+  if (finalResult !== state && !skipVersion.includes(action.type)) {
+    return { ...finalResult, _syncVersion: (finalResult._syncVersion || 0) + 1 };
+  }
+  return finalResult;
 }
 
 function innerReducer(state, action) {
@@ -868,26 +882,34 @@ export function StoreProvider({ children }) {
     if (!snap || !snap.found) return { ok: false, missing: true };
 
     const localHash = await syncableHash(stateRef.current);
-    if (snap.hash === localHash) return { ok: true, converged: true };
+    const motivos = diagnoseDivergence(stateRef.current, snap);
+    const isDemoReplace = shouldAutoReplace(stateRef.current, snap.state);
+    if (snap.hash === localHash && !isDemoReplace) {
+      recordResync({ reason: "converged", fromVersion: stateRef.current._syncVersion, toVersion: snap.syncVersion, hash: snap.hash, motivos });
+      return { ok: true, converged: true };
+    }
 
-    // Divergido: subir cambios locales pendientes antes de reemplazar
-    // (el merge del server está protegido por tombstones + _updatedAt).
-    if (syncableRef.current !== lastPushedRef.current) {
-      await pushNow(id).catch(() => {});
-      try {
-        const r2 = await fetch(`${API_BASE}/api/snapshot?id=${encodeURIComponent(id)}&t=${Date.now()}`, { cache: "no-store" });
-        if (r2.ok) {
-          const s2 = await r2.json();
-          if (s2.found) snap = s2;
-        }
-      } catch { /* usar snapshot original */ }
+    // W21: si es demo local y snapshot real, NO subir demo al server — reemplazo directo
+    if (!isDemoReplace) {
+      // Divergido con datos reales: subir cambios locales pendientes antes de reemplazar
+      if (syncableRef.current !== lastPushedRef.current) {
+        await pushNow(id).catch(() => {});
+        try {
+          const r2 = await fetch(`${API_BASE}/api/snapshot?id=${encodeURIComponent(id)}&t=${Date.now()}`, { cache: "no-store" });
+          if (r2.ok) {
+            const s2 = await r2.json();
+            if (s2.found) snap = s2;
+          }
+        } catch { /* usar snapshot original */ }
+      }
     }
 
     const cur = stateRef.current;
     const volatile = { fx: cur.fx, priceHistory: cur.priceHistory, goldPriceEUR: cur.goldPriceEUR };
     skipPushRef.current = true;
     dispatch({ type: "hydrate", state: { ...migrate(snap.state), ...volatile } });
-    return { ok: true, replaced: true, hash: snap.hash };
+    recordResync({ reason: isDemoReplace ? "local_is_demo" : "hash_mismatch", fromVersion: cur._syncVersion, toVersion: snap.syncVersion, hash: snap.hash, motivos: isDemoReplace ? ["local_is_demo"] : motivos });
+    return { ok: true, replaced: true, hash: snap.hash, autoRepaired: isDemoReplace };
   }, [syncId, pushNow]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Flush al salir/ocultar la pestaña: si hay cambios sin subir (p. ej. una
@@ -985,7 +1007,7 @@ export function StoreProvider({ children }) {
     return () => clearTimeout(t);
   }, [syncable, syncId, pushNow]);
 
-  // Auto-pull: al volver a la app (visibilidad o foco) fuerza pull fresco de la nube.
+  // Auto-pull: al volver a la app (visibilidad/foco/online/pageshow) fuerza pull fresco (W21 Fase 2).
   useEffect(() => {
     if (!syncId) return;
     const doPull = () => {
@@ -993,23 +1015,44 @@ export function StoreProvider({ children }) {
     };
     const onVis = () => { if (document.visibilityState === 'visible') doPull(); };
     const onFocus = () => doPull();
+    const onOnline = () => doPull();
+    const onPageShow = () => doPull();
     document.addEventListener('visibilitychange', onVis);
     window.addEventListener('focus', onFocus);
+    window.addEventListener('online', onOnline);
+    window.addEventListener('pageshow', onPageShow);
     return () => {
       document.removeEventListener('visibilitychange', onVis);
       window.removeEventListener('focus', onFocus);
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('pageshow', onPageShow);
     };
   }, [syncId]);
 
-  // Pull periódico cada 5 min mientras la pestaña esté visible (detecta cambios de otro dispositivo).
+  // Heartbeat ligero cada 60s (W21 Fase 3): GET /api/sync-version → si diverge, resync.
   useEffect(() => {
     if (!syncId) return;
-    const t = setInterval(() => {
-      if (document.visibilityState === 'visible' && !pullingRef.current) {
-        setSyncRetry(n => n + 1);
-      }
-    }, 5 * 60 * 1000);
-    return () => clearInterval(t);
+    let cancelled = false;
+    const check = async () => {
+      if (document.visibilityState !== 'visible' || pullingRef.current) return;
+      try {
+        const r = await fetch(`${API_BASE}/api/sync-version?id=${encodeURIComponent(syncId)}&t=${Date.now()}`, { cache: "no-store" });
+        if (!r.ok) return;
+        const data = await r.json();
+        if (cancelled) return;
+        const localVer = stateRef.current._syncVersion || 0;
+        if (data.syncVersion != null && data.syncVersion !== localVer) {
+          if (!pullingRef.current) setSyncRetry((n) => n + 1);
+          return;
+        }
+        if (data.hash) {
+          const localHash = await syncableHash(stateRef.current);
+          if (data.hash !== localHash && !pullingRef.current) setSyncRetry((n) => n + 1);
+        }
+      } catch {}
+    };
+    const t = setInterval(check, 60_000);
+    return () => { cancelled = true; clearInterval(t); };
   }, [syncId]);
 
   const sync = useMemo(() => ({
