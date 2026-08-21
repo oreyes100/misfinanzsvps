@@ -34,7 +34,7 @@ const DEFAULT_GOOGLE_PHOTOS = {
 
 /** Metadatos de Google Photos (los TOKENS nunca viajan a la nube, viven cifrados en localStorage). */
 const defaultSettings = (over = {}) => ({
-  baseCurrency: "EUR",
+  baseCurrency: "MXN",
   spendLimit: 1200,
   biometric: true,
   googlePhotos: { ...DEFAULT_GOOGLE_PHOTOS, ...(over.googlePhotos || {}) },

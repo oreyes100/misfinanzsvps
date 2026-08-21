@@ -18,6 +18,12 @@ export function stableStringify(value) {
 export function syncableSliceOf(state) {
   const out = {};
   for (const k of SYNCABLE_KEYS) if (k in state) out[k] = state[k];
+  // W22: baseCurrency es preferencia local (device). No se incluye en el hash
+  // para evitar resync perpetuo cuando dos clientes tienen distinta divisa.
+  if (out.settings && typeof out.settings === "object") {
+    const { baseCurrency, ...rest } = out.settings;
+    out.settings = rest;
+  }
   return out;
 }
 

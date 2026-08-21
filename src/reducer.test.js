@@ -396,7 +396,7 @@ describe("reducer · settings", () => {
     const next = reducer(state, { type: "update_settings", patch: { biometric: false, spendLimit: 999 } });
     expect(next.settings.biometric).toBe(false);
     expect(next.settings.spendLimit).toBe(999);
-    expect(next.settings.baseCurrency).toBe("EUR"); // no se pierde
+    expect(next.settings.baseCurrency).toBe("MXN"); // no se pierde
   });
 });
 

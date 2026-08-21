@@ -19,7 +19,7 @@ function seedHistory(current: number, n: number = 48, vol: number = 0.008): numb
 
 export const SEED: AppState = {
   settings: {
-    baseCurrency: "EUR",
+    baseCurrency: "MXN",
     spendLimit: 1200,
     biometric: true,
   },

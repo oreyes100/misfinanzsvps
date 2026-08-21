@@ -85,6 +85,48 @@ describe("syncableHash", () => {
   it("slices canónicos idénticos entre cliente y server", () => {
     const cs = syncableSliceOf(baseState);
     const ss = srvSlice(baseState);
-    expect(stableStringify(cs)).toBe(srvStable(ss));
+    expect(stableStringify(cs)).toBe(stableStringify(ss));
+  });
+
+  it("W22: baseCurrency no afecta el hash (preferencia local)", async () => {
+    const withMXN = { ...baseState, settings: { ...baseState.settings, baseCurrency: "MXN" } };
+    const withEUR = { ...baseState, settings: { ...baseState.settings, baseCurrency: "EUR" } };
+    const withUSD = { ...baseState, settings: { ...baseState.settings, baseCurrency: "USD" } };
+    expect(await syncableHash(withMXN)).toBe(await syncableHash(withEUR));
+    expect(await syncableHash(withMXN)).toBe(await syncableHash(withUSD));
+  });
+
+  it("W22: syncableSliceOf excluye baseCurrency de settings", () => {
+    const slice = syncableSliceOf(baseState);
+    expect(slice.settings.baseCurrency).toBeUndefined();
+    expect(slice.settings.spendLimit).toBe(1200);
+  });
+
+  it("W22: server y cliente excluyen baseCurrency de forma idéntica", () => {
+    const withMXN = { ...baseState, settings: { ...baseState.settings, baseCurrency: "MXN" } };
+    const withEUR = { ...baseState, settings: { ...baseState.settings, baseCurrency: "EUR" } };
+    expect(stableStringify(syncableSliceOf(withMXN))).toBe(stableStringify(srvSlice(withMXN)));
+    expect(stableStringify(syncableSliceOf(withEUR))).toBe(stableStringify(srvSlice(withEUR)));
+  });
+
+  it("W22: hash estable ignora _isDemo y _demoSeededAt (no están en SYNCABLE_KEYS)", async () => {
+    const a = { ...baseState, _isDemo: true, _demoSeededAt: 100 };
+    const b = { ...baseState };
+    expect(await syncableHash(a)).toBe(await syncableHash(b));
+  });
+
+  it("W22: syncableSliceOf preserva spendLimit y biometric (no solo baseCurrency)", () => {
+    const state = { settings: { baseCurrency: "EUR", spendLimit: 500, biometric: false }, accounts: [] };
+    const slice = syncableSliceOf(state);
+    expect(slice.settings.spendLimit).toBe(500);
+    expect(slice.settings.biometric).toBe(false);
+    expect(slice.settings.baseCurrency).toBeUndefined();
+  });
+
+  it("W22: server syncableSliceOf excluye baseCurrency igual que cliente", () => {
+    const state = { settings: { baseCurrency: "EUR", spendLimit: 500 }, accounts: [] };
+    const clientSlice = syncableSliceOf(state);
+    const serverSlice = srvSlice(state);
+    expect(stableStringify(clientSlice)).toBe(stableStringify(serverSlice));
   });
 });
