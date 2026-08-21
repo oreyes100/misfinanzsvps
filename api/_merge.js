@@ -25,6 +25,20 @@ export function dedupeAutoInterest(txs) {
   return out;
 }
 
+// W23: Consolida el delta entrante contra el estado existente de forma
+// DETERMINISTA y avanza _syncVersion (server = única fuente de verdad).
+// El +1 garantiza que TODOS los clientes detecten la nueva versión
+// autoritativa y reemplacen su estado local (fin del merge por entidad en el
+// cliente). Si no hay estado previo, el incoming se vuelve la base y se
+// normaliza su _syncVersion (si le falta, se arranca en 1).
+export function consolidateAndBump(existing, incoming) {
+  if (!incoming || typeof incoming !== "object") return existing;
+  if (!existing || typeof existing !== "object") return incoming;
+  const merged = mergeStates(existing, incoming);
+  const nextVersion = Math.max(existing._syncVersion || 0, incoming._syncVersion || 0) + 1;
+  return { ...merged, _syncVersion: nextVersion };
+}
+
 export function mergeStates(existing, incoming) {
   if (!existing || typeof existing !== "object") return incoming;
   if (!incoming || typeof incoming !== "object") return existing;

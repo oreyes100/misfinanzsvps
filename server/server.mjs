@@ -6,7 +6,7 @@
 import http from "node:http";
 import crypto from "node:crypto";
 import { openDb, initSchema, getUsers, replaceUsers, getSyncDoc, putSyncDoc, getPendings, writePendings, DATA_DIR } from "./db.mjs";
-import { mergeStates } from "../api/_merge.js";
+import { mergeStates, consolidateAndBump } from "../api/_merge.js";
 import { syncableHash } from "../api/_hash.js";
 import { handleGoogleImport, handleGoogleAuth, handleTelegramConfig, handleTelegram } from "./extra.js";
 import { mkdirSync, copyFileSync, readdirSync, unlinkSync } from "node:fs";
@@ -413,6 +413,46 @@ async function handleSyncVersion(req, res) {
   }
 }
 
+// W23: POST /api/push — consolidación fuerte. El cliente envía su delta crudo
+// (sin merge por entidad en el cliente); el server consolida determinista y
+// avanza _syncVersion (consolidateAndBump). Devuelve el snapshot consolidado.
+async function handlePush(req, res, rawBody) {
+  const query = new URLSearchParams(req.url.split("?")[1] || "");
+  const code = String(query.get("id") || "").toLowerCase();
+  if (!ID_RE.test(code)) return sendJson(res, 400, { error: "Código de sincronización inválido." });
+  if (req.method !== "POST") return sendJson(res, 405, { error: "Método no permitido." });
+  const body = rawBody || {};
+  if (!body || typeof body.state !== "object" || Array.isArray(body.state)) {
+    return sendJson(res, 400, { error: "Estado inválido." });
+  }
+  let finalState = body.state;
+  let existing = null;
+  try {
+    const doc = getSyncDoc(db, code);
+    if (doc && doc.state) existing = doc.state;
+  } catch { /* sin doc previo */ }
+
+  if (existing) {
+    finalState = consolidateAndBump(existing, body.state);
+  } else {
+    finalState = { ...finalState, _syncVersion: (finalState._syncVersion || 0) + 1 };
+  }
+
+  const payload = JSON.stringify({ state: finalState, updatedAt: Date.now() });
+  if (Buffer.byteLength(payload) > MAX_BYTES) return sendJson(res, 413, { error: "Estado demasiado grande." });
+  try {
+    putSyncDoc(db, code, finalState, Date.now());
+    return sendJson(res, 200, {
+      ok: true,
+      state: finalState,
+      syncVersion: finalState._syncVersion ?? null,
+      hash: syncableHash(finalState),
+    });
+  } catch {
+    return sendJson(res, 500, { error: "Error guardando en el almacenamiento." });
+  }
+}
+
 async function handleSignup(req, res, rawBody) {
   const body = rawBody || {};
   // Step 1: request
@@ -553,6 +593,7 @@ const server = http.createServer(async (req, res) => {
   try {
     if (urlPath === "/api/users") return await handleUsers(req, res, req.method === "POST" ? await readBody(req) : null);
     if (urlPath === "/api/sync") return await handleSync(req, res, req.method === "POST" ? await readBody(req) : null);
+    if (urlPath === "/api/push") return await handlePush(req, res, req.method === "POST" ? await readBody(req) : null);
     if (urlPath === "/api/snapshot") {
       const rl = snapshotLimiter.isAllowed(clientIp(req));
       if (!rl.allowed) {

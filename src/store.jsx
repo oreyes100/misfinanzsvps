@@ -3,7 +3,6 @@ import { API_BASE, BASE_FX, DAY_MS, DEFAULT_CATEGORIES, categorize, cleanOrphanT
 import { accrueInterest } from "./interest.js";
 import { migrate } from "./migrations.js";
 import useFX from "./useFX.js";
-import { mergeSyncStates } from "./merge.js";
 import { createPersistenceOrchestrator } from "./mcp/persistence-integration.js";
 import { enqueueItem, acceptItem, dismissItem, acceptAllReviewable, dismissAll, cleanupReviewQueue, buildUnreviewedItems } from "./review.js";
 import { pushPipelineEvents } from "./utils/pipelineDiagnostics.js";
@@ -835,23 +834,17 @@ export function StoreProvider({ children }) {
 
   const lastPushedRef = useRef(null);
 
+  // W23: push→consolidar→reemplazar. El cliente envía su DELTA CRUDO a
+  // /api/push SIN merge por entidad en el cliente (era la fuente de divergencia:
+  // dos merges client-side independientes = dos estados distintos). El server
+  // consolida de forma determinista (consolidateAndBump) y avanza _syncVersion.
   const pushNow = useCallback(async (id) => {
     setSyncStatus("pushing");
     const snapshot = syncableRef.current;
-    let merged = JSON.parse(snapshot);
-    try {
-      const getR = await fetch(`${API_BASE}/api/sync?id=${encodeURIComponent(id)}&t=${Date.now()}`, { cache: "no-store" });
-      if (getR.ok) {
-        const cloudData = await getR.json();
-        if (cloudData.found && cloudData.state) {
-          merged = mergeSyncStates(merged, cloudData.state);
-        }
-      }
-    } catch { /* red flaky: proceed with local */ }
-    const r = await fetch(`${API_BASE}/api/sync?id=${encodeURIComponent(id)}`, {
+    const r = await fetch(`${API_BASE}/api/push?id=${encodeURIComponent(id)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ state: merged }),
+      body: JSON.stringify({ state: JSON.parse(snapshot) }),
     });
     if (!r.ok) throw new Error(`sync push ${r.status}`);
     lastPushedRef.current = snapshot;
@@ -922,7 +915,7 @@ export function StoreProvider({ children }) {
       if (pullingRef.current) return;
       if (syncableRef.current === lastPushedRef.current) return;
       try {
-        fetch(`${API_BASE}/api/sync?id=${encodeURIComponent(syncId)}`, {
+        fetch(`${API_BASE}/api/push?id=${encodeURIComponent(syncId)}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ state: JSON.parse(syncableRef.current) }),

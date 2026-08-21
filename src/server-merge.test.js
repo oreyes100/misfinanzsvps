@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mergeById, dedupeAutoInterest, mergeStates } from "../api/_merge.js";
+import { mergeById, dedupeAutoInterest, mergeStates, consolidateAndBump } from "../api/_merge.js";
 
 describe("mergeById", () => {
   it("preserva items exclusivos de cada lado", () => {
@@ -137,5 +137,49 @@ describe("mergeStates", () => {
     expect(out.deletedAccountIds).toContain("a1");
     expect(out.deletedAccountIds).toContain("a2");
     expect(out.accounts).toHaveLength(0);
+  });
+});
+
+describe("consolidateAndBump (W23 convergencia fuerte)", () => {
+  it("dos clientes con deltas distintos → server consolida → ambos reciben lo mismo", () => {
+    // Laptop tiene la cuenta A; Android tiene la cuenta B. El server los une
+    // de forma determinista en un solo estado autoritativo.
+    const server = { transactions: [], accounts: [{ id: "laptop-only", balance: 100, _updatedAt: 1 }], _syncVersion: 5 };
+    const clientA = { transactions: [], accounts: [{ id: "android-only", balance: 200, _updatedAt: 1 }], _syncVersion: 4 };
+    const outA = consolidateAndBump(server, clientA);
+    // El segundo cliente push con el estado consolidado (o su propio delta).
+    const clientB = { transactions: [], accounts: [{ id: "android-only", balance: 200, _updatedAt: 1 }, { id: "third", balance: 50, _updatedAt: 2 }], _syncVersion: 4 };
+    const outB = consolidateAndBump(outA, clientB);
+    expect(outB.accounts.map((a) => a.id).sort()).toEqual(["android-only", "laptop-only", "third"]);
+    expect(outB._syncVersion).toBeGreaterThan(5);
+  });
+
+  it("avanza _syncVersion en +1 sobre el máximo (todos los clientes convergen)", () => {
+    const existing = { accounts: [], transactions: [], _syncVersion: 10 };
+    const incoming = { accounts: [], transactions: [], _syncVersion: 7 };
+    const out = consolidateAndBump(existing, incoming);
+    expect(out._syncVersion).toBe(11);
+  });
+
+  it("sin estado previo, el incoming se vuelve la base y se normaliza versión", () => {
+    const out = consolidateAndBump(null, { accounts: [], transactions: [], _syncVersion: 3 });
+    expect(out._syncVersion).toBe(3);
+  });
+
+  it("consolidación determinista: orden de llegada no cambia el resultado", () => {
+    const server = { transactions: [], accounts: [{ id: "a", balance: 100, _updatedAt: 1 }], _syncVersion: 1 };
+    const incoming = { transactions: [], accounts: [{ id: "a", balance: 250, _updatedAt: 2 }], _syncVersion: 1 };
+    const out = consolidateAndBump(server, incoming);
+    // _updatedAt mayor gana independientemente del orden
+    expect(out.accounts.find((x) => x.id === "a").balance).toBe(250);
+  });
+
+  it("reemplazo total: el snapshot consolidado del server es adoptado tal cual", () => {
+    const existing = { accounts: [{ id: "x", balance: 1, _updatedAt: 1 }], transactions: [], _syncVersion: 2 };
+    const incoming = { accounts: [{ id: "y", balance: 2, _updatedAt: 1 }], transactions: [], _syncVersion: 1 };
+    const out = consolidateAndBump(existing, incoming);
+    // El cliente adopta `out` completo (sin re-merge) → hash local == hash server
+    expect(out.accounts.map((a) => a.id).sort()).toEqual(["x", "y"]);
+    expect(out._syncVersion).toBe(3);
   });
 });
