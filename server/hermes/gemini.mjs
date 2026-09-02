@@ -166,6 +166,9 @@ const MIME_BY_EXT = {
   ".webp": "image/webp",
   ".heic": "image/heic",
   ".heif": "image/heif",
+  // W28: Gemini lee PDFs nativamente (inline_data application/pdf). Sin esto,
+  // los PDFs de Drive iban como image/jpeg y Gemini los rechazaba.
+  ".pdf": "application/pdf",
 };
 
 export function mimeFromPath(p) {

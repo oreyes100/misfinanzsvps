@@ -342,6 +342,27 @@ async function handleStatementLocal(cfg, state, result, file, source) {
 // ---------- OCR + parseo ----------
 
 async function extractFromImage(cfg, state, imgPath, sourceBase) {
+  // W28: PDFs de Drive — el OCR local (Paddle) no lee PDFs. PDF con capa de
+  // texto → parser local directo (sin OCR ni IA). PDF escaneado → Gemini
+  // vision, que lee PDFs nativamente (application/pdf, MIME_BY_EXT corregido).
+  if (/\.pdf$/i.test(imgPath)) {
+    try {
+      const { extractPdfText } = await import("./receiptExtractor.mjs");
+      const pdf = await extractPdfText((await import("node:fs")).readFileSync(imgPath));
+      if (pdf.text) {
+        const parsed = parseOcrText(pdf.text);
+        if (parsed?.ok && parsed.result) {
+          appendJournal(cfg.journalFile, { event: "extract_pdf_text", file: sourceBase, type: parsed.result.type, chars: pdf.text.length, numPages: pdf.numPages });
+          return { result: parsed.result, local: true };
+        }
+      }
+      appendJournal(cfg.journalFile, { event: "pdf_scanned", file: sourceBase, numPages: pdf.numPages });
+    } catch (e) {
+      appendJournal(cfg.journalFile, { event: "pdf_extract_failed", file: sourceBase, error: String(e.message || e).slice(0, 300) });
+      // Caer a Gemini vision con el MIME correcto (paso 3).
+    }
+  }
+
   // Paso 1: OCR local (PaddleOCR). W27: el bot ya NO llama a providers
   // directos — va por el orchestrator HTTP (/api/hermes/ai/ocr) donde vive el
   // circuit breaker + timeout ≤60s (W26). Antes el timeout era de 20 MINUTOS.

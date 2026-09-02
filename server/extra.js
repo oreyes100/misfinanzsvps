@@ -23,6 +23,7 @@ import { mergeStates } from "../api/_merge.js";
 import { classifyImage } from "../lib/ai.js";
 import { ocrImage } from "./hermes/ocr.mjs";
 import { parseOcrText } from "./hermes/local.mjs";
+import { extractPdfText } from "./hermes/receiptExtractor.mjs";
 import { sendMessage, answerCallbackQuery, editMessageReplyMarkup, getFile, downloadFile, inlineKeyboard, registerWebhook, webhookInfo } from "../lib/telegram.js";
 
 import { makeUpdateIdStore } from "./idempotency.mjs";
@@ -449,7 +450,15 @@ async function handleMessage(db, update, binding, chatId) {
   const apiKey = binding.aiApiKey || process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY || process.env.ANTHROPIC_API_KEY;
 
   // WG11 (F1): Paddle local primero — sin costo, sin límite de IA.
-  let result = await paddleFirst(buf, { mime });
+  // W28: PDFs con capa de texto → extracción directa con pdfjs (sin OCR ni IA);
+  // si no hay texto útil → Gemini vision, que lee PDFs nativamente.
+  let result = null;
+  if (mime === "application/pdf") {
+    result = await pdfTextFirst(buf);
+  }
+  if (!result) {
+    result = await paddleFirst(buf, { mime });
+  }
 
   if (!result) {
     // Fallback: IA de pago (Gemini por defecto).
@@ -475,43 +484,61 @@ async function paddleFirst(buf, { mime }) {
     filePath = path.join(BLOB_DIR, `ocr-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`);
     await writeFile(filePath, buf);
     const raw = await ocrImage(filePath, { url: process.env.OCR_URL || "http://127.0.0.1:8765", timeoutMs: 90000 });
-    const parsed = parseOcrText(raw);
-    if (!parsed?.ok || !parsed.result) return null;
-    const r = parsed.result;
-
-    // WG11: categorías aprendidas (merchantCategoryMap) para pre-clasificar.
-    const catMap = readMerchantCategoryMap();
-
-    const transactions = [];
-    if (r.type === "receipt") {
-      if (r.total > 0) transactions.push({ description: r.merchant || "Compra", amount: r.total, direction: "out", category: catMap ? matchCategory(catMap, r.merchant) : null, date: null });
-    } else if (r.type === "transfer" && r.transfer) {
-      transactions.push({ description: `Transferencia ${r.transfer.from ? `de ${r.transfer.from}` : ""}${r.transfer.to ? ` a ${r.transfer.to}` : ""}`.trim() || "Transferencia", amount: r.transfer.amount, direction: "out", category: null, date: null });
-    } else if (r.type === "statement") {
-      for (const m of r.movements || []) transactions.push({ description: m.description, amount: m.amount, direction: m.direction, category: m.category || (catMap ? matchCategory(catMap, m.description) : null) || null, date: m.date || null });
-    }
-    if (!transactions.length) return null;
-
-    return {
-      type: r.type,
-      merchant: r.merchant || null,
-      date: null,
-      currency: null,
-      total: r.total || null,
-      accountHints: [],
-      confidence: 0.5,
-      transactions,
-      accountHint: null,
-      accountId: null,
-      accountName: null,
-      accountConfident: false,
-      source: "paddle",
-    };
+    return buildLocalResult(raw, "paddle");
   } catch {
     return null;
   } finally {
     if (filePath) { try { await import("node:fs/promises").then((f) => f.unlink(filePath)); } catch {} }
   }
+}
+
+// W28: PDF con capa de texto → parser local directo (sin OCR ni IA).
+// null si no hay texto útil o no parsea → el caller cae a Gemini (PDF nativo).
+async function pdfTextFirst(buf) {
+  try {
+    const pdf = await extractPdfText(buf);
+    if (!pdf.text) return null;
+    return buildLocalResult(pdf.text, "pdf_text");
+  } catch {
+    return null;
+  }
+}
+
+// Construye el result local (mismo formato que classifyImage) desde texto OCR
+// o texto de PDF. null si el parser no reconoce el formato.
+function buildLocalResult(raw, source) {
+  const parsed = parseOcrText(raw);
+  if (!parsed?.ok || !parsed.result) return null;
+  const r = parsed.result;
+
+  // WG11: categorías aprendidas (merchantCategoryMap) para pre-clasificar.
+  const catMap = readMerchantCategoryMap();
+
+  const transactions = [];
+  if (r.type === "receipt") {
+    if (r.total > 0) transactions.push({ description: r.merchant || "Compra", amount: r.total, direction: "out", category: catMap ? matchCategory(catMap, r.merchant) : null, date: null });
+  } else if (r.type === "transfer" && r.transfer) {
+    transactions.push({ description: `Transferencia ${r.transfer.from ? `de ${r.transfer.from}` : ""}${r.transfer.to ? ` a ${r.transfer.to}` : ""}`.trim() || "Transferencia", amount: r.transfer.amount, direction: "out", category: null, date: null });
+  } else if (r.type === "statement") {
+    for (const m of r.movements || []) transactions.push({ description: m.description, amount: m.amount, direction: m.direction, category: m.category || (catMap ? matchCategory(catMap, m.description) : null) || null, date: m.date || null });
+  }
+  if (!transactions.length) return null;
+
+  return {
+    type: r.type,
+    merchant: r.merchant || null,
+    date: null,
+    currency: null,
+    total: r.total || null,
+    accountHints: [],
+    confidence: 0.5,
+    transactions,
+    accountHint: null,
+    accountId: null,
+    accountName: null,
+    accountConfident: false,
+    source,
+  };
 }
 
 // WG11: lee merchantCategoryMap del config.json de Hermes (mismo almacén que

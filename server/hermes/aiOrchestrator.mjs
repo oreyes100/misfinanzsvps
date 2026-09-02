@@ -5,6 +5,8 @@
 import { loadAIConfig, callWithFallback, getAIStatus, testProvider } from "./aiClient.mjs";
 import { ocrImage } from "./ocr.mjs";
 import { aiExtractFromFile, embedText, aiTextJSON } from "./gemini.mjs";
+import { extractPdfText } from "./receiptExtractor.mjs";
+import { parseOcrText } from "./local.mjs";
 
 /**
  * Resuelve la API key de Gemini: opts.geminiKey → settings del sync doc → env → hermes config.
@@ -82,6 +84,50 @@ export async function handleAITask(task, input = {}, opts = {}) {
     };
     const r = await callWithFallback("embeddings", fns, { config });
     return { ok: true, embedding: r.result, provider: r.provider, latencyMs: r.latencyMs };
+  }
+
+  if (task === "receipt") {
+    // W28: entrada unificada IMG/PDF. PDF con texto → parser local (sin OCR ni
+    // IA). PDF escaneado o imagen → Gemini vision (PDFs nativos, imágenes con
+    // OCR previo según el caller). Inyectable para tests.
+    const { filePath, base64, mimeType } = input;
+    if (!filePath && !base64) throw new Error("receipt requiere filePath o base64");
+    const isPdf = mimeType === "application/pdf" || (filePath && /\.pdf$/i.test(filePath));
+
+    if (isPdf && filePath) {
+      const fsMod = await import("node:fs");
+      const pdf = await extractPdfText(fsMod.readFileSync(filePath));
+      if (pdf.text) {
+        const parsed = opts.parseFn ? opts.parseFn(pdf.text) : parseOcrText(pdf.text);
+        if (parsed?.ok && parsed.result) {
+          return { ok: true, result: parsed.result, source: "pdf_text", numPages: pdf.numPages };
+        }
+      }
+      // PDF escaneado o texto no parseable → Gemini vision (lee PDFs nativamente)
+      const geminiKey = opts.geminiKey || resolveGeminiKey(input, opts);
+      if (!geminiKey) throw new Error("sin GEMINI key para PDF escaneado");
+      if (opts.visionFn) {
+        return { ok: true, result: await opts.visionFn(filePath, geminiKey), source: "pdf_vision", numPages: pdf.numPages };
+      }
+      return { ok: true, result: await aiExtractFromFile(filePath, geminiKey, { categories: input.categories || [], accounts: input.accounts || [] }), source: "pdf_vision", numPages: pdf.numPages };
+    }
+
+    if (base64) {
+      // Imagen (o PDF) en base64 — la decodifica a un temp file para el flujo existente.
+      const fsMod = await import("node:fs");
+      const pathMod = await import("node:path");
+      const osMod = await import("node:os");
+      const ext = mimeType === "application/pdf" ? ".pdf" : /png/.test(mimeType || "") ? ".png" : /webp/.test(mimeType || "") ? ".webp" : ".jpg";
+      const tmp = pathMod.join(osMod.tmpdir(), `receipt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`);
+      fsMod.writeFileSync(tmp, Buffer.from(base64, "base64"));
+      try {
+        return await handleAITask("receipt", { ...input, filePath: tmp, base64: undefined }, opts);
+      } finally {
+        try { fsMod.unlinkSync(tmp); } catch { /* best-effort */ }
+      }
+    }
+
+    throw new Error("receipt: solo imágenes o PDFs soportados");
   }
 
   if (task === "text") {
