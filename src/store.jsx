@@ -7,7 +7,7 @@ import { createPersistenceOrchestrator } from "./mcp/persistence-integration.js"
 import { enqueueItem, acceptItem, dismissItem, acceptAllReviewable, dismissAll, cleanupReviewQueue, buildUnreviewedItems } from "./review.js";
 import { pushPipelineEvents } from "./utils/pipelineDiagnostics.js";
 import { editTransferPair, convertToTransfer, convertFromTransfer, buildTransferPair } from "./transfers.js";
-import { diagnoseDivergence, shouldAutoReplace, recordResync } from "./syncHealth.ts";
+import { diagnoseDivergence, shouldAutoReplace, recordResync, recordPush, pushWithRetry, getLastPush } from "./syncHealth.ts";
 
 export { accrueInterest };
 
@@ -838,17 +838,25 @@ export function StoreProvider({ children }) {
   // /api/push SIN merge por entidad en el cliente (era la fuente de divergencia:
   // dos merges client-side independientes = dos estados distintos). El server
   // consolida de forma determinista (consolidateAndBump) y avanza _syncVersion.
+  // W24 Fase 4: 3 reintentos con backoff lineal + telemetría de éxito/fallo.
   const pushNow = useCallback(async (id) => {
     setSyncStatus("pushing");
     const snapshot = syncableRef.current;
-    const r = await fetch(`${API_BASE}/api/push?id=${encodeURIComponent(id)}`, {
+    const res = await pushWithRetry(fetch, `${API_BASE}/api/push?id=${encodeURIComponent(id)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ state: JSON.parse(snapshot) }),
     });
-    if (!r.ok) throw new Error(`sync push ${r.status}`);
-    lastPushedRef.current = snapshot;
-    setSyncStatus("synced");
+    if (res.ok) {
+      lastPushedRef.current = snapshot;
+      setSyncStatus("synced");
+      recordPush({ success: true, syncVersion: stateRef.current._syncVersion ?? null, error: null, attempts: res.attempts });
+      dispatch({ type: "mark_clean" });
+      return;
+    }
+    recordPush({ success: false, syncVersion: stateRef.current._syncVersion ?? null, error: res.error, attempts: res.attempts });
+    setSyncStatus("error");
+    throw new Error(`sync push: ${res.error} (tras ${res.attempts} intentos)`);
   }, []);
 
   // W18: convergencia autoritativa. El server es la única fuente de verdad.
@@ -886,7 +894,14 @@ export function StoreProvider({ children }) {
     if (!isDemoReplace) {
       // Divergido con datos reales: subir cambios locales pendientes antes de reemplazar
       if (syncableRef.current !== lastPushedRef.current) {
-        await pushNow(id).catch(() => {});
+        // W24 Fase 3: si el push falla, ABORTAR — reemplazar aquí BORRARÍA los
+        // cambios locales con un snapshot viejo del server (pérdida de datos).
+        try {
+          await pushNow(id);
+        } catch (pushErr) {
+          recordResync({ reason: "push_failed_abort", fromVersion: stateRef.current._syncVersion, toVersion: snap.syncVersion, hash: snap.hash, motivos: [`push_failed: ${pushErr?.message}`] });
+          return { ok: false, aborted: true, reason: "push_failed" };
+        }
         try {
           const r2 = await fetch(`${API_BASE}/api/snapshot?id=${encodeURIComponent(id)}&t=${Date.now()}`, { cache: "no-store" });
           if (r2.ok) {
@@ -909,6 +924,10 @@ export function StoreProvider({ children }) {
   // cuenta recién creada y el debounce de 1.5s aún no disparó), enviarlos ya
   // con keepalive para que la petición sobreviva a la recarga/cierre. Sin esto,
   // recargar justo después de crear una cuenta perdía el cambio en la nube.
+  // W24 Fase 2 (fix Bug #1 del forense): lastPushedRef SOLO se marca si el push
+  // realmente llegó (r.ok). Antes se marcaba sin esperar → el cliente creía
+  // "ya pusheado" y el resync del día siguiente reemplazaba el estado local con
+  // un snapshot viejo = PÉRDIDA DE DATOS.
   useEffect(() => {
     if (!syncId) return;
     const flush = () => {
@@ -920,17 +939,41 @@ export function StoreProvider({ children }) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ state: JSON.parse(syncableRef.current) }),
           keepalive: true,
-        });
-        lastPushedRef.current = syncableRef.current;
+        })
+          .then((r) => {
+            if (r.ok) {
+              lastPushedRef.current = syncableRef.current;
+              recordPush({ success: true, syncVersion: stateRef.current._syncVersion ?? null, error: null, attempts: 1 });
+              dispatch({ type: "mark_clean" });
+            } else {
+              // Fallo visible en telemetría; el estado queda pendiente → el
+              // próximo resyncNow reintentará el push ANTES de reemplazar (W24 Fase 3).
+              recordPush({ success: false, syncVersion: stateRef.current._syncVersion ?? null, error: `HTTP ${r.status}`, attempts: 1 });
+            }
+          })
+          .catch((e) => {
+            recordPush({ success: false, syncVersion: stateRef.current._syncVersion ?? null, error: e?.message || "network error", attempts: 1 });
+          });
         saveLocal();
       } catch { /* best-effort */ }
     };
     const onHide = () => { if (document.visibilityState === "hidden") flush(); };
+    // W24 Fase 2: advertencia si se cierra con cambios sin pushear.
+    const onBeforeUnload = (e) => {
+      flush();
+      if (syncableRef.current !== lastPushedRef.current) {
+        e.preventDefault();
+        e.returnValue = "Tienes cambios sin sincronizar. Si sales ahora, se reintentará el envío al reabrir. ¿Salir de todos modos?";
+        return e.returnValue;
+      }
+    };
     window.addEventListener("pagehide", flush);
     document.addEventListener("visibilitychange", onHide);
+    window.addEventListener("beforeunload", onBeforeUnload);
     return () => {
       window.removeEventListener("pagehide", flush);
       document.removeEventListener("visibilitychange", onHide);
+      window.removeEventListener("beforeunload", onBeforeUnload);
     };
   }, [syncId]);
 
@@ -1051,6 +1094,8 @@ export function StoreProvider({ children }) {
   const sync = useMemo(() => ({
     id: syncId,
     status: syncStatus,
+    // W24: telemetría del último push (éxito/fallo) visible en Ajustes→Sync (chip).
+    lastPush: getLastPush(),
     enable: () => {
       const id = crypto.randomUUID();
       localStorage.setItem(SYNC_KEY, id);

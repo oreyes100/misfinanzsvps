@@ -80,7 +80,10 @@ describe("cashflowByMonth", () => {
     expect(lastKey).toBe(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`);
   });
   it("convierte monedas a divisa base", () => {
-    const rows = cashflowByMonth([tx({ id: "m", amount: -1000, currency: "MXN", category: "Comida" })], FX, "EUR", 1);
+    // Fecha dentro del mes actual: cashflowByMonth genera skeleton de los últimos N meses desde HOY
+    const now = new Date();
+    const curKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+    const rows = cashflowByMonth([tx({ id: "m", date: `${curKey}-15`, amount: -1000, currency: "MXN", category: "Comida" })], FX, "EUR", 1);
     expect(rows[0].expense).toBeCloseTo(50, 6);
   });
 });

@@ -197,6 +197,9 @@ export interface AppState {
   _syncVersion: number;
   _isDemo?: boolean;
   _demoSeededAt?: number;
+  // W24: bandera de cambios locales sin pushear (volátil — NO viaja en sync ni hash)
+  _dirty?: boolean;
+  _lastChangeAt?: number;
   // Para que los deletes de transacciones no reaparezcan por merge de nube
   deletedTransactions?: Record<string, number>; // txId -> delete timestamp (ms)
   deletedAccountIds?: string[]; // IDs de cuentas explícitamente borradas por el usuario
@@ -244,7 +247,8 @@ export type Action =
   | { type: "reset" }
   | { type: "approve_interest_anomaly"; accountId: string; date: string }
   | { type: "discard_interest_anomaly"; accountId: string; date: string }
-  | { type: "clean_interest_duplicates" };
+  | { type: "clean_interest_duplicates" }
+  | { type: "mark_clean" };
 
 // ---------- Selectores ----------
 

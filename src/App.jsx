@@ -90,7 +90,9 @@ function Shell({ session, onLogout }) {
               onClick={() => { if (sync) sync.forcePush?.(); }}
               disabled={sync.status === 'pushing' || sync.status === 'pulling'}
               className={`text-[10px] px-1.5 py-0.5 rounded bg-white/10 ${syncColor} font-mono tabular-nums hover:bg-white/20 active:bg-white/30 transition-colors cursor-pointer disabled:opacity-70 disabled:cursor-not-allowed`}
-              title="Clic para sincronizar ahora"
+              title={sync.lastPush
+                ? `Último push: ${sync.lastPush.success ? "✅" : "❌"} ${sync.lastPush.at} (v${sync.lastPush.syncVersion ?? "?"}, ${sync.lastPush.attempts} intento${sync.lastPush.attempts > 1 ? "s" : ""})${sync.lastPush.error ? ` — ${sync.lastPush.error}` : ""}`
+                : "Clic para sincronizar ahora"}
             >
               {syncIcon} {sync.status}
             </button>

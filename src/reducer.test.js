@@ -633,3 +633,74 @@ describe("clean_interest_duplicates · no modifica saldos", () => {
     expect(next.accounts[0].balance).toBe(BASE_BALANCE);
   });
 });
+
+// ---------- W24: Persistencia robusta — _dirty en todas las mutaciones ----------
+
+describe("reducer · W24 _dirty flag", () => {
+  let state;
+  beforeEach(() => { state = { ...cleanState(), _syncVersion: 3, _dirty: false }; });
+
+  it("add_account marca _dirty=true", () => {
+    const next = reducer(state, { type: "add_account", account: { name: "Nueva", type: "checking", currency: "EUR", balance: 100 } });
+    expect(next._dirty).toBe(true);
+    expect(next._lastChangeAt).toBeGreaterThan(0);
+  });
+
+  it("add_transaction marca _dirty=true", () => {
+    const next = reducer(state, {
+      type: "add_transaction",
+      tx: { description: "Café", amount: -3, currency: "EUR", accountId: "acc-eur", date: todayISO() },
+    });
+    expect(next._dirty).toBe(true);
+  });
+
+  it("update_settings marca _dirty=true", () => {
+    const next = reducer(state, { type: "update_settings", patch: { softLimit: 999 } });
+    expect(next._dirty).toBe(true);
+  });
+
+  it("delete_transaction marca _dirty=true", () => {
+    const withTx = { ...state, transactions: [{ id: "tx-1", description: "X", amount: -1, currency: "EUR", accountId: "acc-eur", date: todayISO() }] };
+    const next = reducer(withTx, { type: "delete_transaction", id: "tx-1" });
+    expect(next._dirty).toBe(true);
+  });
+
+  it("update_fx (volátil) NO marca _dirty", () => {
+    const next = reducer(state, { type: "update_fx", fx: { ...state.fx, USD: 0.93 } });
+    expect(next._dirty).toBe(false);
+  });
+
+  it("accrue (volátil) NO marca _dirty", () => {
+    const next = reducer(state, { type: "accrue" });
+    expect(next._dirty).toBe(false);
+  });
+
+  it("hydrate (reemplazo del server) NO marca _dirty", () => {
+    const next = reducer(state, { type: "hydrate", state: { ...state, _dirty: true, _syncVersion: 9 } });
+    expect(next._dirty).toBeFalsy();
+  });
+
+  it("mark_clean limpia _dirty sin bump de _syncVersion", () => {
+    const dirty = { ...state, _dirty: true, _lastChangeAt: Date.now() };
+    const next = reducer(dirty, { type: "mark_clean" });
+    expect(next._dirty).toBe(false);
+    expect(next._syncVersion).toBe(dirty._syncVersion); // sin versión extra
+    expect(next._lastChangeAt).toBe(dirty._lastChangeAt); // histórico intacto
+  });
+
+  it("mark_clean es idempotente (sin dirty → mismo estado)", () => {
+    const next = reducer(state, { type: "mark_clean" });
+    expect(next).toBe(state);
+  });
+
+  it("_dirty NO viaja en syncableSliceOf (no afecta hash ni sync)", async () => {
+    const { syncableSliceOf, syncableHash } = await import("./utils");
+    const base = { settings: { softLimit: 1 }, accounts: [], _syncVersion: 1 };
+    const dirty = { ...base, _dirty: true, _lastChangeAt: 123 };
+    expect(syncableSliceOf(dirty)).toEqual(syncableSliceOf(base));
+    expect(JSON.stringify(syncableSliceOf(dirty))).not.toContain("_dirty");
+    const h1 = await syncableHash(base);
+    const h2 = await syncableHash(dirty);
+    expect(h1).toBe(h2);
+  });
+});

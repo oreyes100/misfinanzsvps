@@ -100,6 +100,11 @@ const REAL_ACTIONS = new Set([
 
 function innerReducer(state: AppState, action: Action): AppState {
   switch (action.type) {
+    // W24: limpia la bandera dirty tras un push exitoso (no muta datos, no bump de versión)
+    case "mark_clean": {
+      if (!state._dirty && state._lastChangeAt == null) return state;
+      return { ...state, _dirty: false };
+    }
     case "hydrate": {
       const h = action.state || state;
       const strippedAccounts = h && Array.isArray(h.accounts) ? stripDemoAccounts(h.accounts, h.deletedAccountIds || []) : (h ? h.accounts : []);
@@ -109,6 +114,8 @@ function innerReducer(state: AppState, action: Action): AppState {
       if (cleaned && cleaned.deletedTransactions && Array.isArray(cleaned.transactions)) {
         cleaned = { ...cleaned, transactions: cleaned.transactions.filter((t: any) => !cleaned.deletedTransactions[t.id]) };
       }
+      // W24: hydrate = reemplazo con snapshot del server → estado limpio por definición
+      if (cleaned) cleaned = { ...cleaned, _dirty: false };
       // hydrate respeta _isDemo del origen; si es demo y el local ya es real, no reintroduce demo (manejado en store resync)
       return cleaned;
     }
@@ -478,7 +485,11 @@ function innerReducer(state: AppState, action: Action): AppState {
 }
 
 export function reducer(state: AppState, action: Action): AppState {
-  const skipVersion: Action["type"][] = ["hydrate", "update_fx", "accrue"];
+  const skipVersion: Action["type"][] = ["hydrate", "update_fx", "accrue", "mark_clean"];
+  // W24: acciones que NO representan cambios locales pendientes de subir.
+  // hydrate = reemplazo con snapshot del server; update_fx/accrue = volátiles;
+  // mark_clean = limpiar la bandera tras un push exitoso.
+  const skipDirty: Action["type"][] = ["hydrate", "update_fx", "accrue", "mark_clean"];
   const result = innerReducer(state, action);
   // W21 Fase 1: cualquier dato real limpia el flag demo (solo si hubo cambio)
   let finalResult = result;
@@ -487,7 +498,13 @@ export function reducer(state: AppState, action: Action): AppState {
     finalResult = { ...rest, _isDemo: false, _demoSeededAt: undefined } as AppState;
   }
   if (finalResult !== state && !skipVersion.includes(action.type)) {
-    return { ...finalResult, _syncVersion: (finalResult._syncVersion || 0) + 1 };
+    const bumped = { ...finalResult, _syncVersion: (finalResult._syncVersion || 0) + 1 };
+    // W24: CUALQUIER mutación real marca dirty inmediatamente (Fase 1 del wargame).
+    // _dirty/_lastChangeAt no están en SYNCABLE_KEYS → no viajan al server ni al hash.
+    if (!skipDirty.includes(action.type)) {
+      return { ...bumped, _dirty: true, _lastChangeAt: Date.now() };
+    }
+    return bumped;
   }
   return finalResult;
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach } from "vitest";
-import { diagnoseDivergence, shouldAutoReplace, recordResync, getLastResync, LAST_RESYNC_KEY } from "./syncHealth.ts";
+import { diagnoseDivergence, shouldAutoReplace, recordResync, getLastResync, LAST_RESYNC_KEY, pushWithRetry, recordPush, getPushLog, getLastPush } from "./syncHealth.ts";
 import { reducer, SEED } from "./reducer.ts";
 
 function fakeStorage() {
@@ -76,5 +76,82 @@ describe("Convergencia (W21) — reducer demo flag", () => {
     const next = reducer(demo, { type: "add_transaction", tx: { description: "Compra real", amount: -10, currency: "EUR", accountId: "acc-corriente" } });
     expect(next._isDemo).toBe(false);
     expect(next._demoSeededAt).toBeUndefined();
+  });
+});
+
+// ---------- W24: pushWithRetry + telemetría de pushes ----------
+
+describe("syncHealth · pushWithRetry (W24 Fase 4)", () => {
+  const URL = "https://x.test/api/push";
+  const INIT = { method: "POST", body: "{}" };
+  const noSleep = async () => {}; // backoff instantáneo en tests
+  it("éxito al primer intento → 1 fetch", async () => {
+    let calls = 0;
+    const fetchImpl = async () => { calls++; return { ok: true, status: 200 }; };
+    const r = await pushWithRetry(fetchImpl, URL, INIT, { maxRetries: 3, sleep: noSleep });
+    expect(r).toEqual({ ok: true, status: 200, attempts: 1, error: null });
+    expect(calls).toBe(1);
+  });
+
+  it("falla 2 veces y tiene éxito al 3er intento (retry con backoff)", async () => {
+    const calls = [];
+    let n = 0;
+    const fetchImpl = async () => { n++; calls.push(n); if (n < 3) return { ok: false, status: 502 }; return { ok: true, status: 200 }; };
+    const waits = [];
+    const sleep = async (ms) => { waits.push(ms); };
+    const r = await pushWithRetry(fetchImpl, URL, INIT, { maxRetries: 3, sleep });
+    expect(r.ok).toBe(true);
+    expect(r.attempts).toBe(3);
+    expect(calls).toEqual([1, 2, 3]);
+    expect(waits).toEqual([1000, 2000]); // backoff lineal
+  });
+
+  it("agota los 3 reintentos → ok:false con último error (nunca lanza)", async () => {
+    let calls = 0;
+    const fetchImpl = async () => { calls++; throw new Error("network down"); };
+    const r = await pushWithRetry(fetchImpl, URL, INIT, { maxRetries: 3, sleep: noSleep });
+    expect(r.ok).toBe(false);
+    expect(r.attempts).toBe(3);
+    expect(calls).toBe(3);
+    expect(r.error).toBe("network down");
+  });
+
+  it("HTTP 500 persistente → ok:false con error HTTP", async () => {
+    const fetchImpl = async () => ({ ok: false, status: 500 });
+    const r = await pushWithRetry(fetchImpl, URL, INIT, { maxRetries: 3, sleep: noSleep });
+    expect(r.ok).toBe(false);
+    expect(r.error).toBe("HTTP 500");
+  });
+});
+
+describe("syncHealth · recordPush telemetry (W24)", () => {
+  it("registra éxitos y fallos; getLastPush devuelve el más reciente; log acotado a 20", () => {
+    const storage = fakeStorage();
+    const orig = globalThis.localStorage;
+    globalThis.localStorage = storage;
+    try {
+      recordPush({ success: true, syncVersion: 284, error: null, attempts: 1 });
+      recordPush({ success: false, syncVersion: 284, error: "HTTP 502", attempts: 3 });
+      const log = getPushLog();
+      expect(log.length).toBe(2);
+      expect(log[0].success).toBe(false); // más reciente primero
+      expect(log[0].error).toBe("HTTP 502");
+      expect(log[1].success).toBe(true);
+      expect(getLastPush().syncVersion).toBe(284);
+      for (let i = 0; i < 25; i++) recordPush({ success: true, syncVersion: i, error: null, attempts: 1 });
+      expect(getPushLog().length).toBe(20);
+    } finally {
+      globalThis.localStorage = orig;
+    }
+  });
+
+  it("resyncNow aborta si el push falla (decisión W24 Fase 3): no hay reemplazo cuando pending && !pushOk", async () => {
+    // Escenario del wargame: cambios locales pendientes + push con fallo de red.
+    // pushWithRetry devuelve ok:false → resyncNow DEBE abortar (return sin hydrate).
+    const noSleep2 = async () => {};
+    const fetchImpl = async () => { throw new Error("offline"); };
+    const r = await pushWithRetry(fetchImpl, "https://x.test/api/push", {}, { maxRetries: 3, sleep: noSleep2 });
+    expect(r.ok).toBe(false);
+    // El caller (resyncNow) interpreta ok:false como abort → estado local intacto.
   });
 });

@@ -25,3 +25,6 @@ server/hermes/config.json
 
 # Respaldo de datos privados (no versionable)
 server/mis-finazas-respaldo-*.json
+
+# Credenciales VPS — nunca versionar
+VPS-CONEXION.md
