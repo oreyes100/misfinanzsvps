@@ -22,6 +22,7 @@ mkdirSync(DATA_DIR, { recursive: true });
 const categorizeLimiter = makeRateLimiter({ windowMs: 60_000, max: 30 });
 const learnLimiter = makeRateLimiter({ windowMs: 60_000, max: 30 });
 const snapshotLimiter = makeRateLimiter({ windowMs: 60_000, max: 60 });
+const aiTestLimiter = makeRateLimiter({ windowMs: 60_000, max: 20 });
 const geminiCircuit = makeCircuitBreaker({ threshold: 3, resetMs: 300_000 });
 const telegramStore = makeUpdateIdStore({ persistPath: path.join(DATA_DIR, "blobs", "telegram", "processed_updates.json"), max: 5000 });
 
@@ -88,6 +89,17 @@ function hermesGeminiKey() {
     }
   } catch { /* ignorar */ }
   return null;
+}
+
+/** W26: URL del servidor OCR local de Hermes (para /api/ai-test). */
+function hermesOcrUrl() {
+  try {
+    if (existsSync(HERMES_CONFIG)) {
+      const cfg = JSON.parse(readFileSync(HERMES_CONFIG, "utf8"));
+      if (cfg.ocrUrl) return cfg.ocrUrl;
+    }
+  } catch { /* ignorar */ }
+  return "http://127.0.0.1:8765";
 }
 
 function embedProviderFromEnv() {
@@ -655,6 +667,43 @@ const server = http.createServer(async (req, res) => {
       if (!v.ok) return sendJson(res, 400, { error: v.error });
       const { handleLearn } = await import("./learn.mjs");
       return await handleLearn(req, res, learnBody);
+    }
+
+    // W26: /api/ai-config (GET) — configuración de motores IA + estado de
+    // circuits. Sin secretos (nunca expone API keys).
+    if (urlPath === "/api/ai-config" && req.method === "GET") {
+      const { loadAIConfig, getAIStatus } = await import("./hermes/aiClient.mjs");
+      return sendJson(res, 200, { config: loadAIConfig(), status: getAIStatus() });
+    }
+
+    // W26: /api/ai-test (POST {task, provider}) — ping ligero a un provider
+    // (sin inferencia pesada). Rate-limited.
+    if (urlPath === "/api/ai-test" && req.method === "POST") {
+      const rl = aiTestLimiter.isAllowed(clientIp(req));
+      if (!rl.allowed) {
+        res.setHeader("Retry-After", String(Math.ceil((rl.resetAt - Date.now()) / 1000)));
+        return sendJson(res, 429, { error: "Demasiadas peticiones. Intenta de nuevo más tarde." });
+      }
+      let body;
+      try { body = await readBody(req); }
+      catch (e) {
+        if (e.message === "bad_json") return sendJson(res, 400, { error: "JSON inválido." });
+        if (e.message === "too_large") return sendJson(res, 413, { error: "Cuerpo demasiado grande." });
+        throw e;
+      }
+      const task = String(body?.task || "");
+      const provider = String(body?.provider || "");
+      if (!["ocr", "llm", "embeddings"].includes(task) || !provider) {
+        return sendJson(res, 400, { error: "task y provider requeridos (task: ocr|llm|embeddings)." });
+      }
+      const { loadAIConfig, testProvider } = await import("./hermes/aiClient.mjs");
+      const result = await testProvider(task, provider, {
+        config: loadAIConfig(),
+        geminiKey: embedApiKey(),
+        ocrUrl: hermesOcrUrl(),
+        ollamaBase: process.env.OLLAMA_BASE || "http://localhost:11434",
+      });
+      return sendJson(res, 200, result);
     }
 
     return sendJson(res, 404, { error: "No encontrado." });

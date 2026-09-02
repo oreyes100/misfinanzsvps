@@ -1,0 +1,21 @@
+{
+  "_comment": "W26: configuración centralizada de motores IA. Timeout hard-clamp ≤60s (garantía: ninguna llamada a IA se cuelga más). Override por env: AI_LLM_PRIMARY, AI_LLM_FALLBACK (csv), AI_OCR_PRIMARY, AI_EMBED_PRIMARY, AI_OCR_TIMEOUT_MS, AI_LLM_TIMEOUT_MS, AI_EMBED_TIMEOUT_MS.",
+  "ocr": {
+    "primary": "paddle",
+    "fallback": [],
+    "timeoutMs": 60000,
+    "maxRetries": 2
+  },
+  "llm": {
+    "primary": "gemini-2.5-flash",
+    "fallback": ["gemini-2.0-flash"],
+    "timeoutMs": 60000,
+    "maxRetries": 2
+  },
+  "embeddings": {
+    "primary": "ollama",
+    "fallback": [],
+    "timeoutMs": 15000,
+    "maxRetries": 1
+  }
+}

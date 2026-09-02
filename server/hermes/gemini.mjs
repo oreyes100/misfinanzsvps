@@ -4,6 +4,9 @@
 
 import fs from "node:fs";
 import path from "node:path";
+// W26: cadena de modelos LLM desde aiConfig.json (primary + fallback), circuit
+// breaker por modelo (W1 Fortress) y timeout OBLIGATORIO ≤60s por llamada.
+import { loadAIConfig, withTimeout, circuitForProvider } from "./aiClient.mjs";
 
 // --- Configuración de proveedores de embeddings ---
 const OLLAMA_BASE = process.env.OLLAMA_BASE || "http://localhost:11434";
@@ -23,6 +26,8 @@ const OPENAI_EMBED_MODEL = "text-embedding-3-small";
 export async function embedText(text, provider = "ollama", apiKey, model) {
   const t = String(text || "").trim();
   if (!t) return [];
+  // W26: timeout obligatorio de embeddings (≤60s, default 15s en aiConfig).
+  const signal = AbortSignal.timeout(loadAIConfig().embeddings.timeoutMs);
 
   if (provider === "ollama") {
     const m = model || OLLAMA_EMBED_MODEL;
@@ -31,6 +36,7 @@ export async function embedText(text, provider = "ollama", apiKey, model) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model: m, prompt: t }),
+      signal,
     });
     if (!res.ok) throw new Error(`Ollama embeddings ${res.status}: ${await res.text()}`);
     const out = await res.json();
@@ -45,6 +51,7 @@ export async function embedText(text, provider = "ollama", apiKey, model) {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
       body: JSON.stringify({ model: m, input: t }),
+      signal,
     });
     if (!res.ok) throw new Error(`OpenAI embeddings ${res.status}: ${await res.text()}`);
     const out = await res.json();
@@ -61,6 +68,7 @@ export async function embedText(text, provider = "ollama", apiKey, model) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ content: { parts: [{ text: t }] } }),
+        signal,
       }
     );
     if (!res.ok) throw new Error(`Gemini embeddings ${res.status}: ${await res.text()}`);
@@ -141,6 +149,16 @@ export const SUBCATEGORIES = {
 };
 
 const GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash"];
+
+function llmModelChain() {
+  try {
+    const cfg = loadAIConfig();
+    const chain = [cfg.llm.primary, ...cfg.llm.fallback].filter((m) => m.startsWith("gemini-"));
+    if (chain.length) return [...new Set(chain)];
+  } catch { /* fallback a la lista histórica */ }
+  return GEMINI_MODELS;
+}
+
 const MIME_BY_EXT = {
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
@@ -159,13 +177,27 @@ async function geminiCall(parts, apiKey, maxRetries = 2) {
     contents: [{ parts }],
     generationConfig: { response_mime_type: "application/json", temperature: 0 },
   };
+  const aiCfg = loadAIConfig();
+  const timeoutMs = aiCfg.llm.timeoutMs;
+  const models = llmModelChain();
   let lastErr = null;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    for (const model of GEMINI_MODELS) {
+    for (const model of models) {
+      const circuit = circuitForProvider("llm", model);
+      if (!circuit.canExecute()) {
+        console.warn(`[gemini] ⚠️ ${model} en circuit breaker ${circuit.getState()}, saltando`);
+        lastErr = new Error(`${model} circuit open`);
+        continue; // modelo en corto, probar siguiente
+      }
+      const started = Date.now();
       try {
-        const res = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`,
-          { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }
+        const res = await withTimeout(
+          (signal) => fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`,
+            { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal }
+          ),
+          timeoutMs,
+          `llm/${model}`
         );
         if (res.status === 404) continue;
         if (res.status === 429) throw new Error("Límite de uso de Gemini alcanzado, espera un momento");
@@ -174,19 +206,31 @@ async function geminiCall(parts, apiKey, maxRetries = 2) {
         const out = await res.json();
         const text = out.candidates?.[0]?.content?.parts?.[0]?.text;
         if (!text) throw new Error("Gemini no devolvió contenido");
-        return JSON.parse(text);
+        const parsed = JSON.parse(text);
+        circuit.onSuccess();
+        console.log(`[gemini] ✅ ${model} respondió en intento ${attempt + 1} (${Date.now() - started}ms)`);
+        return parsed;
       } catch (e) {
-        const retriable = /429|Límite de uso/i.test(String(e.message)) || /404/.test(String(e.message));
+        const msg = String(e.message || e);
+        const latencyMs = Date.now() - started;
+        const retriable = /429|Límite de uso/i.test(msg) || /404/.test(msg);
         if (retriable && attempt < maxRetries) {
+          if (/429|Límite de uso/i.test(msg)) circuit.onRateLimit();
+          else circuit.onFailure();
           const delay = 15000 * Math.pow(2, attempt);
           await new Promise((r) => setTimeout(r, delay));
           lastErr = e;
           break; // reintentar con backoff
         }
-        if (/404/.test(String(e.message))) {
+        if (/404/.test(msg) || /timeout/i.test(msg)) {
+          circuit.onFailure();
+          console.warn(`[gemini] ⚠️ ${model} falló (${latencyMs}ms): ${msg} → siguiente modelo`);
           lastErr = e;
-          continue; // modelo no disponible, probar siguiente
+          continue; // modelo no disponible o lento → probar siguiente
         }
+        // 400/403 (key inválida) o error no recuperable: no quemar el circuit
+        // por un error de configuración, pero registrar el fallo y abortar.
+        circuit.onFailure();
         throw e;
       }
     }

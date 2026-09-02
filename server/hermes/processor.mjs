@@ -12,6 +12,7 @@ import { parseOcrText } from "./local.mjs";
 import * as apply from "./apply.mjs";
 import { reviewStatement, reviewStatementLocal, reconcileEndingBalance } from "./review.mjs";
 import { appendJournal } from "./journal.mjs";
+import { loadAIConfig, callWithFallback } from "./aiClient.mjs";
 import { categoryFromMap, transferRuleFor } from "./learning.mjs";
 
 export const IMAGE_EXT = [".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"];
@@ -343,28 +344,25 @@ async function handleStatementLocal(cfg, state, result, file, source) {
 
 async function extractFromImage(cfg, state, imgPath, sourceBase) {
   // Paso 1: OCR local (PaddleOCR) si el provider es "paddle" (default).
-  // Reintenta con backoff si el servidor está ocupado o la inferencia falla por
-  // razones transitorias; si falla no bloquea el flujo (luego entra Gemini).
+  // W26: la llamada pasa por callWithFallback — circuit breaker + reintentos +
+  // timeout duro de aiConfig (≤60s). Antes el timeout era de 20 MINUTOS
+  // hardcodeado (causa documentada del bot atascado).
   let ocrText = null;
   const ocrProvider = cfg.ocrProvider || "paddle";
   if (ocrProvider === "paddle" && cfg.ocrUrl) {
-    const maxOcr = cfg.ocrRetries ?? 2;
-    for (let attempt = 1; attempt <= maxOcr; attempt++) {
-      try {
-        ocrText = await ocrImage(imgPath, { url: cfg.ocrUrl });
-        appendJournal(cfg.journalFile, { event: "ocr", file: sourceBase, chars: ocrText.length, attempt });
-        break;
-      } catch (e) {
-        const retriable = /socket hang up|ECONNREFUSED|ECONNRESET|timeout|no such file|ENOENT|500|503/i.test(String(e.message));
-        if (attempt < maxOcr && retriable) {
-          const wait = 15000 * attempt;
-          console.warn(`[processor] OCR ${sourceBase} reintento ${attempt}/${maxOcr} en ${wait / 1000}s: ${e.message}`);
-          await new Promise((r) => setTimeout(r, wait));
-        } else {
-          console.warn(`[processor] OCR skip ${sourceBase}: ${e.message}`);
-          break;
-        }
-      }
+    try {
+      const res = await callWithFallback(
+        "ocr",
+        { paddle: () => ocrImage(imgPath, { url: cfg.ocrUrl }) },
+        { config: loadAIConfig() }
+      );
+      ocrText = res.result;
+      appendJournal(cfg.journalFile, { event: "ocr", file: sourceBase, chars: ocrText.length, attempt: res.attempt, provider: res.provider, latencyMs: res.latencyMs });
+    } catch (e) {
+      // La cadena ya reintentó (maxRetries de aiConfig). Si todo falla, el flujo
+      // sigue: entra Gemini vision como respaldo (paso 3).
+      console.warn(`[processor] OCR skip ${sourceBase}: ${e.message}`);
+      appendJournal(cfg.journalFile, { event: "ocr_failed", file: sourceBase, error: String(e.message || e).slice(0, 300) });
     }
   }
 

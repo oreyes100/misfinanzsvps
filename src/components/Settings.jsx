@@ -5,6 +5,7 @@ import { CURRENCIES, DASHBOARD_CARDS, cardOn, downloadBackup, downloadCSV, fmtMo
 import { AI_PROVIDERS, aiProviderById } from "../ai.js";
 import { Btn, Field, Glass, inputCls } from "./UI.jsx";
 import TelegramAgent from "./TelegramAgent.jsx";
+import AIConfigPanel from "./AIConfigPanel.jsx";
 import Users from "./Users.jsx";
 import GooglePhotosSettings from "./GooglePhotosSettings.jsx";
 import { getLastResync } from "../syncHealth.js";
@@ -222,6 +223,8 @@ export default function Settings({ session }) {
       <BiometricSettings session={session} />
 
       <AIEngine />
+
+      <AIConfigPanel />
 
       <GooglePhotosSettings />
 
