@@ -129,17 +129,17 @@ function pickByCosine(descEmb, prototypes) {
   return { category: best.category, confidence: Math.min(0.95, 0.5 + bestSim) };
 }
 
-/** Categoriza por embeddings: prototipo = nombre + keywords + subcategorías de cada categoría. */
+/** Categoriza por embeddings: prototipo = nombre + keywords + subcategorías de cada categoría. W27: vía Hermes Agent. */
 async function categorizeByEmbeddings(text, categories, provider, apiKey) {
-  const { embedText } = await import("./hermes/gemini.mjs");
-  const descEmb = await embedText(String(text || ""), provider, apiKey);
+  const { handleAITask } = await import("./hermes/aiOrchestrator.mjs");
+  const descEmb = (await handleAITask("embeddings", { text, provider }, { geminiKey: apiKey })).embedding;
   if (!descEmb?.length) return null;
 
   const prototypes = [];
   for (const c of categories || []) {
     if (c.system) continue;
     const corpus = [c.name, ...(c.keywords || []), ...(c.subcategories || [])].filter(Boolean).join(" · ");
-    const emb = await embedText(corpus, provider, apiKey);
+    const emb = (await handleAITask("embeddings", { text: corpus, provider }, { geminiKey: apiKey })).embedding;
     if (emb?.length) prototypes.push({ category: c.name, embedding: emb });
   }
   if (!prototypes.length) return null;
@@ -669,21 +669,30 @@ const server = http.createServer(async (req, res) => {
       return await handleLearn(req, res, learnBody);
     }
 
-    // W26: /api/ai-config (GET) — configuración de motores IA + estado de
-    // circuits. Sin secretos (nunca expone API keys).
-    if (urlPath === "/api/ai-config" && req.method === "GET") {
-      const { loadAIConfig, getAIStatus } = await import("./hermes/aiClient.mjs");
-      return sendJson(res, 200, { config: loadAIConfig(), status: getAIStatus() });
-    }
-
-    // W26: /api/ai-test (POST {task, provider}) — ping ligero a un provider
-    // (sin inferencia pesada). Rate-limited.
-    if (urlPath === "/api/ai-test" && req.method === "POST") {
+    // W27: Hermes Agent = ÚNICO punto de entrada de IA. Un solo endpoint
+    // /api/hermes/ai/:task (ocr | llm | embeddings | audit | config | test).
+    // Reemplaza a los endpoints W26 /api/ai-config y /api/ai-test.
+    const hermesAiMatch = urlPath.match(/^\/api\/hermes\/ai\/([a-z]+)$/);
+    if (hermesAiMatch) {
       const rl = aiTestLimiter.isAllowed(clientIp(req));
       if (!rl.allowed) {
         res.setHeader("Retry-After", String(Math.ceil((rl.resetAt - Date.now()) / 1000)));
         return sendJson(res, 429, { error: "Demasiadas peticiones. Intenta de nuevo más tarde." });
       }
+      const { handleAITask } = await import("./hermes/aiOrchestrator.mjs");
+      const task = hermesAiMatch[1];
+
+      if (task === "config") {
+        if (req.method !== "GET") return sendJson(res, 405, { error: "Método no permitido." });
+        try {
+          const out = await handleAITask("config", {}, {});
+          return sendJson(res, 200, out);
+        } catch (e) {
+          return sendJson(res, 500, { ok: false, error: String(e?.message || e) });
+        }
+      }
+
+      if (req.method !== "POST") return sendJson(res, 405, { error: "Método no permitido." });
       let body;
       try { body = await readBody(req); }
       catch (e) {
@@ -691,19 +700,25 @@ const server = http.createServer(async (req, res) => {
         if (e.message === "too_large") return sendJson(res, 413, { error: "Cuerpo demasiado grande." });
         throw e;
       }
-      const task = String(body?.task || "");
-      const provider = String(body?.provider || "");
-      if (!["ocr", "llm", "embeddings"].includes(task) || !provider) {
-        return sendJson(res, 400, { error: "task y provider requeridos (task: ocr|llm|embeddings)." });
+      try {
+        const out = await handleAITask(task, body || {}, {
+          geminiKey: embedApiKey() || null,
+          ocrUrl: hermesOcrUrl(),
+          ollamaBase: process.env.OLLAMA_BASE || "http://localhost:11434",
+          // W27: key de Gemini configurable por UI (settings.geminiKey del sync doc)
+          lookupSyncState: (id) => {
+            if (!ID_RE.test(String(id || ""))) return null;
+            try { return getSyncDoc(db, String(id).toLowerCase())?.state || null; } catch { return null; }
+          },
+          auditFn: async (movements, registered, key, o) => {
+            const { aiAudit } = await import("./hermes/gemini.mjs");
+            return aiAudit(movements, registered, key, o);
+          },
+        });
+        return sendJson(res, 200, out);
+      } catch (e) {
+        return sendJson(res, 500, { ok: false, error: String(e?.message || e).slice(0, 300) });
       }
-      const { loadAIConfig, testProvider } = await import("./hermes/aiClient.mjs");
-      const result = await testProvider(task, provider, {
-        config: loadAIConfig(),
-        geminiKey: embedApiKey(),
-        ocrUrl: hermesOcrUrl(),
-        ollamaBase: process.env.OLLAMA_BASE || "http://localhost:11434",
-      });
-      return sendJson(res, 200, result);
     }
 
     return sendJson(res, 404, { error: "No encontrado." });

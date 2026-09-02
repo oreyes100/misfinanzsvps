@@ -83,6 +83,28 @@ function circuitFor(task, provider) {
 /** Acceso al circuit de un provider concreto (p. ej. para integraciones que iteran modelos manualmente). */
 export const circuitForProvider = circuitFor;
 
+/**
+ * W27: cliente HTTP del bot hacia el orchestrator (/api/hermes/ai/:task).
+ * El bot ya NO llama a providers directos: todo pasa por el server (único
+ * proceso con circuit breakers compartidos).
+ * @returns {Promise<object>} respuesta del orchestrator
+ */
+export async function callOrchestrator(cfg, task, payload = {}, opts = {}) {
+  const serverUrl = (cfg.serverUrl || "http://127.0.0.1:3000").replace(/\/+$/, "");
+  const url = `${serverUrl}/api/hermes/ai/${encodeURIComponent(task)}`;
+  const r = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(opts.timeoutMs ?? 120_000), // la cadena IA puede tomar varios intentos; cada llamada individual ≤60s
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok || data.ok === false) {
+    throw new Error(`orchestrator ${task} HTTP ${r.status}: ${data.error || "error"}`);
+  }
+  return data;
+}
+
 function resetCircuits() {
   circuits.clear();
 }

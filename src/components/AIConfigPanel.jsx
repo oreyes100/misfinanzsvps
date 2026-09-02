@@ -1,8 +1,11 @@
 import { useEffect, useState } from "react";
+import { Glass } from "./UI.jsx";
 
-// W26: panel de configuración de motores IA (OCR/LLM/embeddings).
-// Muestra primary + fallback + timeout por tarea y permite probar cada
-// provider (ping ligero, sin inferencia pesada).
+// W27: panel de configuración de motores IA (Hermes Agent = único punto de
+// entrada de IA). Muestra primary + fallback + timeout + estado de circuits
+// por tarea y permite probar cada provider vía /api/hermes/ai/test.
+// FIX bug de carga W27: faltaba importar Glass → ReferenceError al montar
+// Ajustes → la webapp quedaba en blanco.
 
 const TASK_LABEL = {
   ocr: "OCR (texto de imágenes)",
@@ -27,7 +30,7 @@ export default function AIConfigPanel() {
 
   useEffect(() => {
     let alive = true;
-    fetch("/api/ai-config", { cache: "no-store" })
+    fetch("/api/hermes/ai/config", { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
       .then((d) => { if (alive) setStatus(d.status); })
       .catch((e) => { if (alive) setError(String(e.message || e)); });
@@ -39,7 +42,7 @@ export default function AIConfigPanel() {
     setTesting((t) => ({ ...t, [key]: true }));
     setResults((r) => ({ ...r, [key]: null }));
     try {
-      const res = await fetch("/api/ai-test", {
+      const res = await fetch("/api/hermes/ai/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ task, provider }),
@@ -56,7 +59,7 @@ export default function AIConfigPanel() {
   if (error) {
     return (
       <Glass className="p-4">
-        <h3 className="mb-1 font-semibold">Motores de IA</h3>
+        <h3 className="mb-1 font-semibold">Motores de IA (Hermes Agent)</h3>
         <p className="text-sm text-loss">No se pudo cargar la configuración: {error}</p>
       </Glass>
     );
@@ -64,7 +67,7 @@ export default function AIConfigPanel() {
   if (!status) {
     return (
       <Glass className="p-4">
-        <h3 className="mb-1 font-semibold">Motores de IA</h3>
+        <h3 className="mb-1 font-semibold">Motores de IA (Hermes Agent)</h3>
         <p className="text-sm text-ink-dim">Cargando…</p>
       </Glass>
     );
@@ -72,7 +75,7 @@ export default function AIConfigPanel() {
 
   return (
     <Glass className="p-4">
-      <h3 className="mb-3 font-semibold">Motores de IA</h3>
+      <h3 className="mb-3 font-semibold">Motores de IA (Hermes Agent)</h3>
       <div className="space-y-4">
         {Object.entries(status).map(([task, cfg]) => (
           <div key={task} className="rounded-xl bg-white/5 p-3">

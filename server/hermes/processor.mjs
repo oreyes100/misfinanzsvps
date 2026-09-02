@@ -6,13 +6,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { openDb } from "../db.mjs";
-import { aiExtractFromFile } from "./gemini.mjs";
-import { ocrImage } from "./ocr.mjs";
 import { parseOcrText } from "./local.mjs";
 import * as apply from "./apply.mjs";
 import { reviewStatement, reviewStatementLocal, reconcileEndingBalance } from "./review.mjs";
 import { appendJournal } from "./journal.mjs";
-import { loadAIConfig, callWithFallback } from "./aiClient.mjs";
+import { loadAIConfig, callOrchestrator } from "./aiClient.mjs";
 import { categoryFromMap, transferRuleFor } from "./learning.mjs";
 
 export const IMAGE_EXT = [".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"];
@@ -286,6 +284,7 @@ async function handleStatement(cfg, state, result, file, source) {
     account: acc,
     movements,
     geminiKey,
+    orch: { serverUrl: cfg.serverUrl, syncId: cfg.syncCode },
     categories,
     maxRounds: cfg.maxAuditRounds,
     source,
@@ -343,24 +342,18 @@ async function handleStatementLocal(cfg, state, result, file, source) {
 // ---------- OCR + parseo ----------
 
 async function extractFromImage(cfg, state, imgPath, sourceBase) {
-  // Paso 1: OCR local (PaddleOCR) si el provider es "paddle" (default).
-  // W26: la llamada pasa por callWithFallback — circuit breaker + reintentos +
-  // timeout duro de aiConfig (≤60s). Antes el timeout era de 20 MINUTOS
-  // hardcodeado (causa documentada del bot atascado).
+  // Paso 1: OCR local (PaddleOCR). W27: el bot ya NO llama a providers
+  // directos — va por el orchestrator HTTP (/api/hermes/ai/ocr) donde vive el
+  // circuit breaker + timeout ≤60s (W26). Antes el timeout era de 20 MINUTOS.
   let ocrText = null;
   const ocrProvider = cfg.ocrProvider || "paddle";
   if (ocrProvider === "paddle" && cfg.ocrUrl) {
     try {
-      const res = await callWithFallback(
-        "ocr",
-        { paddle: () => ocrImage(imgPath, { url: cfg.ocrUrl }) },
-        { config: loadAIConfig() }
-      );
-      ocrText = res.result;
+      const res = await callOrchestrator(cfg, "ocr", { imagePath: imgPath });
+      ocrText = res.text || "";
       appendJournal(cfg.journalFile, { event: "ocr", file: sourceBase, chars: ocrText.length, attempt: res.attempt, provider: res.provider, latencyMs: res.latencyMs });
     } catch (e) {
-      // La cadena ya reintentó (maxRetries de aiConfig). Si todo falla, el flujo
-      // sigue: entra Gemini vision como respaldo (paso 3).
+      // Sin OCR el flujo sigue: entra Gemini vision como respaldo (paso 3).
       console.warn(`[processor] OCR skip ${sourceBase}: ${e.message}`);
       appendJournal(cfg.journalFile, { event: "ocr_failed", file: sourceBase, error: String(e.message || e).slice(0, 300) });
     }
@@ -382,21 +375,25 @@ async function extractFromImage(cfg, state, imgPath, sourceBase) {
   }
 
   // Paso 3: respaldo Gemini si el parser local no reconoció el formato.
+  // W27: vía orchestrator HTTP (/api/hermes/ai/llm) — el bot no toca providers.
   if (!result) {
     const geminiKey = effectiveGeminiKey(cfg, state);
     if (!geminiKey) throw new Error("sin GEMINI key: pon settings.geminiKey en la app, config.geminiKey o env GEMINI_API_KEY");
     try {
-      result = await aiExtractFromFile(imgPath, geminiKey, {
+      const res = await callOrchestrator(cfg, "llm", {
+        imagePath: imgPath,
+        ocrText,
         categories: state.categories || [],
         accounts: state.accounts || [],
-        ocrText,
+        syncId: cfg.syncCode, // el server resuelve settings.geminiKey del doc si hace falta
       });
-      appendJournal(cfg.journalFile, { event: "extract_gemini", file: sourceBase, type: result.type });
+      result = res.result;
+      appendJournal(cfg.journalFile, { event: "extract_llm", file: sourceBase, type: result.type, provider: res.provider, latencyMs: res.latencyMs });
     } catch (e) {
-      // WG11: Gemini en límite/falla → NO descartar. Se degrada a un resultado
-      // mínimo de tipo "receipt" sin cuentas: el flujo lo marcará como
-      // CONFLICTO en el menú MCP (con imagen) en vez de abortar la imagen.
-      console.warn(`[processor] Gemini falló ${sourceBase}: ${e.message}`);
+      // WG11: fallo de IA → NO descartar. Se degrada a un resultado mínimo de
+      // tipo "receipt" sin cuentas: el flujo lo marcará como CONFLICTO en el
+      // menú MCP (con imagen) en vez de abortar la imagen.
+      console.warn(`[processor] LLM falló ${sourceBase}: ${e.message}`);
       appendJournal(cfg.journalFile, { event: "gemini_fallback_conflict", file: sourceBase, error: String(e.message || e).slice(0, 300) });
       result = {
         type: "receipt",

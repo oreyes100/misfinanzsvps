@@ -2,8 +2,10 @@
 // Para un estado de cuenta: corre auditoría comparativa contra las transacciones
 // registradas, aplica las correcciones faltantes, y vuelve a auditar hasta que no
 // queden discrepancias accionables (con tope maxRounds para evitar bucles).
+// W27: la auditoría IA va por el orchestrator HTTP (/api/hermes/ai/audit) —
+// el bot no llama a providers directos.
 
-import { aiAudit } from "./gemini.mjs";
+import { callOrchestrator } from "./aiClient.mjs";
 import { addTransaction, reconcileBalance } from "./apply.mjs";
 
 /**
@@ -11,13 +13,15 @@ import { addTransaction, reconcileBalance } from "./apply.mjs";
  * @param {object} opts.state — estado actual del sync doc.
  * @param {object} opts.account — cuenta objetivo.
  * @param {object[]} opts.movements — movimientos extraídos del extracto.
- * @param {string} opts.geminiKey
+ * @param {string} opts.geminiKey — (legacy, el server resuelve la key)
+ * @param {{serverUrl?: string, syncId?: string}} opts.orch — conexión al orchestrator W27
  * @param {object[]} opts.categories
  * @param {number} opts.maxRounds
  * @param {string} opts.source — nombre de archivo origen (para notas).
  * @returns {Promise<{state: object, round: number, applied: object[], remaining: object[]}>}
  */
-export async function reviewStatement({ state, account, movements, geminiKey, categories = [], maxRounds = 3, source = "" }) {
+export async function reviewStatement({ state, account, movements, geminiKey, orch, categories = [], maxRounds = 3, source = "" }) {
+  if (!orch) throw new Error("reviewStatement requiere orch {serverUrl, syncId} (W27: auditoría vía orchestrator)");
   let current = state;
   const applied = [];
   const appliedKeys = new Set();
@@ -31,7 +35,12 @@ export async function reviewStatement({ state, account, movements, geminiKey, ca
         category: t.category || null, notes: t.notes || null,
       }));
 
-    const audit = await aiAudit(movements, registered, geminiKey, { categories });
+    const auditRes = await callOrchestrator(
+      { serverUrl: orch.serverUrl },
+      "audit",
+      { movements, registered, categories, syncId: orch.syncId }
+    );
+    const audit = auditRes.result;
     const actionable = (audit.items || []).filter(
       (it) => it.kind === "missing" && it.proposal && it.proposal.amount > 0
     );

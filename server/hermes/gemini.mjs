@@ -239,6 +239,18 @@ async function geminiCall(parts, apiKey, maxRetries = 2) {
 }
 
 /**
+ * W27: llamada LLM de texto plano (JSON de respuesta). Misma cadena de modelos,
+ * circuit breaker y timeout que geminiCall. Para tareas sin imagen
+ * (p. ej. análisis de duplicados en la webapp vía /api/hermes/ai/text).
+ * @param {string} prompt
+ * @param {string} apiKey
+ * @returns {Promise<object>} JSON parseado de la respuesta
+ */
+export async function aiTextJSON(prompt, apiKey) {
+  return geminiCall([{ text: prompt }], apiKey);
+}
+
+/**
  * Analiza una imagen financiera con Gemini.
  * @param {string} filePath — ruta local de la imagen.
  * @param {string} apiKey

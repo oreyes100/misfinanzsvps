@@ -481,19 +481,46 @@ export function findInterestAnomalyGroups(transactions: any[], accounts: any[]) 
   return groups;
 }
 
-async function callGeminiForDuplicateAnalysis(prompt: string, key: string) {
-  const body = {
-    contents: [{ parts: [{ text: prompt }] }],
-    generationConfig: { response_mime_type: "application/json", temperature: 0 }
-  };
-  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(key)}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
+/**
+ * W27: embedding de texto vía Hermes Agent (ÚNICO punto de entrada de IA).
+ * POST /api/hermes/ai/embeddings → orchestrator → embedText (timeout + circuit).
+ * @param {string} text - Texto a embeddear
+ * @param {string} [baseUrl] - API_BASE ("" en web, Vercel en capacitor)
+ * @returns {Promise<number[]>} Vector de embeddings ([] si falla)
+ */
+export async function getEmbedding(text: string, baseUrl: string = API_BASE): Promise<number[]> {
+  try {
+    const res = await fetch(`${baseUrl}/api/hermes/ai/embeddings`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: String(text || "").trim() }),
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data?.embedding) ? data.embedding : [];
+  } catch {
+    return [];
+  }
+}
+
+async function callGeminiForDuplicateAnalysis(prompt: string, _key?: string | null) {
+  // W27: vía Hermes Agent (/api/hermes/ai/text) — la webapp ya no llama a
+  // Gemini directo. El server resuelve la key (env, hermes config o settings
+  // del sync doc identificado por syncId).
+  const syncId = (() => {
+    try { return localStorage.getItem("mis-finazas-sync-id") || undefined; } catch { return undefined; }
+  })();
+  const res = await fetch(`${API_BASE}/api/hermes/ai/text`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt, syncId }),
   });
-  const out = await res.json();
-  const text = out.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
-  return JSON.parse(text);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err?.error || `HTTP ${res.status}`);
+  }
+  const data = await res.json();
+  return data?.result ?? {};
 }
 
 export async function analyzeDuplicateValidity(txs: any[], geminiKey: string | null | undefined) {
