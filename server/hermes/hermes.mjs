@@ -82,12 +82,14 @@ async function processFile(file) {
     // OCR maneja la extensión .processing con un temp copy; pasamos el lock.
     const imgPath = lock;
 
-    const { ok, type, actions, report } = await processImage(db, cfg, imgPath, sourceBase);
+    const { ok, type, actions, report, syncVersion } = await processImage(db, cfg, imgPath, sourceBase);
 
     fs.mkdirSync(cfg.processedDir, { recursive: true });
     fs.renameSync(lock, path.join(cfg.processedDir, sourceBase));
-    console.log(`[hermes] OK ${base} → ${type} (${actions.length} acciones)`);
-    return { ok, file: base, type, actions, report };
+    // W25 Fase 2: "aplicada" SOLO si el server confirmó (ok:true del push) —
+    // processImage lanza si el push falló, así que llegar aquí implica server ok.
+    console.log(`[hermes] OK ${base} → ${type} (v${syncVersion ?? "?"}) (${actions.length} acciones)`);
+    return { ok, file: base, type, actions, report, syncVersion };
   } catch (e) {
     const isRateLimit = /Límite de uso/i.test(String(e.message || ""));
     if (isRateLimit) {

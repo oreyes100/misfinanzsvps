@@ -19,6 +19,7 @@ export const IMAGE_EXT = [".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"];
 export function loadProcessorConfig(configPath, overrides = {}) {
   const base = {
     syncCode: null,
+    serverUrl: "http://127.0.0.1:3000", // W25: el bot escribe vía POST /api/push del propio server
     dbPath: null,
     watchDir: "/home/devops/obsidian-vault/images/inbox",
     processedDir: "/home/devops/obsidian-vault/images/processed",
@@ -438,16 +439,35 @@ export async function processImage(db, cfg, imagePath, sourceBase) {
     throw new Error(`tipo no soportado: ${result.type}`);
   }
 
-  const finalState = await apply.saveState(db, cfg.syncCode, next);
+  // W25: el bot ya NO escribe directo a SQLite (read-modify-write del doc
+  // completo desde un segundo proceso = lost-update que borraba transacciones
+  // del bot o de la webapp). Ahora envía un delta mínimo a POST /api/push y el
+  // server consolida de forma determinista (consolidateAndBump). Si el push
+  // falla, processImage lanza → hermes.mjs mueve el archivo a revisión y NO se
+  // reporta "aplicada" (confirmación real).
+  let pushRes = null;
+  try {
+    pushRes = await apply.pushDelta(cfg, apply.computeDelta(state, next));
+  } catch (e) {
+    appendJournal(cfg.journalFile, {
+      event: "push_failed",
+      file: sourceBase,
+      type: result.type,
+      error: String(e.message || e).slice(0, 300),
+    });
+    throw e;
+  }
+  const finalState = pushRes.state || next;
   appendJournal(cfg.journalFile, {
     event: "processed",
     file: sourceBase,
     type: result.type,
     actions,
     report,
-    newSyncVersion: finalState._syncVersion,
+    newSyncVersion: pushRes.syncVersion ?? null,
+    hash: pushRes.hash ?? null,
   });
-  return { ok: true, type: result.type, actions, report, state: finalState };
+  return { ok: true, type: result.type, actions, report, state: finalState, syncVersion: pushRes.syncVersion ?? null };
 }
 
 export { openDb };

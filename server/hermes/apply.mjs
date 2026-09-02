@@ -27,6 +27,48 @@ export async function saveState(db, code, state) {
   return next;
 }
 
+// ---------- W25: el bot escribe vía POST /api/push (mismo protocolo que la webapp) ----------
+
+// Marca _updatedAt en las cuentas modificadas: sin esto, mergeById del server
+// (api/_merge.js) conservaría la versión vieja de la cuenta y el balance del
+// bot se perdería en la consolidación.
+const touchAccount = (a) => ({ ...a, _updatedAt: Date.now() });
+
+/**
+ * W25 Fase 1: envía el delta del bot a POST /api/push?id=<syncCode>.
+ * El server consolida (consolidateAndBump) y avanza _syncVersion.
+ * 3 reintentos con backoff lineal. Lanza si todos fallan → el llamador NO debe
+ * reportar "aplicada" (Fase 2: confirmación real).
+ */
+export async function pushDelta(cfg, delta, opts = {}) {
+  const fetchImpl = opts.fetchImpl || globalThis.fetch;
+  const maxRetries = opts.maxRetries ?? 3;
+  const sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
+  const serverUrl = (cfg.serverUrl || "http://127.0.0.1:3000").replace(/\/+$/, "");
+  const url = `${serverUrl}/api/push?id=${encodeURIComponent(cfg.syncCode)}`;
+  let lastError = null;
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const r = await fetchImpl(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ state: delta }),
+      });
+      if (r.ok) {
+        const data = await r.json();
+        if (data && data.ok) return data; // { ok, state, syncVersion, hash }
+        lastError = new Error(`server rechazó el push: ${JSON.stringify(data).slice(0, 200)}`);
+      } else {
+        lastError = new Error(`HTTP ${r.status}`);
+      }
+    } catch (e) {
+      lastError = e;
+    }
+    if (attempt < maxRetries) await sleep(1000 * attempt);
+  }
+  throw new Error(`push del bot falló tras ${maxRetries} intentos: ${lastError?.message || lastError}`);
+}
+
 export function addTransaction(state, t) {
   const guard = ensureCategory({ category: t.category, description: t.description });
   const tx = {
@@ -47,7 +89,7 @@ export function addTransaction(state, t) {
     _needsCategoryReview: guard.needsCategoryReview || undefined,
   };
   const accounts = (state.accounts || []).map((a) =>
-    a.id === tx.accountId ? { ...a, balance: r2((a.balance || 0) + tx.amount) } : a
+    a.id === tx.accountId ? touchAccount({ ...a, balance: r2((a.balance || 0) + tx.amount) }) : a
   );
   return { ...state, accounts, transactions: [tx, ...(state.transactions || [])] };
 }
@@ -89,8 +131,8 @@ export function addTransfer(state, { fromId, toId, amount, date, notes, fromDesc
   const d = date || todayISO();
   const n = notes ? String(notes).trim() : undefined;
   const accounts = (state.accounts || []).map((a) => {
-    if (a.id === fromId) return { ...a, balance: r2((a.balance || 0) - amount) };
-    if (a.id === toId) return { ...a, balance: r2((a.balance || 0) + credited) };
+    if (a.id === fromId) return touchAccount({ ...a, balance: r2((a.balance || 0) - amount) });
+    if (a.id === toId) return touchAccount({ ...a, balance: r2((a.balance || 0) + credited) });
     return a;
   });
   const txs = [
@@ -106,6 +148,23 @@ export function addTransfer(state, { fromId, toId, amount, date, notes, fromDesc
     },
   ];
   return { ...state, accounts, transactions: [...txs, ...(state.transactions || [])] };
+}
+
+/**
+ * W25: delta mínimo que el bot envía al server — solo las transacciones nuevas
+ * y las cuentas cuyo balance cambió. consolidateAndBump(existing, delta) hace
+ * el merge por ID: las cuentas del bot ganan por _updatedAt (más reciente) y
+ * todo lo demás se conserva del estado existente.
+ */
+export function computeDelta(prev, next) {
+  const prevTxIds = new Set((prev.transactions || []).map((t) => t.id));
+  const transactions = (next.transactions || []).filter((t) => !prevTxIds.has(t.id));
+  const prevAcc = new Map((prev.accounts || []).map((a) => [a.id, a]));
+  const accounts = (next.accounts || []).filter((a) => {
+    const p = prevAcc.get(a.id);
+    return !p || p.balance !== a.balance;
+  });
+  return { accounts, transactions };
 }
 
 // ---------- Resolución de cuenta desde un texto (replica resolveAccount de ocr.js) ----------
