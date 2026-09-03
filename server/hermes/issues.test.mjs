@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { STATES, loadIssues, createIssue, getIssue, nextIssueInState, updateIssue, buildPrompt } from "./issues.mjs";
+import { STATES, MAX_BUILD_ATTEMPTS, loadIssues, createIssue, getIssue, nextIssueInState, updateIssue, buildPrompt } from "./issues.mjs";
 
 function tmpPath() {
   return path.join(os.tmpdir(), `w30-issues-${Math.random().toString(36).slice(2)}.json`);
@@ -63,4 +63,24 @@ test("buildPrompt incluye título, AC con checks y non-goals", () => {
 
 test("STATES completos", () => {
   assert.deepEqual(STATES, ["todo", "in_progress", "review", "ready_to_merge", "done", "needs_fix", "needs_human"]);
+});
+
+
+// ---------- W30 mejoras: complejidad + needs_human a los 2 + modo forense ----------
+
+test("createIssue acepta complexity (feature|diagnostic) y MAX_BUILD_ATTEMPTS=2", () => {
+  assert.equal(MAX_BUILD_ATTEMPTS, 2);
+  const p = tmpPath();
+  const a = createIssue({ wargame: 32, title: "bug raro", complexity: "diagnostic" }, p);
+  assert.equal(a.complexity, "diagnostic");
+  const b = createIssue({ wargame: 32, title: "feature normal" }, p);
+  assert.equal(b.complexity, "feature");
+  fs.unlinkSync(p);
+});
+
+test("buildPrompt con complexity diagnostic incluye MODO FORENSE", () => {
+  const prompt = buildPrompt({ id: "w32-i1", title: "bug", complexity: "diagnostic", acceptanceCriteria: [] });
+  assert.match(prompt, /MODO FORENSE/);
+  const prompt2 = buildPrompt({ id: "w32-i2", title: "feat", complexity: "feature", acceptanceCriteria: [] });
+  assert.doesNotMatch(prompt2, /MODO FORENSE/);
 });

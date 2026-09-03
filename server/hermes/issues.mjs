@@ -9,7 +9,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const ISSUES_PATH = path.join(HERE, "../data/wargame_issues.json");
 
 export const STATES = ["todo", "in_progress", "review", "ready_to_merge", "done", "needs_fix", "needs_human"];
-export const MAX_BUILD_ATTEMPTS = 3;
+export const MAX_BUILD_ATTEMPTS = 2; // W30-mejora 3: 2 fallos del mismo issue → needs_human con resumen ejecutivo
 
 export function loadIssues(p = ISSUES_PATH) {
   try {
@@ -26,7 +26,7 @@ export function saveIssues(data, p = ISSUES_PATH) {
   fs.writeFileSync(p, JSON.stringify(data, null, 2));
 }
 
-export function createIssue({ wargame, title, acceptanceCriteria = [], nonGoals = [], context = "" }, p = ISSUES_PATH) {
+export function createIssue({ wargame, title, acceptanceCriteria = [], nonGoals = [], context = "", complexity = "feature" }, p = ISSUES_PATH) {
   const data = loadIssues(p);
   const id = `w${wargame}-i${data.issues.filter((i) => i.wargame === wargame).length + 1}`;
   const issue = {
@@ -34,6 +34,7 @@ export function createIssue({ wargame, title, acceptanceCriteria = [], nonGoals 
     state: "todo",
     acceptanceCriteria, // [{desc, check}] — check = comando shell verificable
     nonGoals, context,
+    complexity, // W30-mejora 1: "feature" | "diagnostic" — el build loop elige modelo según complejidad
     buildAttempts: 0, reviewAttempts: 0,
     branch: `wargame-${wargame}/${id}`,
     createdAt: Date.now(), lastAction: Date.now(),
@@ -84,6 +85,8 @@ CRITERIOS DE ACEPTACIÓN (todos deben pasar):
 ${ac || "- (ninguno definido: implementa lo descrito en el título)"}
 ${issue.context ? `\nCONTEXTO:\n${issue.context}` : ""}
 NO HACER (non-goals): ${(issue.nonGoals || []).join("; ") || "(ninguno)"}
+
+${issue.complexity === "diagnostic" ? `MODO FORENSE (issue diagnóstico): ANTES de escribir código, investiga a fondo con grep/read (causa raíz, archivos afectados, convenciones del repo). Documenta tu diagnóstico en el mensaje de commit tras "diagnóstico:".` : ""}
 
 REGLAS:
 1. Escribe/actualiza tests para lo que implementes (vitest para src/**, node:test para server/**).

@@ -8,6 +8,12 @@ import path from "node:path";
 import os from "node:os";
 import process from "node:process";
 import { nextIssueInState, updateIssue, buildPrompt, MAX_BUILD_ATTEMPTS } from "../server/hermes/issues.mjs";
+
+// W30-mejora 4: modelo según complejidad del issue. Diagnostic → modelo más
+// capaz (configurable con W30_MODEL_DIAGNOSTIC si se añade auth de otro
+// proveedor al VPS); feature → el rápido/barato por defecto.
+const MODEL_FEATURE = process.env.W30_MODEL_FEATURE || "opencode-go/glm-5.3-flash";
+const MODEL_DIAGNOSTIC = process.env.W30_MODEL_DIAGNOSTIC || process.env.W30_MODEL_FEATURE || "opencode-go/glm-5.3-flash";
 import { notify } from "../server/hermes/notifications.mjs";
 
 const REPO = "/home/devops/mis-finanzas";
@@ -35,9 +41,15 @@ async function main() {
     const promptFile = path.join(os.tmpdir(), `w30-prompt-${issue.id}.txt`);
     fs.writeFileSync(promptFile, buildPrompt(issue));
 
-    log("agente opencode headless iniciando…");
-    run(`"$HOME/.npm-global/bin/opencode" run --model opencode-go/glm-5.3-flash "$(cat ${promptFile})"`, { timeout: 30 * 60_000 });
-    fs.unlinkSync(promptFile);
+    const model = issue.complexity === "diagnostic" ? MODEL_DIAGNOSTIC : MODEL_FEATURE;
+    log("agente opencode headless iniciando…", { model, complexity: issue.complexity || "feature" });
+    let agentOut = "";
+    try {
+      agentOut = run(`"$HOME/.npm-global/bin/opencode" run --model ${model} "$(cat ${promptFile})"`, { timeout: 30 * 60_000, quiet: true });
+    } finally {
+      fs.unlinkSync(promptFile);
+      if (agentOut) fs.writeFileSync(path.join(os.tmpdir(), `w30-agent-${issue.id}.log`), String(agentOut).slice(-4000));
+    }
 
     // tests reales (exit code, no parsing)
     let testsOk = true;
@@ -70,11 +82,24 @@ async function main() {
     run("git checkout main -q", { quiet: true });
   } catch (e) {
     log(`ERROR: ${e?.message || e}`);
+    const agentTail = (() => { try { return fs.readFileSync(path.join(os.tmpdir(), `w30-agent-${issue.id}.log`), "utf8").slice(-600); } catch { return ""; } })();
     try { run("git checkout main -q && git reset --hard origin/main -q", { quiet: true }); } catch {}
     const cur = updateIssue(issue.id, { state: "todo", lastError: String(e?.message || e).slice(0, 200) });
+    // W30-mejora 3: 2 fallos del MISMO issue → needs_human con resumen ejecutivo
     if (cur.buildAttempts >= MAX_BUILD_ATTEMPTS) {
-      updateIssue(issue.id, { state: "needs_human" });
-      await notify(`🧍 ${issue.id}: ${MAX_BUILD_ATTEMPTS} builds fallaron → necesita humano (${String(e?.message || e).slice(0, 120)})`);
+      updateIssue(issue.id, {
+        state: "needs_human",
+        lastError: String(e?.message || e).slice(0, 200),
+        lastAgentOutput: agentTail,
+      });
+      await notify(
+        `🧍 ${issue.id} requiere humano.\n` +
+        `• Intentos fallidos: ${cur.buildAttempts}\n` +
+        `• Último error: ${String(e?.message || e).slice(0, 150)}\n` +
+        `• Complejidad: ${issue.complexity || "feature"}\n` +
+        (agentTail ? `• Cola del agente: ${agentTail.slice(-200).replace(/\n/g, " | ")}\n` : "") +
+        `• Sugerencia: revisa el contexto del issue (${issue.acceptanceCriteria?.map(a => a.desc).join("; ") || issue.title}) y ejecuta /resume ${issue.id} cuando lo resuelvas.`
+      );
     } else {
       await notify(`↩️ ${issue.id}: build falló, reintento programado (${cur.buildAttempts}/${MAX_BUILD_ATTEMPTS})`);
     }

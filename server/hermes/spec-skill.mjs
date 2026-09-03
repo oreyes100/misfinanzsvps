@@ -9,6 +9,7 @@ export const QUESTIONS = [
   "¿Qué endpoints o archivos tocará?",
   "¿Cómo se verifica el éxito? (comandos curl/test, uno por línea)",
   "¿Qué puede fallar? (edge cases, separados por coma)",
+  "¿Es un bug diagnóstico (requiere entender código existente) o una feature nueva?",
 ];
 
 // Entrevistas activas en memoria (proceso server persistente).
@@ -53,7 +54,7 @@ export async function handleInterviewAnswer(chatId, answer) {
   } catch (e) {
     return `❌ No pude generar los issues (${String(e?.message || e).slice(0, 120)}). Intenta de nuevo con /spec.`;
   }
-  for (const iss of issues) createIssue({ wargame: s.wargame, ...iss });
+  for (const iss of issues) createIssue({ wargame: s.wargame, complexity, ...iss });
   return `✅ Spec completado: ${issues.length} issues creados (${issues.map((i) => i.id).join(", ")}).\n🔨 El build loop los tomará en ≤5 min. Te avisaré en cada paso.`;
 }
 
@@ -65,6 +66,8 @@ export async function generateIssues(idea, answers, wargame) {
 IDEA: ${idea}
 RESPUESTAS DEL USUARIO:
 ${QUESTIONS.map((q, i) => `${i + 1}. ${q}\n   → ${answers[i]}`).join("\n")}
+
+TIPO: ${complexity === "diagnostic" ? "BUG DIAGNÓSTICO — los issues deben pedir investigar la causa raíz antes de codificar" : "FEATURE NUEVA"}
 
 Devuelve SOLO un JSON válido (sin texto extra) con esta forma exacta:
 {"issues":[{"title":"...","context":"instrucciones para el agente de código: archivos a tocar, patrón a seguir","acceptanceCriteria":[{"desc":"...","check":"comando shell verificable (npm test ..., curl -s ..., grep ...)"}],"nonGoals":["..."]}]}

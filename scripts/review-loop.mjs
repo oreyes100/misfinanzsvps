@@ -32,11 +32,19 @@ const log = (m, extra) => console.log(`[review-loop] ${new Date().toISOString()}
 const run = (cmd, opts = {}) =>
   execSync(cmd, { cwd: REPO, encoding: "utf8", timeout: opts.timeout || 12 * 60_000, stdio: opts.quiet ? "pipe" : ["ignore", "pipe", "pipe"] });
 
-/** Ejecuta un AC check con allowlist de comandos seguros. */
+/** Ejecuta un AC check con allowlist de comandos seguros.
+ *  W30-mejora 2: acepta asignaciones de env precedentes (VAR="x" VAR2="y" cmd …)
+ *  validando el comando FINAL contra la allowlist (el && crudo queda prohibido). */
+const ALLOWED_PATTERNS = [
+  /^curl\s/, /^npx vitest/, /^npm (test|run)/, /^grep /, /^node -e /,
+  /^node --check/, /^ls /, /^git diff/, /^wc /, /^head /, /^tail /,
+];
 function runCheck(check) {
-  const c = String(check || "").trim();
-  const allowed = [/^npm test/, /^npx vitest/, /^npm run/, /^curl -s/i, /^node --check/, /^grep /, /^node -e /, /^ls /, /^git diff/];
-  if (!allowed.some((re) => re.test(c))) return { ok: false, out: `comando no permitido: ${c.slice(0, 80)}` };
+  let c = String(check || "").trim();
+  // strip de asignaciones de env iniciales: VAR="x" → comando final
+  let m;
+  while ((m = c.match(/^\w+=(?:"[^"]*"|'[^']*'|\S+)\s+/))) c = c.slice(m[0].length);
+  if (!ALLOWED_PATTERNS.some((re) => re.test(c))) return { ok: false, out: `comando no permitido: ${c.slice(0, 80)}` };
   try {
     const out = run(c + " 2>&1", { quiet: true, timeout: 120_000 });
     return { ok: true, out: String(out).slice(0, 300) };

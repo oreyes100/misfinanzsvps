@@ -29,6 +29,19 @@ import { parseOcrText } from "./hermes/local.mjs";
 import { extractPdfText } from "./hermes/receiptExtractor.mjs";
 import { sendMessage, answerCallbackQuery, editMessageReplyMarkup, getFile, downloadFile, inlineKeyboard, registerWebhook, webhookInfo } from "../lib/telegram.js";
 import { startSpec, handleInterviewAnswer, isInterviewActive } from "./hermes/spec-skill.mjs";
+import { getIssue, updateIssue } from "./hermes/issues.mjs";
+import { notify } from "./hermes/notifications.mjs";
+
+// W30-mejora 3: /resume <issueId> — needs_human → todo (el loop lo retoma).
+async function handleResume(issueId) {
+  if (!/^w\d+-i\d+$/.test(issueId || "")) return "Uso: /resume w31-i1";
+  const issue = getIssue(issueId);
+  if (!issue) return `⚠️ ${issueId} no existe`;
+  if (issue.state !== "needs_human") return `⚠️ ${issueId} no está needs_human (está ${issue.state})`;
+  updateIssue(issueId, { state: "todo", buildAttempts: 0, reviewAttempts: 0, lastError: null });
+  await notify(`🔁 ${issueId} devuelto a la cola por humano — el build loop lo tomará en ≤5 min`);
+  return `🔁 ${issueId} devuelto a la cola (buildAttempts reseteados)`;
+}
 
 import { makeUpdateIdStore } from "./idempotency.mjs";
 const telegramStore = makeUpdateIdStore({ persistPath: path.join(DATA_DIR, "blobs", "telegram", "processed_updates.json"), max: 5000 });
@@ -458,6 +471,14 @@ async function handleMessage(db, update, binding, chatId) {
       await sendMessage(binding.botToken, chatIdStr,
         `✅ Bot activo en este chat.\n• /spec <idea> — issues para el loop\n• Foto/PDF de recibo → registro con confirmación\n• Botones 🚀 — merge de issues verdes`);
     }
+    return;
+  }
+
+  // W30-mejora 3: /resume <id> — devuelve un issue needs_human a la cola.
+  if (typeof msg.text === "string" && /^\/resume\b/i.test(msg.text.trim())) {
+    const id = String(msg.text.trim().split(/\s+/)[1] || "");
+    const reply = await handleResume(id);
+    await sendMessage(binding.botToken, chatId, reply);
     return;
   }
 
