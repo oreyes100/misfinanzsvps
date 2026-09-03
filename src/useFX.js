@@ -23,8 +23,12 @@ export default function useFX(dispatch, fxRef) {
 
     async function fetchRates() {
       try {
-        const [fiatRes, cryptoRes, goldRes] = await Promise.all([
-          fetch("https://api.frankfurter.app/latest?base=EUR"),
+        // W29: Frankfurter migró de api.frankfurter.app (301 sin CORS, rompía el
+        // navegador) a api.frankfurter.dev/v1. Fallback al dominio viejo por si acaso.
+        const fiatRes = await fetch("https://api.frankfurter.dev/v1/latest?base=EUR").catch(() =>
+          fetch("https://api.frankfurter.app/latest?base=EUR")
+        );
+        const [cryptoRes, goldRes] = await Promise.all([
           fetch("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=eur"),
           fetch("https://api.gold-api.com/price/XAU").catch(() => null),
         ]);
