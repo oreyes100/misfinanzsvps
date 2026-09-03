@@ -247,7 +247,10 @@ async function handleUsers(req, res, rawBody) {
     if (body.action === "verify") {
       try {
         const users = getUsers(db);
-        const user = users.find((u) => u.username.toLowerCase() === String(body.username || "").toLowerCase().trim());
+        // W30-fix: el login acepta usuario O email (los usuarios demo se
+        // registran con email y no saben que su username es el prefijo).
+        const input = String(body.username || "").toLowerCase().trim();
+        const user = users.find((u) => u.username.toLowerCase() === input) || users.find((u) => String(u.email || "").toLowerCase() === input);
         if (verifyCredential(user, body.password)) {
            const { hash, ...safe } = user;
           return sendJson(res, 200, { ok: true, user: safe });

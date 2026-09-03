@@ -175,7 +175,8 @@ export async function setupAdmin(password, username = "admin") {
 export async function login(username, password) {
   await ensureSeed();
   const users = loadUsers();
-  const user = users.find((u) => u.username.toLowerCase() === username.toLowerCase().trim());
+  const input = username.toLowerCase().trim();
+  const user = users.find((u) => u.username.toLowerCase() === input) || users.find((u) => String(u.email || "").toLowerCase() === input); // W30-fix: login también por email
 
   // 1) Verificación local si tenemos la credencial completa.
   if (user && user.hash) {
