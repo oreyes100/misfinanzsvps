@@ -79,8 +79,14 @@ export async function handleAITask(task, input = {}, opts = {}) {
     const text = String(input.text || "").trim();
     if (!text) throw new Error("embeddings requiere text");
     const provider = input.provider || config.embeddings.primary;
+    // W29-fix: construir fns para TODOS los providers candidatos (el primary
+    // del aiConfig + el provider pedido). Antes, si el caller pedía un provider
+    // distinto del primary (p. ej. env gemini vs config ollama), la cadena
+    // quedaba vacía → "sin providers disponibles".
+    const fallbackProvider = config.embeddings.primary;
     const fns = opts.providerFns || {
       [provider]: () => embedText(text, provider, opts.geminiKey || undefined),
+      ...(provider !== fallbackProvider ? { [fallbackProvider]: () => embedText(text, fallbackProvider, opts.geminiKey || undefined) } : {}),
     };
     const r = await callWithFallback("embeddings", fns, { config });
     return { ok: true, embedding: r.result, provider: r.provider, latencyMs: r.latencyMs };

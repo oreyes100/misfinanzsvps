@@ -18,6 +18,9 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import dns from "node:dns";
+// W29: IPv6 del VPS roto → IPv4 primero para fetch a Google (Drive/Photos).
+dns.setDefaultResultOrder("ipv4first");
 import { getSyncDoc, putSyncDoc, DATA_DIR } from "./db.mjs";
 import { mergeStates } from "../api/_merge.js";
 import { classifyImage } from "../lib/ai.js";

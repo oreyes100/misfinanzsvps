@@ -12,10 +12,15 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import dns from "node:dns";
 import { fileURLToPath } from "node:url";
 import { loadProcessorConfig, processImage, openDb } from "./processor.mjs";
 import { listDrivePublic, downloadDriveFile, rmQuiet, driveFolderId } from "./drive.mjs";
 import { appendJournal } from "./journal.mjs";
+
+// W29: el IPv6 del VPS está roto — forzar resolución IPv4 primero (si no, el
+// fetch de Node a Google falla intermitentemente con "fetch failed").
+dns.setDefaultResultOrder("ipv4first");
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const CONFIG_PATH = process.env.HERMES_CONFIG || path.join(HERE, "config.json");
@@ -159,7 +164,8 @@ async function watchLoop() {
     try {
       await syncOnce();
     } catch (e) {
-      console.error(`[drive] sync error: ${e.message}`);
+      // W29: loggear la causa raíz (e.cause.code: ETIMEDOUT/ECONNRESET/UND_ERR...)
+      console.error(`[drive] sync error: ${e.message} causa=${e.cause?.code || e.cause?.message || "n/a"}`);
     } finally {
       running = false;
     }

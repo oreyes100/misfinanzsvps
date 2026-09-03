@@ -434,8 +434,16 @@ async function extractFromImage(cfg, state, imgPath, sourceBase) {
 // ---------- Procesamiento de una imagen (devuelve acciones; no mueve archivos) ----------
 
 export async function processImage(db, cfg, imagePath, sourceBase) {
+  // W29: logging detallado de cada paso del flujo bot→server.
+  const t0 = Date.now();
+  const log = (msg, extra) => console.log(`[processor] ${new Date().toISOString()} ${sourceBase}: ${msg}${extra ? " " + JSON.stringify(extra) : ""}`);
+  const logErr = (msg, extra) => console.error(`[processor] ${new Date().toISOString()} ${sourceBase}: ❌ ${msg}${extra ? " " + JSON.stringify(extra) : ""}`);
+  log(`INICIO processImage`, { imagePath: path.basename(imagePath) });
+
   const state = await apply.loadState(db, cfg.syncCode);
+  log(`estado cargado`, { syncVersion: state._syncVersion, cuentas: (state.accounts || []).length, txs: (state.transactions || []).length });
   const { result, local } = await extractFromImage(cfg, state, imagePath, sourceBase);
+  log(`extracción lista`, { type: result.type, fuente: local ? "local(OCR/pdf-text)" : "llm", merchant: result.merchant || null });
 
   let next = state;
   let actions = [];
@@ -454,6 +462,7 @@ export async function processImage(db, cfg, imagePath, sourceBase) {
   } else {
     throw new Error(`tipo no soportado: ${result.type}`);
   }
+  log(`aplicación lista`, { acciones: actions.length, txsNuevas: apply.computeDelta(state, next).transactions.length });
 
   // W25: el bot ya NO escribe directo a SQLite (read-modify-write del doc
   // completo desde un segundo proceso = lost-update que borraba transacciones
@@ -462,9 +471,13 @@ export async function processImage(db, cfg, imagePath, sourceBase) {
   // falla, processImage lanza → hermes.mjs mueve el archivo a revisión y NO se
   // reporta "aplicada" (confirmación real).
   let pushRes = null;
+  const delta = apply.computeDelta(state, next);
   try {
-    pushRes = await apply.pushDelta(cfg, apply.computeDelta(state, next));
+    log(`PUSH → /api/push`, { cuentas: delta.accounts.length, txs: delta.transactions.length });
+    pushRes = await apply.pushDelta(cfg, delta);
+    log(`PUSH OK`, { syncVersion: pushRes.syncVersion, hash: String(pushRes.hash || "").slice(0, 12), ms: Date.now() - t0 });
   } catch (e) {
+    logErr(`PUSH FALLÓ tras reintentos`, { error: e.message, ms: Date.now() - t0 });
     appendJournal(cfg.journalFile, {
       event: "push_failed",
       file: sourceBase,
@@ -483,6 +496,7 @@ export async function processImage(db, cfg, imagePath, sourceBase) {
     newSyncVersion: pushRes.syncVersion ?? null,
     hash: pushRes.hash ?? null,
   });
+  log(`FIN EXITOSO`, { type: result.type, syncVersion: pushRes.syncVersion });
   return { ok: true, type: result.type, actions, report, state: finalState, syncVersion: pushRes.syncVersion ?? null };
 }
 

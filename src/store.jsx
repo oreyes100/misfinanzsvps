@@ -851,10 +851,12 @@ export function StoreProvider({ children }) {
       lastPushedRef.current = snapshot;
       setSyncStatus("synced");
       recordPush({ success: true, syncVersion: stateRef.current._syncVersion ?? null, error: null, attempts: res.attempts });
+      console.info(`[sync] ✅ push OK (intento ${res.attempts}) v${stateRef.current._syncVersion} txs=${JSON.parse(snapshot).transactions?.length ?? "?"}`);
       dispatch({ type: "mark_clean" });
       return;
     }
     recordPush({ success: false, syncVersion: stateRef.current._syncVersion ?? null, error: res.error, attempts: res.attempts });
+    console.warn(`[sync] ❌ push FALLO tras ${res.attempts} intentos: ${res.error} — datos locales preservados (dirty)`);
     setSyncStatus("error");
     throw new Error(`sync push: ${res.error} (tras ${res.attempts} intentos)`);
   }, []);
@@ -886,9 +888,11 @@ export function StoreProvider({ children }) {
     const motivos = diagnoseDivergence(stateRef.current, snap);
     const isDemoReplace = shouldAutoReplace(stateRef.current, snap.state);
     if (snap.hash === localHash && !isDemoReplace) {
+      console.info(`[sync] ✅ resync: convergido v${snap.syncVersion} hash=${String(snap.hash).slice(0, 12)}`);
       recordResync({ reason: "converged", fromVersion: stateRef.current._syncVersion, toVersion: snap.syncVersion, hash: snap.hash, motivos });
       return { ok: true, converged: true };
     }
+    console.info(`[sync] 🔀 resync: divergencia detectada local(v${stateRef.current._syncVersion}) vs server(v${snap.syncVersion})`, { motivos, isDemoReplace });
 
     // W21: si es demo local y snapshot real, NO subir demo al server — reemplazo directo
     if (!isDemoReplace) {
@@ -899,6 +903,7 @@ export function StoreProvider({ children }) {
         try {
           await pushNow(id);
         } catch (pushErr) {
+          console.error(`[sync] 🛑 resync ABORTADO: push previo falló (${pushErr?.message}) — estado local preservado, server v${snap.syncVersion} NO aplicado`);
           recordResync({ reason: "push_failed_abort", fromVersion: stateRef.current._syncVersion, toVersion: snap.syncVersion, hash: snap.hash, motivos: [`push_failed: ${pushErr?.message}`] });
           return { ok: false, aborted: true, reason: "push_failed" };
         }
@@ -916,6 +921,7 @@ export function StoreProvider({ children }) {
     const volatile = { fx: cur.fx, priceHistory: cur.priceHistory, goldPriceEUR: cur.goldPriceEUR };
     skipPushRef.current = true;
     dispatch({ type: "hydrate", state: { ...migrate(snap.state), ...volatile } });
+    console.info(`[sync] ⬇️ resync: estado local REEMPLAZADO con server v${snap.syncVersion} (cuentas=${(snap.state.accounts || []).length}, txs=${(snap.state.transactions || []).length})`);
     recordResync({ reason: isDemoReplace ? "local_is_demo" : "hash_mismatch", fromVersion: cur._syncVersion, toVersion: snap.syncVersion, hash: snap.hash, motivos: isDemoReplace ? ["local_is_demo"] : motivos });
     return { ok: true, replaced: true, hash: snap.hash, autoRepaired: isDemoReplace };
   }, [syncId, pushNow]); // eslint-disable-line react-hooks/exhaustive-deps

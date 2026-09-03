@@ -453,6 +453,11 @@ async function handlePush(req, res, rawBody) {
   const payload = JSON.stringify({ state: finalState, updatedAt: Date.now() });
   if (Buffer.byteLength(payload) > MAX_BYTES) return sendJson(res, 413, { error: "Estado demasiado grande." });
   try {
+    // W29: logging del push (quién, cuánto, versión antes→después)
+    const prevVersion = existing?._syncVersion ?? null;
+    const dAccounts = Array.isArray(body.state?.accounts) ? body.state.accounts.length : 0;
+    const dTxs = Array.isArray(body.state?.transactions) ? body.state.transactions.length : 0;
+    console.log(`[push] ${new Date().toISOString()} sync=${code.slice(0, 12)}… delta(accts=${dAccounts},txs=${dTxs}) v${prevVersion ?? "?"}→v${finalState._syncVersion ?? "?"} bytes=${payload.length}`);
     putSyncDoc(db, code, finalState, Date.now());
     return sendJson(res, 200, {
       ok: true,
@@ -460,7 +465,8 @@ async function handlePush(req, res, rawBody) {
       syncVersion: finalState._syncVersion ?? null,
       hash: syncableHash(finalState),
     });
-  } catch {
+  } catch (e) {
+    console.error(`[push] ❌ ${new Date().toISOString()} sync=${code.slice(0, 12)}… error: ${e?.message || e}`);
     return sendJson(res, 500, { error: "Error guardando en el almacenamiento." });
   }
 }
