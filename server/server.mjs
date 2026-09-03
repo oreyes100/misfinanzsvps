@@ -14,6 +14,7 @@ import { makeRateLimiter } from "./ratelimit.mjs";
 import { makeCircuitBreaker } from "./circuit.mjs";
 import { validateCategorizePayload, validateLearnPayload } from "./validate.mjs";
 import { checkLearnAuth } from "./auth.mjs";
+import { toCsv } from "./exportCsv.mjs";
 import { makeUpdateIdStore } from "./idempotency.mjs";
 
 mkdirSync(DATA_DIR, { recursive: true });
@@ -406,6 +407,27 @@ async function handleSnapshot(req, res) {
   }
 }
 
+// W31-I1: GET /api/export/csv?id=<syncCode> — exporta las transacciones del
+// sync doc como CSV (patrón handleSnapshot: getSyncDoc + mapeo accountId→nombre).
+async function handleExportCsv(req, res) {
+  const query = new URLSearchParams(req.url.split("?")[1] || "");
+  const code = String(query.get("id") || "").toLowerCase();
+  if (!ID_RE.test(code)) return sendJson(res, 400, { error: "Código de sincronización inválido." });
+  if (req.method !== "GET") return sendJson(res, 405, { error: "Método no permitido." });
+  try {
+    const doc = getSyncDoc(db, code);
+    if (!doc || !doc.state) return sendJson(res, 200, { found: false });
+    const csv = toCsv(doc.state.transactions || [], doc.state.accounts || []);
+    res.writeHead(200, {
+      "Content-Type": "text/csv; charset=utf-8",
+      "Content-Disposition": `attachment; filename="transacciones-${code}.csv"`,
+    });
+    return res.end(csv);
+  } catch {
+    return sendJson(res, 500, { error: "Error leyendo el almacenamiento." });
+  }
+}
+
 async function handleSyncVersion(req, res) {
   const query = new URLSearchParams(req.url.split("?")[1] || "");
   const code = String(query.get("id") || "").toLowerCase();
@@ -620,6 +642,7 @@ const server = http.createServer(async (req, res) => {
       }
       return await handleSnapshot(req, res);
     }
+    if (urlPath === "/api/export/csv") return await handleExportCsv(req, res);
     if (urlPath === "/api/sync-version") return await handleSyncVersion(req, res);
     if (urlPath === "/api/signup") return await handleSignup(req, res, await readBody(req));
     if (urlPath === "/api/google-import") return await routeExtra(handleGoogleImport, req, res, db);
