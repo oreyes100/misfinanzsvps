@@ -35,7 +35,7 @@ const run = (cmd, opts = {}) =>
 /** Ejecuta un AC check con allowlist de comandos seguros. */
 function runCheck(check) {
   const c = String(check || "").trim();
-  const allowed = [/^npm test/, /^curl -s/i, /^node --check/, /^grep /, /^node -e /, /^ls /, /^git diff/];
+  const allowed = [/^npm test/, /^npx vitest/, /^npm run/, /^curl -s/i, /^node --check/, /^grep /, /^node -e /, /^ls /, /^git diff/];
   if (!allowed.some((re) => re.test(c))) return { ok: false, out: `comando no permitido: ${c.slice(0, 80)}` };
   try {
     const out = run(c + " 2>&1", { quiet: true, timeout: 120_000 });
