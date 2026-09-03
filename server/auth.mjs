@@ -1,4 +1,6 @@
-// auth.mjs — Auth/RBAC por endpoint (W1 Fortress Fase 1).
+// auth.mjs — Auth/RBAC por endpoint (W1 Fortress Fase 1) + sesiones por
+// cookie para el registro (w32-i3).
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -57,4 +59,61 @@ export function checkTelegramSecret(req, bindingSecret) {
 export function getLearnToken() {
   const cfg = loadHermesConfig();
   return process.env.LEARN_TOKEN || cfg.learnToken || cfg.syncCode || null;
+}
+
+// ---------- Sesiones por cookie (w32-i3) ----------
+// Token opaco de 32 bytes en cookie HttpOnly; el mapeo token→username vive en
+// memoria del proceso (el server local de SQLite es de un solo proceso). Con
+// tope para que un registro masivo no crezca el Map sin límite.
+export const SESSION_COOKIE = "mf_session";
+const MAX_SESSIONS = 1000;
+/** @type {Map<string, { username: string, createdAt: number }>} */
+const sessions = new Map();
+
+/**
+ * Crea una sesión para `username` y devuelve el token opaco.
+ * @param {string} username
+ * @returns {string} token
+ */
+export function createSession(username) {
+  const name = String(username || "");
+  while (sessions.size >= MAX_SESSIONS) {
+    sessions.delete(sessions.keys().next().value); // evict FIFO
+  }
+  const token = crypto.randomBytes(32).toString("hex");
+  sessions.set(token, { username: name, createdAt: Date.now() });
+  return token;
+}
+
+/** Parsea un header Cookie en objetos { nombre: valor }. */
+export function parseCookieHeader(header) {
+  const out = {};
+  for (const part of String(header || "").split(";")) {
+    const i = part.indexOf("=");
+    if (i < 0) continue;
+    const k = part.slice(0, i).trim();
+    if (!k) continue;
+    try {
+      out[k] = decodeURIComponent(part.slice(i + 1).trim());
+    } catch {
+      out[k] = part.slice(i + 1).trim();
+    }
+  }
+  return out;
+}
+
+/** Cookie de sesión: HttpOnly (no accesible a JS), SameSite=Lax, de sesión. */
+export function sessionCookie(token) {
+  return `${SESSION_COOKIE}=${encodeURIComponent(String(token))}; Path=/; HttpOnly; SameSite=Lax`;
+}
+
+/**
+ * Resuelve el username dueño de la sesión de la petición (o null).
+ * @param {import("node:http").IncomingMessage} req
+ * @returns {string | null}
+ */
+export function sessionUsername(req) {
+  const token = parseCookieHeader(req?.headers?.cookie)[SESSION_COOKIE] || "";
+  if (!token) return null;
+  return sessions.get(token)?.username ?? null;
 }

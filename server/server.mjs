@@ -13,7 +13,8 @@ import { mkdirSync, copyFileSync, readdirSync, unlinkSync } from "node:fs";
 import { makeRateLimiter } from "./ratelimit.mjs";
 import { makeCircuitBreaker } from "./circuit.mjs";
 import { validateCategorizePayload, validateLearnPayload } from "./validate.mjs";
-import { checkLearnAuth } from "./auth.mjs";
+import { checkLearnAuth, createSession, sessionUsername, sessionCookie } from "./auth.mjs";
+import { buildDemoState, demoSyncCode, DEMO_ACCOUNT_IDS } from "./seed.mjs";
 import { makeUpdateIdStore } from "./idempotency.mjs";
 import { toCsv } from "./exportCsv.mjs";
 
@@ -42,7 +43,6 @@ const ID_RE = /^[a-z0-9-]{16,64}$/i;
 const CODE_TTL_MS = 15 * 60 * 1000;
 const MAX_ATTEMPTS = 5;
 const DEMO_SECTIONS = ["inicio", "movimientos", "reportes"];
-const DEMO_ACCOUNTS = ["acc-corriente", "acc-ahorro", "acc-deposito", "acc-usd"];
 
 // ---------- crypto (idéntico a api/users.js) ----------
 function pbkdf2(password, salt) {
@@ -247,7 +247,10 @@ async function handleUsers(req, res, rawBody) {
     if (body.action === "verify") {
       try {
         const users = getUsers(db);
-        const user = users.find((u) => u.username.toLowerCase() === String(body.username || "").toLowerCase().trim());
+        // W30-fix: el login acepta usuario O email (los usuarios demo se
+        // registran con email y no saben que su username es el prefijo).
+        const input = String(body.username || "").toLowerCase().trim();
+        const user = users.find((u) => u.username.toLowerCase() === input) || users.find((u) => String(u.email || "").toLowerCase() === input);
         if (verifyCredential(user, body.password)) {
            const { hash, ...safe } = user;
           return sendJson(res, 200, { ok: true, user: safe });
@@ -493,8 +496,60 @@ async function handlePush(req, res, rawBody) {
   }
 }
 
+// ---------- Registro (w32-i2/i3): creación de usuario + seed demo ----------
+/** Username único derivado del email (base → base1, base2, …). */
+function uniqueUsername(users, base) {
+  let username = base;
+  let n = 1;
+  while (users.some((u) => u.username.toLowerCase() === username.toLowerCase())) username = `${base}${n++}`;
+  return username;
+}
+
+/**
+ * Siembra el doc demo de un usuario NUEVO (w32-i3). Solo escribe si el doc no
+ * existe: nunca pisa datos que el usuario ya tenga en su doc de semilla.
+ * Devuelve el syncId del doc demo.
+ */
+function seedDemoDoc(db, username, email) {
+  const code = demoSyncCode(username);
+  let existing = null;
+  try {
+    const doc = getSyncDoc(db, code);
+    if (doc && doc.state) existing = doc.state;
+  } catch { /* sin doc previo */ }
+  if (!existing) putSyncDoc(db, code, buildDemoState({ email }), Date.now());
+  return code;
+}
+
 async function handleSignup(req, res, rawBody) {
   const body = rawBody || {};
+  // Registro directo de un paso (w32-i2/i3): { email, password } sin `action`.
+  // Crea el usuario, siembra su doc demo y abre sesión por cookie.
+  if (!body.action && (body.email !== undefined || body.password !== undefined)) {
+    const email = String(body.email || "").trim().toLowerCase();
+    const password = String(body.password || "");
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return sendJson(res, 400, { error: "Correo inválido." });
+    if (password.length < 6) return sendJson(res, 400, { error: "Contraseña muy corta (mínimo 6 caracteres)." });
+    try {
+      const users = getUsers(db);
+      if (users.some((u) => String(u.email || "").toLowerCase() === email)) {
+        return sendJson(res, 409, { error: "Ese correo ya tiene una cuenta." });
+      }
+      const base = email.split("@")[0].replace(/[^a-z0-9_]/gi, "").toLowerCase().slice(0, 20) || "guest";
+      const username = uniqueUsername(users, base);
+      const salt = crypto.randomBytes(16).toString("base64");
+      const hash = pbkdf2(password, salt);
+      users.push({ username, hash, salt, email, role: "guest", sections: DEMO_SECTIONS, accounts: DEMO_ACCOUNT_IDS, created: new Date().toISOString() });
+      replaceUsers(db, users);
+      const syncId = seedDemoDoc(db, username, email);
+      const token = createSession(username);
+      console.log(`[signup] ${new Date().toISOString()} usuario=${username} doc=demo (paso único)`);
+      return sendJson(res, 200, { ok: true, username, syncId }, { "Set-Cookie": sessionCookie(token) });
+    } catch (err) {
+      console.error(`[signup] ❌ error creando cuenta: ${err?.message || err}`);
+      return sendJson(res, 500, { error: "Error al crear la cuenta." });
+    }
+  }
   // Step 1: request
   if (body.action === "request") {
     const email = String(body.email || "").trim().toLowerCase();
@@ -562,18 +617,39 @@ async function handleSignup(req, res, rawBody) {
         return sendJson(res, 409, { error: "Ese correo ya tiene una cuenta." });
       }
       const base = email.split("@")[0].replace(/[^a-z0-9_]/gi, "").toLowerCase().slice(0, 20) || "guest";
-      let username = base;
-      let n = 1;
-      while (users.some((u) => u.username.toLowerCase() === username.toLowerCase())) username = `${base}${n++}`;
-      users.push({ username, hash: pending.hash, salt: pending.salt, email, role: "guest", sections: DEMO_SECTIONS, accounts: DEMO_ACCOUNTS, created: new Date().toISOString() });
+      const username = uniqueUsername(users, base);
+      users.push({ username, hash: pending.hash, salt: pending.salt, email, role: "guest", sections: DEMO_SECTIONS, accounts: DEMO_ACCOUNT_IDS, created: new Date().toISOString() });
       replaceUsers(db, users);
+      const syncId = seedDemoDoc(db, username, email);
       pendings.splice(idx, 1); writePendings(db, pendings);
-      return sendJson(res, 200, { ok: true, username });
+      return sendJson(res, 200, { ok: true, username, syncId });
     } catch {
       return sendJson(res, 500, { error: "Error al verificar el código." });
     }
   }
   return sendJson(res, 400, { error: "Acción no reconocida." });
+}
+
+// w32-i3: GET /api/accounts — cuentas de dinero del usuario autenticado por
+// cookie de sesión (la que emite el registro). Lee el doc demo del usuario y
+// devuelve sus cuentas. Usuarios previos a la seed (sin doc) → lista vacía.
+async function handleAccounts(req, res) {
+  if (req.method !== "GET") {
+    res.setHeader("Allow", "GET");
+    return sendJson(res, 405, { error: "Método no permitido." });
+  }
+  const username = sessionUsername(req);
+  if (!username) return sendJson(res, 401, { error: "Sesión no iniciada." });
+  try {
+    const user = getUsers(db).find((u) => u.username.toLowerCase() === String(username).toLowerCase());
+    if (!user) return sendJson(res, 401, { error: "Sesión inválida." });
+    const syncId = demoSyncCode(user.username);
+    const doc = getSyncDoc(db, syncId);
+    const accounts = doc && doc.state && Array.isArray(doc.state.accounts) ? doc.state.accounts : [];
+    return sendJson(res, 200, { ok: true, syncId, accounts });
+  } catch {
+    return sendJson(res, 500, { error: "Error leyendo las cuentas." });
+  }
 }
 
 // ---------- router ----------
@@ -651,6 +727,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (urlPath === "/api/sync-version") return await handleSyncVersion(req, res);
     if (urlPath === "/api/export/csv") return await handleExportCsv(req, res);
+    if (urlPath === "/api/accounts") return await handleAccounts(req, res);
     if (urlPath === "/api/signup") return await handleSignup(req, res, await readBody(req));
     if (urlPath === "/api/google-import") return await routeExtra(handleGoogleImport, req, res, db);
     if (urlPath === "/api/google-auth") return await routeExtra(handleGoogleAuth, req, res, db);

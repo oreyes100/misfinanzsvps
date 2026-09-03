@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "vitest run && node --test \"server/hermes/*.test.mjs\"",
+    "test": "vitest run && node --test \"server/hermes/*.test.mjs\" \"server/seed.test.mjs\" \"server/auth.test.mjs\" \"server/signup.test.mjs\"",
     "test:watch": "vitest"
   },
   "dependencies": {
