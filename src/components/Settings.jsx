@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useStore } from "../store.jsx";
 import { hasBiometricCredential, isBiometricAvailable, registerBiometric, removeBiometric } from "../auth.js";
-import { CURRENCIES, DASHBOARD_CARDS, cardOn, downloadBackup, downloadCSV, fmtMoney, parseBackup, findPotentialDuplicateGroups, findInterestAnomalyGroups, analyzeDuplicateValidity, DEMO_ACCOUNT_IDS } from "../utils.js";
+import { CURRENCIES, DASHBOARD_CARDS, cardOn, downloadBackup, fmtMoney, parseBackup, findPotentialDuplicateGroups, findInterestAnomalyGroups, analyzeDuplicateValidity, DEMO_ACCOUNT_IDS } from "../utils.js";
+import { toCsv } from "../exportCsv.js";
 import { AI_PROVIDERS, aiProviderById } from "../ai.js";
 import { Btn, Field, Glass, inputCls } from "./UI.jsx";
 import TelegramAgent from "./TelegramAgent.jsx";
@@ -409,6 +410,19 @@ function DataTools() {
 
   const flash = (tone, text) => { setMsg({ tone, text }); setTimeout(() => setMsg(null), 4000); };
 
+  const handleExportCsv = () => {
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+    const blob = new Blob([toCsv(state.transactions || [], state.accounts || [])], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `transacciones-${stamp}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
   const analyzeDuplicates = async () => {
     setAnalyzingDups(true);
     setDupAnalysisDone(false);
@@ -545,7 +559,7 @@ function DataTools() {
       <div className="flex flex-wrap gap-2">
         <Btn onClick={() => downloadBackup(state)}>⬇️ Descargar respaldo (JSON)</Btn>
         <Btn variant="ghost" onClick={() => fileRef.current?.click()}>⬆️ Restaurar respaldo</Btn>
-        <Btn variant="ghost" onClick={() => downloadCSV(state)}>📊 Exportar CSV</Btn>
+        <Btn variant="ghost" onClick={handleExportCsv}>📊 Exportar CSV</Btn>
         <input ref={fileRef} type="file" accept="application/json,.json" className="sr-only" aria-hidden="true" tabIndex={-1} onChange={onFile} />
       </div>
 
