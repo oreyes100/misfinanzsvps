@@ -44,14 +44,19 @@ async function main() {
     try { run("npm test -- --run", { quiet: true, timeout: 12 * 60_000 }); }
     catch { testsOk = false; }
 
+    // cambios: el agente puede commitear él mismo → comparar HEAD vs origin/main
+    const head = run("git rev-parse HEAD", { quiet: true }).trim();
+    const base = run("git rev-parse origin/main", { quiet: true }).trim();
     const status = run("git status --porcelain", { quiet: true });
-    if (!status.trim()) {
+    if (head === base && !status.trim()) {
       updateIssue(issue.id, { state: "needs_fix", lastError: "agente sin cambios" });
       await notify(`⚠️ ${issue.id}: el agente no produjo cambios → needs_fix`);
       run("git checkout main -q", { quiet: true });
       process.exit(0);
     }
-    run(`git add -A && git commit -q -m "feat(${issue.id}): ${issue.title.replace(/["`]/g, "'")}"`, { quiet: true });
+    if (status.trim()) {
+      run(`git add -A && git commit -q -m "feat(${issue.id}): ${issue.title.replace(/["`]/g, "'")}"`, { quiet: true });
+    }
     run(`git push -q -u origin "${issue.branch}"`, { quiet: true, timeout: 120_000 });
 
     if (!testsOk) {
