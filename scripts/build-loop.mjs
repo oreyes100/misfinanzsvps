@@ -57,7 +57,7 @@ async function main() {
     if (status.trim()) {
       run(`git add -A && git commit -q -m "feat(${issue.id}): ${issue.title.replace(/["`]/g, "'")}"`, { quiet: true });
     }
-    run(`git push -q -u origin "${issue.branch}"`, { quiet: true, timeout: 120_000 });
+    run(`git push -q --force-with-lease -u origin "${issue.branch}"`, { quiet: true, timeout: 120_000 });
 
     if (!testsOk) {
       updateIssue(issue.id, { state: "review", lastError: "tests rojos en build — review decidirá" });
