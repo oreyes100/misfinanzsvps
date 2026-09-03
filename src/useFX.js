@@ -15,6 +15,23 @@ export function goldUsdPerOzToEurPerGram(usdPerOz, usdPerEur) {
   return Math.round((usdPerOz / TROY_OZ_GRAMS / usdPerEur) * 100) / 100;
 }
 
+/**
+ * W29: convierte rates de Frankfurter ("unidades por EUR", p. ej. MXN: 21.7)
+ * a la convención interna de la app ("EUR por unidad", p. ej. MXN: 0.0461).
+ * Sin esta inversión, los assets en EUR colapsan y las cuentas se distorsionan
+ * cuando la divisa base no es EUR. Crypto (BTC/ETH ya en EUR) va aparte.
+ */
+export function frankfurterToFx(rates, prev = {}, base = BASE_FX) {
+  const r = rates || {};
+  const inv = (v, fallback) => (v > 0 ? 1 / v : fallback);
+  return {
+    EUR: 1,
+    USD: inv(r.USD, prev.USD ?? base.USD),
+    GBP: inv(r.GBP, prev.GBP ?? base.GBP),
+    MXN: inv(r.MXN, prev.MXN ?? base.MXN),
+  };
+}
+
 export default function useFX(dispatch, fxRef) {
   const mountedRef = useRef(true);
 
@@ -38,11 +55,10 @@ export default function useFX(dispatch, fxRef) {
         const cryptoData = cryptoRes.ok ? await cryptoRes.json() : {};
         const goldData = goldRes?.ok ? await goldRes.json() : {};
 
+        // W29 FIX CRÍTICO: invertir las tasas a la convención de la app
+        // ("EUR por unidad"). Ver frankfurterToFx.
         const fx = {
-          EUR: 1,
-          USD: fiatData.rates?.USD ?? fxRef.current?.USD ?? BASE_FX.USD,
-          GBP: fiatData.rates?.GBP ?? fxRef.current?.GBP ?? BASE_FX.GBP,
-          MXN: fiatData.rates?.MXN ?? fxRef.current?.MXN ?? BASE_FX.MXN,
+          ...frankfurterToFx(fiatData.rates, fxRef.current),
           BTC: cryptoData?.bitcoin?.eur ?? fxRef.current?.BTC ?? BASE_FX.BTC,
           ETH: cryptoData?.ethereum?.eur ?? fxRef.current?.ETH ?? BASE_FX.ETH,
         };
