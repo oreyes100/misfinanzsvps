@@ -398,6 +398,22 @@ export async function handleTelegram(req, res, rawBody, db) {
   if (!update) return { status: 400, body: { error: "update inválido" } };
   const cid = String(update.message?.chat?.id || update.callback_query?.message?.chat?.id || "");
   if (!cid) return { status: 200, body: "" };
+  // W30: /start de un chat NO vinculado → auto-vincular (el binding viejo puede
+  // apuntar a un chat muerto: "chat not found" al notificar). Usa el token de
+  // cualquier binding existente (mismo bot).
+  if (update.message?.text && /^\/(start|help)\b/i.test(update.message.text.trim())) {
+    let existing = await kvReadJSON(bindingKey(cid));
+    if (!existing || !existing.enabled) {
+      const tpl = await kvReadJSON(bindingKey("4332174599"));
+      const botToken = tpl?.botToken || process.env.TELEGRAM_BOT_TOKEN;
+      if (botToken) {
+        existing = { chatId: cid, syncCode: tpl?.syncCode || "mf-60ec529050f44bfab1", enabled: true, botToken, createdAt: Date.now() };
+        await kvWriteJSON(bindingKey(cid), existing);
+        await sendMessage(botToken, cid, "✅ Bot vinculado a este chat. /spec <idea> para crear issues · fotos de recibos · botones 🚀 para mergear.");
+        return { status: 200, body: "" };
+      }
+    }
+  }
   const binding = await kvReadJSON(bindingKey(cid));
   if (!binding || !binding.enabled) return { status: 200, body: "" };
   const secret = binding.webhookSecret || process.env.TELEGRAM_WEBHOOK_SECRET;
