@@ -61,7 +61,7 @@ export function updateIssue(id, patch, p = ISSUES_PATH) {
     in_progress: ["review", "needs_fix", "needs_human", "todo"],
     review: ["ready_to_merge", "todo", "needs_fix", "needs_human"],
     ready_to_merge: ["done", "needs_fix"],
-    needs_fix: ["todo", "in_progress"],
+    needs_fix: ["todo", "in_progress", "review"],
     needs_human: ["todo", "in_progress"],
     done: [],
   };
