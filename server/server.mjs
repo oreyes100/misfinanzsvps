@@ -513,7 +513,14 @@ async function handleSignup(req, res, rawBody) {
       pendings.push({ email, hash, salt, code, expiresAt: Date.now() + CODE_TTL_MS, attempts: 0 });
       writePendings(db, pendings);
       const apiKey = process.env.RESEND_API_KEY;
-      if (!apiKey) return sendJson(res, 503, { error: "Registro por correo no disponible en este momento." });
+      if (!apiKey) {
+        // W30-fix: sin proveedor de email configurado, el registro demo muestra
+        // el código en pantalla (el signup ya validó email+contraseña y guarda
+        // el pending con TTL y límite de intentos). Con RESEND_API_KEY presente,
+        // el flujo vuelve a email real automáticamente.
+        console.log(`[signup] sin RESEND_API_KEY → devCode en pantalla para ${email}`);
+        return sendJson(res, 200, { ok: true, devMode: true, devCode: code });
+      }
       const from = process.env.RESEND_FROM || "Mis Finanzas <noreply@mis-finazas-gold.vercel.app>";
       const rr = await fetch("https://api.resend.com/emails", {
         method: "POST",

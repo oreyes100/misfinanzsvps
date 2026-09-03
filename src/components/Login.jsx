@@ -60,6 +60,7 @@ function RegisterForm({ onBack }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
+  const [devCode, setDevCode] = useState(""); // W30-fix: código en pantalla cuando no hay email
   const [createdUsername, setCreatedUsername] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -76,6 +77,7 @@ function RegisterForm({ onBack }) {
       });
       const data = await r.json();
       if (!r.ok) { setError(data.error || "Error al enviar el correo."); return; }
+      if (data.devMode && data.devCode) setDevCode(String(data.devCode));
       setStep("verify");
     } catch {
       setError("Error de conexión.");
@@ -118,7 +120,14 @@ function RegisterForm({ onBack }) {
   if (step === "verify") {
     return (
       <form onSubmit={submitVerify} className="space-y-3">
-        <p className="text-sm text-ink-dim">Ingresa el código de 6 dígitos que enviamos a <strong>{email}</strong>.</p>
+        {devCode ? (
+          <div className="rounded-xl bg-gold/10 p-3 text-center">
+            <p className="text-xs text-ink-dim">Modo demo (sin email configurado). Tu código de verificación:</p>
+            <p className="mt-1 text-2xl font-bold tracking-[0.3em] tabular-nums text-gold">{devCode}</p>
+          </div>
+        ) : (
+          <p className="text-sm text-ink-dim">Ingresa el código de 6 dígitos que enviamos a <strong>{email}</strong>.</p>
+        )}
         <div>
           <label className="mb-1 block text-xs font-medium text-ink-dim">Código de verificación</label>
           <input className={inputCls} value={code} onChange={(e) => setCode(e.target.value)} inputMode="numeric" maxLength={6} required autoFocus placeholder="123456" />
