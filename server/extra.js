@@ -28,6 +28,7 @@ import { ocrImage } from "./hermes/ocr.mjs";
 import { parseOcrText } from "./hermes/local.mjs";
 import { extractPdfText } from "./hermes/receiptExtractor.mjs";
 import { sendMessage, answerCallbackQuery, editMessageReplyMarkup, getFile, downloadFile, inlineKeyboard, registerWebhook, webhookInfo } from "../lib/telegram.js";
+import { startSpec, handleInterviewAnswer, isInterviewActive } from "./hermes/spec-skill.mjs";
 
 import { makeUpdateIdStore } from "./idempotency.mjs";
 const telegramStore = makeUpdateIdStore({ persistPath: path.join(DATA_DIR, "blobs", "telegram", "processed_updates.json"), max: 5000 });
@@ -426,6 +427,18 @@ export async function handleTelegram(req, res, rawBody, db) {
 async function handleMessage(db, update, binding, chatId) {
   const msg = update.message; let msgId = msg.message_id;
 
+  // W30: /spec — entrevista que genera issues atómicos para el loop autoconstructivo.
+  if (typeof msg.text === "string" && /^\/spec\b/i.test(msg.text.trim())) {
+    const reply = startSpec(chatId, msg.text.trim());
+    await sendMessage(binding.botToken, chatId, reply);
+    return;
+  }
+  // W30: si hay una entrevista /spec activa, todo texto va a la entrevista.
+  if (typeof msg.text === "string" && isInterviewActive(chatId)) {
+    const reply = await handleInterviewAnswer(chatId, msg.text.trim());
+    if (reply) { await sendMessage(binding.botToken, chatId, reply); return; }
+  }
+
   // WG11 (F4): aprendizaje por lenguaje natural. Si el texto es una enseñanza
   // (sin imagen), se persiste en config.json vía /api/learn y se confirma.
   if (typeof msg.text === "string" && msg.text.trim()) {
@@ -629,7 +642,15 @@ async function learnFromText(db, binding, text) {
 
 async function handleCallback(db, update, binding, chatId) {
   const cb = update.callback_query;
-  const [verb, msgId] = String(cb.data || "").split(":");
+  const [verb, arg2] = String(cb.data || "").split(":");
+  // W30: merge por gesto — botón "🚀 Mergear" del review loop
+  if (verb === "mg" && arg2) {
+    const { handleMerge } = await import("./hermes/merge-skill.mjs");
+    await answerCallbackQuery(binding.botToken, cb.id, "Mergeando…", false);
+    const res = await handleMerge(arg2);
+    await sendMessage(binding.botToken, chatId, res);
+    return;
+  }
   if (!["ap", "rj"].includes(verb) || !msgId) { await answerCallbackQuery(binding.botToken, cb.id, "Acción desconocida"); return; }
   const proposal = await kvReadJSON(proposalKey(chatId, msgId));
   if (!proposal) { await answerCallbackQuery(binding.botToken, cb.id, "Propuesta no encontrada"); return; }
