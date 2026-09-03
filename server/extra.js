@@ -427,6 +427,24 @@ export async function handleTelegram(req, res, rawBody, db) {
 async function handleMessage(db, update, binding, chatId) {
   const msg = update.message; let msgId = msg.message_id;
 
+  // W30: /start — auto-vincula el chat real (el chatId del binding puede ser
+  // viejo/erróneo: "chat not found" al notificar) y confirma el canal.
+  if (typeof msg.text === "string" && /^\/(start|status|help)\b/i.test(msg.text.trim())) {
+    const chatIdStr = String(chatId);
+    let bindingNow = await kvReadJSON(bindingKey(chatIdStr));
+    if (!bindingNow || bindingNow.chatId !== chatIdStr) {
+      bindingNow = { ...binding, chatId: chatIdStr, enabled: true, createdAt: bindingNow?.createdAt || Date.now() };
+      await kvWriteJSON(bindingKey(chatIdStr), bindingNow);
+      await sendMessage(binding.botToken, chatIdStr,
+        `✅ Bot vinculado a ESTE chat (${chatIdStr}) con sync ${bindingNow.syncCode}.\n\n` +
+        `Comandos disponibles:\n• /spec <idea> — genera issues para el loop autoconstructivo\n• Envía una foto/PDF de recibo → lo registro con confirmación\n• Botones 🚀 — mergean y despliegan issues verdes`);
+    } else {
+      await sendMessage(binding.botToken, chatIdStr,
+        `✅ Bot activo en este chat.\n• /spec <idea> — issues para el loop\n• Foto/PDF de recibo → registro con confirmación\n• Botones 🚀 — merge de issues verdes`);
+    }
+    return;
+  }
+
   // W30: /spec — entrevista que genera issues atómicos para el loop autoconstructivo.
   if (typeof msg.text === "string" && /^\/spec\b/i.test(msg.text.trim())) {
     const reply = startSpec(chatId, msg.text.trim());
