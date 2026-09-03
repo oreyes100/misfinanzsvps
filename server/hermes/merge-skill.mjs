@@ -16,8 +16,15 @@ const run = (cmd, opts = {}) =>
 let merging = false;
 export async function handleMerge(issueId) {
   const issue = issueId ? getIssue(issueId) : null;
-  if (!issue || issue.state !== "ready_to_merge") {
-    return `⚠️ ${issueId || "nada"} no está ready_to_merge`;
+  if (!issue) return `⚠️ ${issueId || "nada"} no existe`;
+  // W30-fix: idempotencia — si la branch ya está mergeada a main, marcar done y salir.
+  try {
+    run(`git merge-base --is-ancestor "${issue.branch}" main`, { quiet: true });
+    if (issue.state !== "done") updateIssue(issue.id, { state: "done" });
+    return `ℹ️ ${issue.id} ya estaba mergeado y desplegado`;
+  } catch { /* no mergeado aún: continuar */ }
+  if (issue.state !== "ready_to_merge") {
+    return `⚠️ ${issue.id} no está ready_to_merge (está ${issue.state})`;
   }
   if (merging) return "⏳ Ya hay un merge en curso";
   merging = true;
@@ -44,7 +51,14 @@ export async function handleMerge(issueId) {
     // build + deploy VPS
     run("npm run build", { quiet: true, timeout: 5 * 60_000 });
     run("sudo rm -rf /var/www/misfinanzas/assets && sudo cp -r dist/. /var/www/misfinanzas/ && sudo chown -R www-data:www-data /var/www/misfinanzas", { timeout: 120_000 });
-    try { run("sudo systemctl restart misfinanzas-server.service", { quiet: true, timeout: 60_000 }); } catch { /* puede requerir tty; el deploy de server files es manual si aplica */ }
+    // W30-fix: NO reiniciar el server desde dentro del server (se suicide a sí
+    // mismo → 502 y sin confirmación). Si el merge tocó server/**, programar el
+    // restart DESACOPLADO; si solo tocó frontend, no hace falta.
+    const serverFiles = run(`git diff --name-only origin/main@{1} origin/main -- server/ 2>/dev/null || true`, { quiet: true });
+    if (serverFiles.trim()) {
+      run("nohup sudo systemctl restart misfinanzas-server.service >/dev/null 2>&1 &", { quiet: true, timeout: 10_000 });
+      await new Promise((r) => setTimeout(r, 3000));
+    }
 
     updateIssue(issue.id, { state: "done" });
     run(`git branch -d "${issue.branch}" -q 2>/dev/null || true; git push -q origin --delete "${issue.branch}" 2>/dev/null || true`, { quiet: true });
