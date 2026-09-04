@@ -1,8 +1,22 @@
-# W35–W37e — Corrección de Ediciones Revertidas y Duplicados de Intereses
+# W35–W37f — Corrección de Ediciones Revertidas y Duplicados de Intereses
 > **Proyecto**: [misfinanzsvps](https://github.com/oreyes100/misfinanzsvps) · **Producción**: https://dineroorganizado.duckdns.org
 > **Fecha**: 3–4 de septiembre de 2026
-> **Commits**: `143b3c4` (W35) · `e69c6ff` (W36) · `febb4d1` (W37) · `dbf32d4` (W37b/c) · `935b9d4` (W37d) · `3fcaa37` (W37e) · `a3f1705` (W37e-fix)
-> **Tests finales**: 596/596 ✅ · **Server final**: v812, 1302 txs, EPOC 0, duplicados 0
+> **Commits**: `143b3c4` (W35) · `e69c6ff` (W36) · `febb4d1` (W37) · `dbf32d4` (W37b/c) · `935b9d4` (W37d) · `3fcaa37` (W37e) · `a3f1705` (W37e-fix) · `c1bc9bb` (docs L0) · `fccc100` (W37f)
+> **Tests finales**: 596/596 ✅
+
+---
+
+## 📊 RESUMEN EJECUTIVO
+
+Cinco reportes del usuario, una cadena de causas compartida — **mutaciones sin `_updatedAt`** + **un dedupe con la clave/implementación equivocadas** + **un proceso stale** + **un push que no adoptaba la versión del server** — manifestados como:
+
+1. **Ediciones que se revertían** (~90s con la consolidación)
+2. **Ediciones que se revertían** (~1s con el race del resync)
+3. **Creaciones que desaparecían de inmediato** (el colapso del estado: 1302→290)
+4. **Ediciones que seguían revertiéndose** (el proceso del server con el módulo roto en memoria, 17h)
+5. **La causa estructural final**: el push no adoptaba la versión/estado consolidado del server → loop infinito de versiones + hydrate con snapshots pre-edición
+
+**Estado final**: los 4 movers de balance stamp-ean el account, los accruals stamp-ean sus txs, el dedupe de intereses usa la clave exacta con best-per-group (identidad), el accrue no churna, el resync cuenta el `_dirty` render-confirmado, **y el push ahora adopta la versión del server (rompe el loop)**.
 
 ---
 
@@ -72,6 +86,33 @@ const dirty = stateRef.current._dirty || syncableRef.current !== lastPushedRef.c
 ```
 Con la edición pendiente, el resync **fuerza el push primero** → re-fetch (el snapshot con la edición) → el hydrate aplica CON la edición. El push fallido aborta (W24).
 
+### W37e-doc — La causa raíz del colapso persistente `c1bc9bb`
+**Reporte**: la edición SEGUÍA revertiéndose tras todos los fixes.
+
+**Hallazgo forense decisivo**: el proceso del server (STARTED 04:19) nunca se reinició tras el fix W37e (escrito en disco 04:31) → **17h ejecutando el dedupe ROTO en memoria** → colapso del estado (1302→291) + ediciones droppeadas en cada consolidate. También se descubrió el **tombstone** como vector de borrado real (`deletedTransactions[sdb8ls4c] = 21:57:21`): `mergeStates` elimina PERMANENTEMENTE las txs tombstonadas y el union de tombstones los propaga entre devices.
+
+**Fix**: `systemctl restart misfinanzas-server` (el módulo correcto se cargó) + restore. **Lección L0: tras un deploy server-side, verificar el STARTED del proceso, no solo `systemctl is-active`** — el proceso puede seguir corriendo el código viejo en memoria.
+
+### W37f — La causa estructural final: el push no adoptaba la versión `fccc100`
+**Reporte**: la edición seguía revertiéndose incluso con el server correcto.
+
+**Hallazgo**: el log mostró el **loop infinito de versiones** (v853→v862, 9 pushes en 2 min con el MISMO delta bytes=383425). El `pushNow` del cliente NO adoptaba el estado/versión consolidado que devuelve el server (el protocolo W23 lo manda, pero nunca se conectó):
+```
+push → server v++ → la versión LOCAL queda stale
+→ heartbeat: server v ≠ local v → resync → hydrate (versión local = server)
+→ la versión cambia → syncable cambia → push → server v++ → (repetición)
+```
+Y en ese loop, un resync podía hydrate un snapshot **pre-edición** (el fetch antes del push de la edición) → el revert.
+
+**Fix**: `pushWithRetry` devuelve el `body`; `pushNow` ahora **hydrata con el estado/versión del server** tras el push:
+```js
+if (res.body?.state) {
+  skipPushRef.current = true;
+  dispatch({ type: "hydrate", state: { ...migrate(res.body.state), ...volatile } });
+}
+```
+→ la versión local siempre coincide con el server (el heartbeat no ve mismatch → no loop), y el estado consolidado (que YA incluye la edición) se adopta.
+
 ---
 
 ## 🧠 MECÁNICA EXACTA (los 3 vectores de pérdida)
@@ -125,7 +166,8 @@ el contador `o` cuenta TODAS, las llaves saltan los duplicados
 
 | # | Lección |
 |---|---|
-| L0 | **LA CAUSA RAÍZ FINAL**: el fix server-side (W37e) se escribió en disco (mtime 04:31) PERO el proceso del server (STARTED 04:19) **nunca se reinició** → 17h ejecutando el módulo ROTO en memoria (colapso 1302→291 + ediciones droppeadas). **TRAS cada deploy server-side: verificar el STARTED del proceso, no solo `systemctl is-active`** |
+| L0 | **LA CAUSA RAÍZ DEL COLAPSO**: el fix server-side (W37e) se escribió en disco (mtime 04:31) PERO el proceso del server (STARTED 04:19) **nunca se reinició** → 17h ejecutando el dedupe ROTO en memoria (colapso 1302→291 + ediciones droppeadas). **TRAS cada deploy server-side: verificar el STARTED del proceso, no solo `systemctl is-active`** |
+| L0b | **LA CAUSA ESTRUCTURAL DEL REVERT**: el push no adoptaba el estado/versión consolidado del server (W23 lo manda, nunca se conectó) → la versión local stale → heartbeat → resync/hydrate → versión cambia → push → **loop infinito de versiones** (v853→v862) + hydrate con snapshots pre-edición. **El push DEBE hydrate con la respuesta del server** |
 | L1 | **Toda entidad que viaja en el sync y puede editarse DEBE bump-ear `_updatedAt`** al mutarse — sin el bump, `mergeById` conserva la copia vieja (empate 0vs0) |
 | L2 | **Los movers de balance bump-ean TAMBIÉN el account** — el tx y el account son dos entidades con dos stamps |
 | L3 | **El dedupe de la clase interés**: clave `(cuenta, fecha, IMPORTE)` — SIN la descripción (las rutas describen lo mismo) y CON el importe (las variantes de centavos ISR son intereses DISTINTOS) |
@@ -142,9 +184,9 @@ el contador `o` cuenta TODAS, las llaves saltan los duplicados
 | Métrica | Valor |
 |---|---|
 | Suite | **596/596** ✅ |
-| Server | **v812**, 1302 txs, EPOC 0, duplicados 0, +10.42: 72 legítimos |
-| Commits | 7 (W35 → W37e-fix) |
-| Los 3 vectores de pérdida | Cerrados con tests de regresión |
+| Server | v863 (estable con el proceso correcto), 1302 txs, EPOC 0 |
+| Commits | 9 (W35 → W37f) |
+| Los 5 vectores de pérdida | Cerrados con tests de regresión |
 
 ## 🔁 SI EL PROBLEMA VUELVE
 
