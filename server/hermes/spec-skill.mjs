@@ -39,6 +39,18 @@ export function startSpec(chatId, text) {
 }
 
 /** Procesa la respuesta N del usuario. Devuelve el texto a enviar (o null si no hay entrevista). */
+/**
+ * W33-fix: normaliza la respuesta de complejidad ante entrada humana ruidosa
+ * (typos tipo "feuture", respuestas vagas, vacías). Default seguro: feature.
+ */
+export function normalizeComplexity(raw) {
+  if (!raw) return "feature";
+  const lower = String(raw).toLowerCase().trim();
+  if (/bug|diag|diagn|fix|error/i.test(lower)) return "diagnostic";
+  if (/feat|nueva|nuevo|new/i.test(lower)) return "feature";
+  return "feature";
+}
+
 export async function handleInterviewAnswer(chatId, answer) {
   const key = String(chatId);
   const s = interviews.get(key);
@@ -48,6 +60,10 @@ export async function handleInterviewAnswer(chatId, answer) {
     return `Pregunta ${s.answers.length + 1}/${QUESTIONS.length}: ${QUESTIONS[s.answers.length]}`;
   }
   interviews.delete(key);
+  // W33-fix: complexity se EXTRAÍA de la última respuesta (P7) — la línea
+  // se perdió en 412614c y createIssue({ complexity }) lanzaba ReferenceError
+  // FUERA del try/catch → bot mudo tras la entrevista.
+  const complexity = normalizeComplexity(s.answers[s.answers.length - 1]);
   let issues;
   try {
     issues = await generateIssues(s.idea, s.answers, s.wargame);
