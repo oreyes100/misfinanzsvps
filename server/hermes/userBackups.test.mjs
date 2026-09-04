@@ -1,5 +1,5 @@
-// userBackups.test.mjs — Tests del motor de respaldo por usuario (W33-i2) y de
-// verificación + retención (W33-i4).
+// userBackups.test.mjs — Tests del motor de respaldo por usuario (W33-i2), de
+// verificación + retención (W33-i4) y de restauración por usuario (W33-i5).
 // Se ejecuta con: node --test server/hermes/userBackups.test.mjs
 // Los tests SIEMPRE inyectan opts.root (tmpdir) y opts.getState: nunca
 // leen ni escriben en server/data/**.
@@ -12,6 +12,7 @@ import {
   backupUser,
   verifyUserBackup,
   verifyBackup,
+  restoreUser,
   stateHash,
   usersBackupRoot,
   isoWeekKey,
@@ -339,4 +340,160 @@ test("applyRetention: syncId inválido lanza; directorio inexistente → ok sin 
   assert.deepEqual(res.kept, []);
   assert.deepEqual(res.deleted, []);
   assert.deepEqual(res.errors, []);
+});
+
+// ── W33-i5: restauración por usuario ──────────────────────────────────────────
+
+// Store en memoria (inyectable) que simula el motor de sync: putState/getState.
+function memoryStore(initial = {}) {
+  const store = new Map(Object.entries(initial));
+  return {
+    store,
+    getState: async (id) => store.get(id) ?? null,
+    putState: async (id, state) => {
+      store.set(id, state);
+    },
+  };
+}
+
+test("restoreUser: restaura con confirmación y verifica hash post-restore (estado == respaldo)", async (t) => {
+  const root = tmpRoot(t);
+  await backupUser("sync-a", { root, getState: () => stateA, now: "2026-09-01T10:00:00Z" });
+  // drift posterior: el usuario avanzó a otro estado
+  const drifted = {
+    _syncVersion: 99,
+    accounts: [{ id: "acc-9", name: "Nueva", balance: 1 }],
+    transactions: [{ id: "t9", description: "drift", amount: -50 }],
+  };
+  const ms = memoryStore({ "sync-a": drifted });
+
+  const res = await restoreUser("sync-a", "2026-09-01", { root, ...ms, confirm: true, now: "2026-09-04T12:00:00Z" });
+
+  assert.equal(res.ok, true);
+  assert.equal(res.verified, true);
+  assert.equal(res.syncId, "sync-a");
+  assert.equal(res.date, "2026-09-01");
+  assert.equal(res.hash, stateHash(stateA));
+  assert.equal(res.syncVersion, 7);
+  assert.deepEqual(res.counts, { accounts: 1, transactions: 1 });
+  assert.equal(res.restoredAt, "2026-09-04T12:00:00.000Z");
+  assert.equal(res.overwritten.syncVersion, 99); // auditoría: qué había antes
+  assert.deepEqual(res.overwritten.counts, { accounts: 1, transactions: 1 });
+
+  // criterio central: hash del estado restaurado == hash del respaldo
+  const after = ms.store.get("sync-a");
+  assert.deepEqual(after, stateA); // drift eliminado, sin mezclas
+  assert.equal(stateHash(after), stateHash(stateA));
+});
+
+test("restoreUser: sin confirm NO toca nada (needsConfirmation + preview); con confirm ejecuta", async (t) => {
+  const root = tmpRoot(t);
+  await backupUser("sync-a", { root, getState: () => stateA, now: "2026-09-01T10:00:00Z" });
+  const drifted = { ...stateA, _syncVersion: 50, transactions: [{ id: "t2", description: "nueva", amount: -1 }] };
+  const ms = memoryStore({ "sync-a": drifted });
+
+  const pending = await restoreUser("sync-a", "2026-09-01", { root, ...ms, now: "2026-09-04T12:00:00Z" });
+
+  assert.equal(pending.ok, false);
+  assert.equal(pending.needsConfirmation, true);
+  assert.match(pending.reason, /confirmación/);
+  // preview: material del respaldo + estado actual
+  assert.equal(pending.preview.hash, stateHash(stateA));
+  assert.equal(pending.preview.syncVersion, 7);
+  assert.deepEqual(pending.preview.counts, { accounts: 1, transactions: 1 });
+  assert.equal(pending.preview.backedUpAt, "2026-09-01T10:00:00.000Z");
+  assert.equal(pending.preview.current.syncVersion, 50);
+  // nada cambió
+  assert.deepEqual(ms.store.get("sync-a"), drifted);
+
+  // human-in-the-loop: el usuario aprueba → ahora sí
+  const done = await restoreUser("sync-a", "2026-09-01", { root, ...ms, confirm: true, now: "2026-09-04T12:01:00Z" });
+  assert.equal(done.ok, true);
+  assert.equal(done.verified, true);
+  assert.deepEqual(ms.store.get("sync-a"), stateA);
+});
+
+test("restoreUser: rechaza respaldo corrupto (hash inválido) sin tocar el estado", async (t) => {
+  const root = tmpRoot(t);
+  const res = await backupUser("sync-a", { root, getState: () => stateA, now: "2026-09-01T10:00:00Z" });
+  const tampered = JSON.parse(fs.readFileSync(res.path, "utf8"));
+  tampered.state.accounts[0].balance = 999999;
+  fs.writeFileSync(res.path, JSON.stringify(tampered));
+  const ms = memoryStore({ "sync-a": stateB });
+
+  const out = await restoreUser("sync-a", "2026-09-01", { root, ...ms, confirm: true });
+
+  assert.equal(out.ok, false);
+  assert.equal(out.needsConfirmation, false);
+  assert.match(out.reason, /mutado/);
+  assert.deepEqual(ms.store.get("sync-a"), stateB); // intacto: jamás restaura un respaldo inválido
+});
+
+test("restoreUser: aislamiento — respaldo de otro usuario (meta.syncId ≠ syncId) se rechaza", async (t) => {
+  const root = tmpRoot(t);
+  await backupUser("user-a", { root, getState: () => stateA, now: "2026-09-01T10:00:00Z" });
+  // intento de cruce: el respaldo de user-a copiado al árbol de user-b
+  const dstDir = path.join(usersBackupRoot(root), "user-b");
+  fs.mkdirSync(dstDir, { recursive: true });
+  fs.copyFileSync(
+    path.join(usersBackupRoot(root), "user-a", "2026-09-01.json"),
+    path.join(dstDir, "2026-09-01.json")
+  );
+  const ms = memoryStore({ "user-b": stateB });
+
+  const out = await restoreUser("user-b", "2026-09-01", { root, ...ms, confirm: true });
+
+  assert.equal(out.ok, false);
+  assert.match(out.reason, /otro usuario/);
+  assert.deepEqual(ms.store.get("user-b"), stateB); // sin mezcla ni exposición
+
+  // user-a con SU propio respaldo sigue funcionando
+  const own = await restoreUser("user-a", "2026-09-01", { root, ...memoryStore({ "user-a": stateB }), confirm: true });
+  assert.equal(own.ok, true);
+  assert.equal(own.hash, stateHash(stateA));
+});
+
+test("restoreUser: syncId/fecha inválidos lanzan (path-traversal); fecha sin respaldo → ok:false", async (t) => {
+  const root = tmpRoot(t);
+  const ms = memoryStore({});
+  await assert.rejects(() => restoreUser("../other", "2026-09-01", { root, ...ms }), /syncId inválido/);
+  await assert.rejects(() => restoreUser("sync-a", "01-09-2026", { root, ...ms }), /fecha inválida/);
+  await assert.rejects(() => restoreUser("sync-a", "../../etc", { root, ...ms }), /fecha inválida/);
+  await assert.rejects(() => restoreUser("sync-a", "", { root, ...ms }), /fecha inválida/);
+
+  const out = await restoreUser("sync-a", "2026-09-01", { root, ...ms, confirm: true });
+  assert.equal(out.ok, false);
+  assert.match(out.reason, /no se pudo leer/);
+});
+
+test("restoreUser: si el estado escrito no verifica (hash ≠ respaldo) → ok:false, verified:false", async (t) => {
+  const root = tmpRoot(t);
+  await backupUser("sync-a", { root, getState: () => stateA, now: "2026-09-01T10:00:00Z" });
+  // store que corrompe el write (simula un motor de sync que muta el estado)
+  const broken = { store: new Map() };
+  broken.putState = async (id, state) => {
+    broken.store.set(id, { ...state, accounts: [{ ...stateA.accounts[0], balance: 42 }] });
+  };
+  broken.getState = async (id) => broken.store.get(id) ?? null;
+
+  const out = await restoreUser("sync-a", "2026-09-01", { root, ...broken, confirm: true });
+
+  assert.equal(out.ok, false);
+  assert.equal(out.verified, false);
+  assert.match(out.reason, /verificación post-restore/);
+  assert.equal(out.hash, stateHash(stateA));
+  assert.deepEqual(out.overwritten, null); // no había estado previo
+});
+
+test("restoreUser: putState sin getState (o viceversa) lanza — la verificación post-restore es obligatoria", async (t) => {
+  const root = tmpRoot(t);
+  await backupUser("sync-a", { root, getState: () => stateA, now: "2026-09-01T10:00:00Z" });
+  await assert.rejects(
+    () => restoreUser("sync-a", "2026-09-01", { root, putState: async () => {}, confirm: true }),
+    /getState/
+  );
+  await assert.rejects(
+    () => restoreUser("sync-a", "2026-09-01", { root, getState: async () => stateA, confirm: true }),
+    /putState/
+  );
 });

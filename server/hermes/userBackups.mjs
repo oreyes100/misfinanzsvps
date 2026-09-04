@@ -1,6 +1,8 @@
 // userBackups.mjs — W33-i2: Motor de respaldo por usuario. W33-i4: verifyBackup
 // (veredicto sin lanzar: JSON parseable + hash correcto) + retención por usuario
-// (7 diarios + 4 semanales, applyRetention).
+// (7 diarios + 4 semanales, applyRetention). W33-i5: restoreUser(syncId, fecha)
+// con confirmación explícita (human-in-the-loop) y verificación post-restore
+// (hash del estado escrito === hash del respaldo).
 // backupUser(syncId) exporta el estado del sync doc a
 //   <DATA_DIR>/backups/users/<syncId>/<fecha>.json
 // con hash de integridad SHA-256 sobre JSON canónico (claves ordenadas).
@@ -276,4 +278,158 @@ export async function applyRetention(syncId, opts = {}) {
     }
   }
   return { ok: errors.length === 0, syncId: id, kept: retentionPlan.keep, deleted: retentionPlan.delete, errors };
+}
+
+// ── W33-i5: restauración por usuario ──────────────────────────────────────────
+
+async function peekUserState(syncId, opts) {
+  if (typeof opts.getState === "function") {
+    const s = await opts.getState(syncId);
+    return s ?? null;
+  }
+  const { getSyncDoc, openDb } = await import("../db.mjs");
+  const db = opts.db || openDb();
+  const doc = getSyncDoc(db, syncId);
+  return doc?.state ?? null;
+}
+
+async function persistUserState(syncId, state, opts, updatedAt) {
+  if (typeof opts.putState === "function") {
+    await opts.putState(syncId, state);
+    return;
+  }
+  const { putSyncDoc, openDb } = await import("../db.mjs");
+  const db = opts.db || openDb();
+  putSyncDoc(db, syncId, state, updatedAt);
+}
+
+const summarizeState = (state) =>
+  state
+    ? {
+        syncVersion: state._syncVersion ?? null,
+        counts: {
+          accounts: (state.accounts || []).length,
+          transactions: (state.transactions || []).length,
+        },
+      }
+    : null;
+
+/**
+ * Restaura el estado de UN usuario desde SU respaldo
+ * <root>/backups/users/<syncId>/<fecha>.json (W33-i5). Flujo human-in-the-loop:
+ *   1) Sin opts.confirm → NO toca nada: devuelve { ok:false,
+ *      needsConfirmation:true, preview } con hash/syncVersion/counts del
+ *      respaldo y del estado actual (materia para la confirmación).
+ *   2) Con opts.confirm === true → verifica el respaldo (verifyBackup: JSON
+ *      parseable + hash correcto), escribe el estado (putState inyectable /
+ *      putSyncDoc en producción) y RE-VERIFICA leyendo el estado escrito:
+ *      hash(estado post-restore) DEBE ser igual al hash del respaldo, si no
+ *      devuelve { ok:false, verified:false }.
+ * Aislamiento: solo lee su propio árbol (syncId validado, anti path-traversal)
+ * y además exige meta.syncId === syncId — nunca expone ni mezcla respaldos de
+ * otro usuario. No toca el backup global diario de W1 Fortress.
+ * opts: { confirm?, root?, db?, getState?, putState?, now? } — root/db/getState/
+ * putState/now inyectables para tests (getState+putState juntos o ninguno: la
+ * verificación post-restore exige leer el estado escrito).
+ * Lanza SOLO por argumentos inválidos (syncId/fecha, anti path-traversal);
+ * los fallos operativos (respaldo inexistente, corrupto, de otro usuario,
+ * hash post-restore distinto) devuelven { ok:false, reason } sin lanzar.
+ * Devuelve { ok, verified, syncId, date, path, hash, restoredAt, syncVersion,
+ * counts, overwritten } en éxito.
+ */
+export async function restoreUser(syncId, fecha, opts = {}) {
+  const id = String(syncId ?? "");
+  if (!SYNC_ID_RE.test(id)) {
+    throw new Error(`syncId inválido (se permite [a-zA-Z0-9_-]): ${JSON.stringify(id).slice(0, 80)}`);
+  }
+  const date = String(fecha ?? "");
+  if (!BACKUP_FILE_RE.test(`${date}.json`)) {
+    throw new Error(`fecha inválida (se espera YYYY-MM-DD): ${JSON.stringify(date).slice(0, 80)}`);
+  }
+  const hasGet = typeof opts.getState === "function";
+  const hasPut = typeof opts.putState === "function";
+  if (hasGet !== hasPut) {
+    throw new Error("restoreUser: inyecta getState y putState JUNTOS (o ninguno) — la verificación post-restore exige leer el estado escrito");
+  }
+  const root = opts.root || (await import("../db.mjs")).DATA_DIR;
+  const file = path.join(usersBackupRoot(root), id, `${date}.json`);
+  const now = opts.now instanceof Date ? opts.now : opts.now ? new Date(opts.now) : new Date();
+  const restoredAt = now.toISOString();
+
+  const verdict = (over) => ({
+    ok: false,
+    needsConfirmation: false,
+    verified: false,
+    reason: null,
+    syncId: id,
+    date,
+    path: file,
+    ...over,
+  });
+
+  const v = await verifyBackup(file);
+  if (!v.valid) return verdict({ reason: v.reason });
+
+  // Aislamiento (non-goal: no exponer respaldos de un usuario a otro): el
+  // respaldo debe pertenecer AL usuario solicitado, no basta con su ruta.
+  if (v.syncId !== id) {
+    return verdict({ reason: `el respaldo pertenece a otro usuario (${v.syncId ?? "desconocido"}), restauración denegada` });
+  }
+
+  // Re-parse seguro: verifyBackup acaba de validar JSON + estructura + hash.
+  let doc;
+  try {
+    doc = JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch (e) {
+    return verdict({ reason: `el respaldo cambió durante la restauración: ${String(e?.message || e).slice(0, 120)}` });
+  }
+  const expectedHash = doc.integrity.hash;
+  const overwritten = summarizeState(await peekUserState(id, opts));
+
+  const preview = {
+    syncId: id,
+    date,
+    path: file,
+    hash: expectedHash,
+    syncVersion: doc.meta?.syncVersion ?? doc.state._syncVersion ?? null,
+    counts: doc.meta?.counts ?? summarizeState(doc.state).counts,
+    backedUpAt: doc.meta?.backedUpAt ?? null,
+    current: overwritten,
+  };
+
+  if (opts.confirm !== true) {
+    return verdict({
+      needsConfirmation: true,
+      reason: "restauración requiere confirmación explícita (opts.confirm: true) — no se modificó nada",
+      hash: expectedHash,
+      preview,
+    });
+  }
+
+  await persistUserState(id, doc.state, opts, now.getTime());
+
+  // Verificación post-restore: hash(estado escrito y leído) === hash del respaldo
+  const readBack = await peekUserState(id, opts);
+  const postHash = readBack ? stateHash(readBack) : null;
+  if (postHash !== expectedHash) {
+    return verdict({
+      reason: "verificación post-restore falló: hash del estado restaurado ≠ hash del respaldo",
+      hash: expectedHash,
+      overwritten,
+    });
+  }
+
+  return {
+    ok: true,
+    verified: true,
+    reason: null,
+    syncId: id,
+    date,
+    path: file,
+    hash: expectedHash,
+    restoredAt,
+    syncVersion: doc.state._syncVersion ?? null,
+    counts: preview.counts,
+    overwritten,
+  };
 }
