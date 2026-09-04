@@ -704,3 +704,33 @@ describe("reducer · W24 _dirty flag", () => {
     expect(h1).toBe(h2);
   });
 });
+
+// ---------- W35: la edición DEBE sobrevivir el merge del server ----------
+
+describe("reducer · W35 — bump _updatedAt en ediciones (fix de ediciones que se revierten)", () => {
+  it("update_transaction bump-ea _updatedAt (si no, mergeById conserva la copia vieja)", async () => {
+    const state = { ...cleanState(), _syncVersion: 3, _dirty: false };
+    const tx = { description: "Café", amount: -30, currency: "EUR", accountId: "acc-eur", date: todayISO() };
+    const created = reducer(state, { type: "add_transaction", tx });
+    const txId = created.transactions[0].id;
+    await new Promise((r) => setTimeout(r, 5)); // T1 > T0
+    const edited = reducer(created, { type: "update_transaction", id: txId, patch: { accountId: "acc-usd" } });
+    const editedTx = edited.transactions.find((t) => t.id === txId);
+    expect(editedTx.accountId).toBe("acc-usd");
+    expect(editedTx._updatedAt).toBeGreaterThan(created.transactions[0]._updatedAt);
+    // simulación del merge del server: existing (creación) vs incoming (edición)
+    const { mergeById } = await import("../api/_merge.js");
+    const existing = [{ ...created.transactions[0] }];
+    const incoming = [{ ...editedTx }];
+    const merged = mergeById(existing, incoming);
+    expect(merged[0].accountId).toBe("acc-usd"); // la edición GANA el merge
+  });
+
+  it("update_account también bump-ea _updatedAt", () => {
+    const state = { ...cleanState(), _syncVersion: 3, _dirty: false };
+    const edited = reducer(state, { type: "update_account", accountId: "acc-eur", patch: { name: "Corriente Renombrada" } });
+    const acc = edited.accounts.find((a) => a.id === "acc-eur");
+    expect(acc.name).toBe("Corriente Renombrada");
+    expect(acc._updatedAt).toBeGreaterThan(0);
+  });
+});

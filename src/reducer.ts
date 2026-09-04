@@ -156,7 +156,10 @@ function innerReducer(state: AppState, action: Action): AppState {
         const amt = (patch.amount ?? old.amount) as number;
         patch.category = ensureCategory(patch.category, desc, state.categories, null, amt);
       }
-      const next = { ...old, ...patch };
+      // W35-fix: la edición DEBE bump-ear _updatedAt — sin esto, mergeById del
+      // server conserva la copia vieja (empate 0vs0 → gana existente) y la
+      // edición se revierte en el siguiente snapshot.
+      const next = { ...old, ...patch, _updatedAt: Date.now() };
       const accounts = state.accounts.map((a) => {
         let bal = a.balance;
         if (a.id === old.accountId) bal -= old.amount;
@@ -240,7 +243,7 @@ function innerReducer(state: AppState, action: Action): AppState {
       const today = todayISO();
       const accounts = state.accounts.map((a) => {
         if (a.id !== action.accountId) return a;
-        const next = { ...a, ...action.patch };
+        const next = { ...a, ...action.patch, _updatedAt: Date.now() };
         if (a.rate === 0 && next.rate > 0) next.lastAccrual = today;
         if (!a.capped && next.capped) {
           next.lastAccrual1 = today;
@@ -296,7 +299,7 @@ function innerReducer(state: AppState, action: Action): AppState {
     }
 
     case "update_crypto": {
-      const crypto = state.assets.crypto.map((c) => (c.id === action.id ? { ...c, ...action.patch } : c));
+      const crypto = state.assets.crypto.map((c) => (c.id === action.id ? { ...c, ...action.patch, _updatedAt: Date.now() } : c));
       return { ...state, assets: { ...state.assets, crypto } };
     }
 
@@ -313,7 +316,7 @@ function innerReducer(state: AppState, action: Action): AppState {
     }
 
     case "update_realestate": {
-      const realEstate = state.assets.realEstate.map((r) => (r.id === action.id ? { ...r, ...action.patch } : r));
+      const realEstate = state.assets.realEstate.map((r) => (r.id === action.id ? { ...r, ...action.patch, _updatedAt: Date.now() } : r));
       return { ...state, assets: { ...state.assets, realEstate } };
     }
 
@@ -338,7 +341,7 @@ function innerReducer(state: AppState, action: Action): AppState {
       return { ...state, assets: { ...state.assets, depreciating: [...(state.assets.depreciating || []), item] } };
     }
     case "update_depreciating": {
-      const depreciating = (state.assets.depreciating || []).map((d) => (d.id === action.id ? { ...d, ...action.patch } : d));
+      const depreciating = (state.assets.depreciating || []).map((d) => (d.id === action.id ? { ...d, ...action.patch, _updatedAt: Date.now() } : d));
       return { ...state, assets: { ...state.assets, depreciating } };
     }
     case "delete_depreciating": {
