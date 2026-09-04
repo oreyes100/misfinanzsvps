@@ -142,7 +142,10 @@ function innerReducer(state: AppState, action: Action): AppState {
       const cat = ensureCategory(t.category as any, t.description || "", state.categories, null, t.amount);
       const tx: Transaction = { id: uid(), date: t.date || todayISO(), _updatedAt: Date.now(), ...t, category: cat } as Transaction;
       const accounts = state.accounts.map((a) =>
-        a.id === tx.accountId ? { ...a, balance: Math.round((a.balance + tx.amount) * 100) / 100 } : a
+        // W36-fix: el balance movido DEBE bump-ear _updatedAt del account — sin
+        // esto, mergeById del server empata con la copia vieja (0vs0) y el
+        // balance movido vuelve atrás en el siguiente snapshot.
+        a.id === tx.accountId ? { ...a, balance: Math.round((a.balance + tx.amount) * 100) / 100, _updatedAt: Date.now() } : a
       );
       return { ...state, transactions: [tx, ...state.transactions], accounts };
     }
@@ -164,7 +167,8 @@ function innerReducer(state: AppState, action: Action): AppState {
         let bal = a.balance;
         if (a.id === old.accountId) bal -= old.amount;
         if (a.id === next.accountId) bal += next.amount;
-        return bal === a.balance ? a : { ...a, balance: Math.round(bal * 100) / 100 };
+        // W36-fix: bump _updatedAt en las accounts movidas (mergeById las conserva)
+        return bal === a.balance ? a : { ...a, balance: Math.round(bal * 100) / 100, _updatedAt: Date.now() };
       });
       const transactions = state.transactions
         .map((t) => (t.id === action.id ? next : t))
@@ -176,7 +180,8 @@ function innerReducer(state: AppState, action: Action): AppState {
       const old = state.transactions.find((t) => t.id === action.id);
       if (!old) return state;
       const accounts = state.accounts.map((a) =>
-        a.id === old.accountId ? { ...a, balance: Math.round((a.balance - old.amount) * 100) / 100 } : a
+        // W36-fix: bump _updatedAt del account de-acreditado
+        a.id === old.accountId ? { ...a, balance: Math.round((a.balance - old.amount) * 100) / 100, _updatedAt: Date.now() } : a
       );
       const txs = state.transactions.filter((t) => t.id !== action.id);
       const dels = { ...(state.deletedTransactions || {}), [action.id]: Date.now() };
@@ -194,8 +199,9 @@ function innerReducer(state: AppState, action: Action): AppState {
       const date = action.date || todayISO();
       const n = notes ? String(notes).trim() : undefined;
       const accounts = state.accounts.map((a) => {
-        if (a.id === fromId) return { ...a, balance: Math.round((a.balance - amount) * 100) / 100 };
-        if (a.id === toId) return { ...a, balance: Math.round((a.balance + credited) * 100) / 100 };
+        // W36-fix: bump _updatedAt en ambas accounts del transfer
+        if (a.id === fromId) return { ...a, balance: Math.round((a.balance - amount) * 100) / 100, _updatedAt: Date.now() };
+        if (a.id === toId) return { ...a, balance: Math.round((a.balance + credited) * 100) / 100, _updatedAt: Date.now() };
         return a;
       });
       const txs: Transaction[] = [

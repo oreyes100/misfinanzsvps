@@ -734,3 +734,55 @@ describe("reducer · W35 — bump _updatedAt en ediciones (fix de ediciones que 
     expect(acc._updatedAt).toBeGreaterThan(0);
   });
 });
+
+// ---------- W36: los balances movidos bump-ear _updatedAt (mergeById los conserva) ----------
+import { consolidateAndBump } from "../api/_merge.js";
+
+describe("reducer · W36 accounts movidas con _updatedAt", () => {
+  function accState() {
+    return cleanState();
+  }
+  it("update_transaction (cambio accountId) mueve balance Y bump-eara _updatedAt de ambas cuentas", () => {
+    const st = accState();
+    const withTx = reducer(st, { type: "add_transaction", tx: { description: "Interés", amount: 10.42, currency: "MXN", accountId: "acc-eur", date: todayISO() } });
+    const tx = withTx.transactions[0];
+    const upd = reducer(withTx, { type: "update_transaction", id: tx.id, patch: { accountId: "acc-usd" } });
+    const from = upd.accounts.find((a) => a.id === "acc-eur");
+    const to = upd.accounts.find((a) => a.id === "acc-usd");
+    // el dinero SALIÓ de la vieja (vuelve al original) y APARECIÓ en la nueva
+    expect(from.balance).toBe(st.accounts[0].balance);
+    expect(to.balance).toBe(st.accounts[1].balance + 10.42);
+    expect(from._updatedAt).toBeGreaterThan(0);
+    expect(to._updatedAt).toBeGreaterThan(0);
+  });
+  it("el merge del server conserva el balance movido (el account con _updatedAt NOW gana)", async () => {
+    const { consolidateAndBump } = await import("../api/_merge.js");
+    const st = accState();
+    const withTx = reducer(st, { type: "add_transaction", tx: { description: "Interés", amount: 10.42, currency: "MXN", accountId: "acc-eur", date: todayISO() } });
+    const tx = withTx.transactions[0];
+    const upd = reducer(withTx, { type: "update_transaction", id: tx.id, patch: { accountId: "acc-usd" } });
+    // El competidor empuja la copia VIEJA de las accounts (sin el movimiento, sin _updatedAt)
+    const existing = { accounts: st.accounts, _syncVersion: 1 };
+    const merged = consolidateAndBump(existing, { accounts: upd.accounts, _syncVersion: 2 });
+    const eur = merged.accounts.find((a) => a.id === "acc-eur");
+    const usd = merged.accounts.find((a) => a.id === "acc-usd");
+    // el merge conserva: el dinero salió de la vieja y apareció en la nueva
+    expect(eur.balance).toBe(st.accounts[0].balance);
+    expect(usd.balance).toBe(st.accounts[1].balance + 10.42);
+  });
+  it("transfer bump-eara _updatedAt de ambas cuentas", () => {
+    const st = accState();
+    const tr = reducer(st, { type: "transfer", fromId: "acc-eur", toId: "acc-usd", amount: 100 });
+    const from = tr.accounts.find((a) => a.id === "acc-eur");
+    const to = tr.accounts.find((a) => a.id === "acc-usd");
+    expect(from._updatedAt).toBeGreaterThan(0);
+    expect(to._updatedAt).toBeGreaterThan(0);
+  });
+  it("delete_transaction bump-eara _updatedAt del account de-acreditado", () => {
+    const st = accState();
+    const withTx = reducer(st, { type: "add_transaction", tx: { description: "X", amount: -5, currency: "EUR", accountId: "acc-eur", date: todayISO() } });
+    const del = reducer(withTx, { type: "delete_transaction", id: withTx.transactions[0].id });
+    const from = del.accounts.find((a) => a.id === "acc-eur");
+    expect(from._updatedAt).toBeGreaterThan(0);
+  });
+});
