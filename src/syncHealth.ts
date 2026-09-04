@@ -104,7 +104,7 @@ export async function pushWithRetry(
   url: string,
   init: RequestInit,
   opts?: { maxRetries?: number; sleep?: (ms: number) => Promise<void> }
-): Promise<{ ok: boolean; status: number | null; attempts: number; error: string | null }> {
+): Promise<{ ok: boolean; status: number | null; attempts: number; error: string | null; body?: any }> {
   const maxRetries = opts?.maxRetries ?? 3;
   const sleep = opts?.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   let lastError: string | null = null;
@@ -113,7 +113,12 @@ export async function pushWithRetry(
     try {
       const r = await fetchImpl(url, init);
       lastStatus = r.status;
-      if (r.ok) return { ok: true, status: r.status, attempts: attempt, error: null };
+      if (r.ok) {
+        // W37f: devolver el body — el push necesita la versión/estado del server
+        let body: any = null;
+        try { body = await r.json(); } catch { /* sin body JSON */ }
+        return { ok: true, status: r.status, attempts: attempt, error: null, body };
+      }
       lastError = `HTTP ${r.status}`;
     } catch (e: any) {
       lastError = e?.message || "network error";

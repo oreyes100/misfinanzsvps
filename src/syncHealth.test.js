@@ -89,7 +89,7 @@ describe("syncHealth · pushWithRetry (W24 Fase 4)", () => {
     let calls = 0;
     const fetchImpl = async () => { calls++; return { ok: true, status: 200 }; };
     const r = await pushWithRetry(fetchImpl, URL, INIT, { maxRetries: 3, sleep: noSleep });
-    expect(r).toEqual({ ok: true, status: 200, attempts: 1, error: null });
+    expect(r).toEqual({ ok: true, status: 200, attempts: 1, error: null, body: null });
     expect(calls).toBe(1);
   });
 

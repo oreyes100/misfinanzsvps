@@ -852,6 +852,19 @@ export function StoreProvider({ children }) {
       setSyncStatus("synced");
       recordPush({ success: true, syncVersion: stateRef.current._syncVersion ?? null, error: null, attempts: res.attempts });
       console.info(`[sync] ✅ push OK (intento ${res.attempts}) v${stateRef.current._syncVersion} txs=${JSON.parse(snapshot).transactions?.length ?? "?"}`);
+      // W37f: ADOPTAR el estado/versión consolidado del server. El protocolo W23
+      // lo manda, pero pushNow nunca lo hizo: la versión local quedaba stale →
+      // el heartbeat veía mismatch → resync/hydrate → versión cambia → syncable
+      // cambia → push → LOOP INFINITO (v853→v862 observado). Además el hydrate
+      // de ese loop podía traer un snapshot pre-edición (el revert).
+      if (res.body?.state) {
+        const cur = stateRef.current;
+        const volatile = { fx: cur.fx, priceHistory: cur.priceHistory, goldPriceEUR: cur.goldPriceEUR };
+        skipPushRef.current = true;
+        dispatch({ type: "hydrate", state: { ...migrate(res.body.state), ...volatile } });
+        console.info(`[sync] ✅ push: adoptada versión del server v${res.body.state._syncVersion} (loop roto)`);
+        return;
+      }
       dispatch({ type: "mark_clean" });
       return;
     }
