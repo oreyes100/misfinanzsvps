@@ -11,13 +11,16 @@ export function mergeById(a, b) {
 }
 
 // Dedupe de intereses automáticos por clave compuesta (los legacy usan id aleatorio).
+// W37-fix: la clave NO incluye la descripción — las 3 rutas de interés (normal/
+// aplazados/ISR) describen el MISMO interés semántico con textos distintos y las
+// 3 copias sobrevivían al dedupe (103 duplicados +10.42 documentados).
 export function dedupeAutoInterest(txs) {
   const seen = new Set();
   const out = [];
   for (const t of txs) {
     const isAutoInterest = t && t.auto && (t.category === "Intereses" || t.category === "Impuestos");
     if (!isAutoInterest) { out.push(t); continue; }
-    const key = `${t.accountId}|${t.date}|${t.description}|${t.amount}`;
+    const key = `${t.accountId}|${t.date}|${t.amount}`;
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(t);

@@ -162,6 +162,7 @@ function accrueCapped(acc: Account, now: string, existingIds: Set<string>): Accr
               id, date: postDate,
               description: `Intereses ${acc.name} · ${t.label} (${(t.rate * 100).toFixed(2)} % TAE) (depósito ${k}/${nDeposits})`,
               amount: part, currency: acc.currency, category: "Intereses", accountId: acc.id, auto: true,
+              _updatedAt: Date.now(),
             });
             gainCredited = true;
           }
@@ -173,6 +174,7 @@ function accrueCapped(acc: Account, now: string, existingIds: Set<string>): Accr
             id, date: postDate,
             description: `Intereses ${acc.name} · ${t.label} (${(t.rate * 100).toFixed(2)} % TAE)`,
             amount: gain, currency: acc.currency, category: "Intereses", accountId: acc.id, auto: true,
+            _updatedAt: Date.now(),
           });
           gainCredited = true;
         }
@@ -215,7 +217,17 @@ function accrueCapped(acc: Account, now: string, existingIds: Set<string>): Accr
     out[`lastAccrual${t.n}`] = newLast;
   }
 
-  return { account: { ...acc, balance, lastAccrual: now, ...out, ...(txs.length > 0 ? { _updatedAt: Date.now() } : {}) } as Account, txs, anomalies };
+  const balanceChanged = r2(acc.balance || 0) !== balance;
+    const lastChanged = acc.lastAccrual !== now;
+    const outChanged = Object.entries(out).some(([k2, v2]) => (acc as Record<string, unknown>)[k2] !== v2);
+    const txsNew = txs.length > 0;
+    // W37-fix: sin valores cambiados devolver el account AS-IS — el spread creaba
+    // un objeto nuevo con `lastAccrual: now` en cada accrue (60s) → churn del
+    // syncable → push cada 60s → loop de hydrate/push entre devices (v721→v728).
+    if (!balanceChanged && !lastChanged && !outChanged && !txsNew) {
+      return { account: acc, txs: [], anomalies };
+    }
+    return { account: { ...acc, balance, lastAccrual: now, ...out, ...(txsNew ? { _updatedAt: Date.now() } : {}) } as Account, txs, anomalies };
 }
 
 export const isCappedAccount = (a: Account): boolean =>

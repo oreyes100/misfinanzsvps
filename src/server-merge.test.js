@@ -183,3 +183,25 @@ describe("consolidateAndBump (W23 convergencia fuerte)", () => {
     expect(out._syncVersion).toBe(3);
   });
 });
+
+// ---------- W37: dedupe de intereses SIN la descripción en la clave ----------
+import { dedupeAutoInterest } from "../api/_merge.js";
+describe("W37 · dedupeAutoInterest normalizado", () => {
+  it("las 3 rutas de interés (normal/aplazados/ISR) mismo acc+fecha+importe → 1 sobreviviente", () => {
+    const copies = [
+      { id: "a", auto: true, category: "Intereses", accountId: "8hyhvr89", date: "2026-07-28", description: "Intereses Kraken · 5.00 % TAE", amount: 10.42 },
+      { id: "b", auto: true, category: "Intereses", accountId: "8hyhvr89", date: "2026-07-28", description: "Intereses Kraken · 5.00 % TAE (depósito 1/2)", amount: 10.42 },
+      { id: "c", auto: true, category: "Intereses", accountId: "8hyhvr89", date: "2026-07-28", description: "Intereses Kraken · 5.00 % TAE ISR", amount: 10.42 },
+    ];
+    const out = dedupeAutoInterest(copies);
+    expect(out.length).toBe(1);
+  });
+  it("intereses LEGÍTIMOS distinta fecha o cuenta → sobreviven", () => {
+    const legit = [
+      { id: "a", auto: true, category: "Intereses", accountId: "8hyhvr89", date: "2026-07-28", description: "I", amount: 10.42 },
+      { id: "b", auto: true, category: "Intereses", accountId: "8hyhvr89", date: "2026-08-28", description: "I", amount: 10.42 },
+      { id: "c", auto: true, category: "Intereses", accountId: "otra", date: "2026-07-28", description: "I", amount: 10.42 },
+    ];
+    expect(dedupeAutoInterest(legit).length).toBe(3);
+  });
+});
