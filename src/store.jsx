@@ -897,7 +897,13 @@ export function StoreProvider({ children }) {
     // W21: si es demo local y snapshot real, NO subir demo al server — reemplazo directo
     if (!isDemoReplace) {
       // Divergido con datos reales: subir cambios locales pendientes antes de reemplazar
-      if (syncableRef.current !== lastPushedRef.current) {
+      // W37e-fix del race: el pending NO es solo la empate de refs — el `_dirty` del
+      // stateRef (render-confirmado) también cuenta. Sin esto, el resync del focus
+      // RACABA la edición: el syncableRef seguía pre-edit (el ref se actualiza en el
+      // render), la empate decía "sin pendientes" → el hydrate aplicaba el snapshot
+      // PRE-EDICIÓN y la edición se revertía en <1.5s.
+      const dirty = stateRef.current._dirty || syncableRef.current !== lastPushedRef.current;
+      if (dirty) {
         // W24 Fase 3: si el push falla, ABORTAR — reemplazar aquí BORRARÍA los
         // cambios locales con un snapshot viejo del server (pérdida de datos).
         try {

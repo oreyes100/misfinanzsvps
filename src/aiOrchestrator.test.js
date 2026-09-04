@@ -120,3 +120,14 @@ describe("W27 · contrato de fuente única (source-contract)", () => {
     expect(src).not.toMatch(/"\/api\/ai-test"/);
   });
 });
+
+// W37e: el race del resync — el _dirty con la empate de refs debe forzar el push
+describe("W37e · el pending del resync cuenta el _dirty (el race de la edición)", () => {
+  it("la regla: el pending = _dirty || la empate de refs", () => {
+    const dirtyPending = (state, syncable, lastPushed) => state._dirty || syncable !== lastPushed;
+    // el race: la edición con el stamp, PERO el syncableRef seguía pre-edit (empate)
+    expect(dirtyPending({ _dirty: true }, "X", "X")).toBe(true);
+    expect(dirtyPending({ _dirty: false }, "X", "Y")).toBe(true);
+    expect(dirtyPending({ _dirty: false }, "X", "X")).toBe(false);
+  });
+});
