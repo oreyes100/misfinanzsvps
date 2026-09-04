@@ -25,6 +25,13 @@ const run = (cmd, opts = {}) =>
 async function main() {
   const issue = nextIssueInState("todo");
   if (!issue) { log("sin issues en todo"); process.exit(0); }
+  // W30-fix churn: cap al tomar — un issue con MAX intentos ya quemados no
+  // vuelve a build (antes podían crecer los intentos 4/3, 5/3…)
+  if (issue.buildAttempts >= MAX_BUILD_ATTEMPTS) {
+    updateIssue(issue.id, { state: "needs_human", lastError: issue.lastError || `${issue.buildAttempts} builds previos fallaron` });
+    await notify(`🧍 ${issue.id} requiere humano (${issue.buildAttempts} builds fallados). /resume ${issue.id} cuando lo resuelvas.`);
+    process.exit(0);
+  }
   log(`INICIO ${issue.id}: ${issue.title}`);
   updateIssue(issue.id, { state: "in_progress", buildAttempts: issue.buildAttempts + 1 });
   await notify(`🔨 Build loop: ${issue.id} — ${issue.title} (intento ${issue.buildAttempts + 1}/${MAX_BUILD_ATTEMPTS})`);
@@ -61,8 +68,12 @@ async function main() {
     const base = run("git rev-parse origin/main", { quiet: true }).trim();
     const status = run("git status --porcelain", { quiet: true });
     if (head === base && !status.trim()) {
-      updateIssue(issue.id, { state: "needs_fix", lastError: "agente sin cambios" });
-      await notify(`⚠️ ${issue.id}: el agente no produjo cambios → needs_fix`);
+      const cur2 = updateIssue(issue.id, { state: "needs_fix", lastError: "agente sin cambios" });
+      await notify(`⚠️ ${issue.id}: el agente no produjo cambios → needs_fix (intento ${cur2.buildAttempts}/${MAX_BUILD_ATTEMPTS})`);
+      if (cur2.buildAttempts >= MAX_BUILD_ATTEMPTS) {
+        updateIssue(issue.id, { state: "needs_human", lastError: "agente sin cambios tras MAX intentos" });
+        await notify(`🧍 ${issue.id} requiere humano: sin cambios en ${cur2.buildAttempts} builds. /resume ${issue.id} cuando lo resuelvas.`);
+      }
       run("git checkout main -q", { quiet: true });
       process.exit(0);
     }

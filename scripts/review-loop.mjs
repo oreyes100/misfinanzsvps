@@ -43,7 +43,8 @@ function runCheck(check) {
   let c = String(check || "").trim();
   // strip de asignaciones de env iniciales: VAR="x" → comando final
   let m;
-  while ((m = c.match(/^\w+=(?:"[^"]*"|'[^']*'|\S+)\s+/))) c = c.slice(m[0].length);
+  // acepta también " && " entre asignaciones (p. ej. EMAIL="a@b" && PASS="x" && curl …)
+  while ((m = c.match(/^\w+=(?:"[^"]*"|'[^']*'|\S+)\s*(?:&&\s*)?/))) c = c.slice(m[0].length);
   if (!ALLOWED_PATTERNS.some((re) => re.test(c))) return { ok: false, out: `comando no permitido: ${c.slice(0, 80)}` };
   try {
     const out = run(c + " 2>&1", { quiet: true, timeout: 120_000 });
@@ -89,8 +90,8 @@ async function main() {
     log(`VERDE → ready_to_merge`);
   } else {
     const failed = acResults.filter((r) => !r.ok).map((r) => `❌ ${r.desc}: ${r.out.slice(0, 80)}`).join("\n");
-    if (issue.reviewAttempts >= MAX_BUILD_ATTEMPTS) {
-      updateIssue(issue.id, { state: "needs_human", lastError: `review falló ${issue.reviewAttempts} veces` });
+    if (issue.reviewAttempts >= MAX_BUILD_ATTEMPTS || issue.buildAttempts >= MAX_BUILD_ATTEMPTS) {
+      updateIssue(issue.id, { state: "needs_human", lastError: `review falló ${issue.reviewAttempts} veces (builds: ${issue.buildAttempts})` });
       await notify(`🧍 ${issue.id} → HUMANO tras ${issue.reviewAttempts} reviews fallidas\n${testsOk ? "" : "❌ tests rojos\n"}${failed}`);
     } else {
       updateIssue(issue.id, { state: "todo", lastError: failed.slice(0, 200) });

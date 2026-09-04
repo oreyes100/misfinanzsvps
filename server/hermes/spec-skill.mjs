@@ -54,8 +54,8 @@ export async function handleInterviewAnswer(chatId, answer) {
   } catch (e) {
     return `❌ No pude generar los issues (${String(e?.message || e).slice(0, 120)}). Intenta de nuevo con /spec.`;
   }
-  for (const iss of issues) createIssue({ wargame: s.wargame, complexity, ...iss });
-  return `✅ Spec completado: ${issues.length} issues creados (${issues.map((i) => i.id).join(", ")}).\n🔨 El build loop los tomará en ≤5 min. Te avisaré en cada paso.`;
+  const created = issues.map((iss) => createIssue({ wargame: s.wargame, complexity, ...iss }));
+  return `✅ Spec completado: ${created.length} issues creados (${created.map((i) => i.id).join(", ")}).\n🔨 El build loop los tomará en ≤5 min. Te avisaré en cada paso.`;
 }
 
 /** Llama al LLM (Hermes orchestrator /api/hermes/ai/text) para generar issues atómicos. */
