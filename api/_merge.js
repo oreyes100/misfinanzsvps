@@ -10,45 +10,27 @@ export function mergeById(a, b) {
   return [...map.values()];
 }
 
-// Dedupe de intereses automáticos por clave compuesta (los legacy usan id aleatorio).
-// W37-fix: la clave NO incluye la descripción — las 3 rutas de interés (normal/
-// aplazados/ISR) describen el MISMO interés semántico con textos distintos y las
-// 3 copias sobrevivían al dedupe (103 duplicados +10.42 documentados).
-// W37b-fix: POR CATEGORÍA sin el requisito `auto` — los duplicados legacy vienen
-// SIN el flag auto y el dedupe los saltaba (volvían al consolidar pushes viejos).
-// W37d-fix: conservar la copia con `_updatedAt` MÁS ALTO por grupo — el
-// first-seen conservaba la hermana EPOC/original y DROPPABA la edición del
-// usuario (la revertía como "sibling" del dedupe).
+// Dedupe de la clase interés por (cuenta, fecha, IMPORTE) — solo las copias
+// EXACTAS dedupan (las variantes de centavos ISR son intereses DISTINTOS y
+// sobreviven). W37e: SIN los lookups de posición (el W37d estaba mal alineado
+// y comía el estado: colapso 1302→290 documentado).
 export function dedupeAutoInterest(txs) {
-  const best = new Map(); // key -> { t, order }
-  let order = 0;
+  const isClass = (t) => t && (t.category === "Intereses" || t.category === "Impuestos");
+  // W37e: el Map guarda la MEJOR copia por clave (el _updatedAt más alto gana —
+  // la edición del usuario sobrevive). SIN los lookups de posición (el W37d los
+  // tenía mal alineados y comía las entradas tras el primer duplicado).
+  const best = new Map();
   for (const t of txs) {
-    const isInterestClass = t && (t.category === "Intereses" || t.category === "Impuestos");
-    if (!isInterestClass) { order++; continue; }
-    // W37c-ROLLBACK: el importe VUELVE a la clave — el W37c sin el importe fusionó
-    // variantes semánticamente DIFERENTES (10.42 ganancia vs 10.43 ISR-capped) y
-    // borró las entradas legítimas (daño 884→290 confirmado). Los duplicados
-    // verdaderos son EXACTOS en los centavos.
+    if (!isClass(t)) continue;
     const key = `${t.accountId}|${t.date}|${t.amount}`;
     const prev = best.get(key);
-    const upd = t._updatedAt || 0;
-    if (!prev) {
-      best.set(key, { t, upd, order: order++ });
-    } else if (upd > prev.upd) {
-      // la más nueva gana el grupo; conserva la posición de la primera aparición
-      best.set(key, { t, upd, order: prev.order });
-    }
+    if (!prev || (t._updatedAt || 0) > (prev._updatedAt || 0)) best.set(key, t);
   }
-  const ranked = [...best.values()].sort((a, b) => a.order - b.order);
-  const interestOut = new Map(ranked.map((r) => [r.order, r.t]));
   const out = [];
-  let o = 0;
   for (const t of txs) {
-    const isInterestClass = t && (t.category === "Intereses" || t.category === "Impuestos");
-    if (!isInterestClass) { out.push(t); continue; }
-    const keep = interestOut.get(o);
-    if (keep) out.push(keep);
-    o++;
+    if (!isClass(t)) { out.push(t); continue; }
+    const key = `${t.accountId}|${t.date}|${t.amount}`;
+    if (best.get(key) === t) out.push(t); // solo la mejor sobrevive (identidad)
   }
   return out;
 }

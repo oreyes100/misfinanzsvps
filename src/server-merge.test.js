@@ -236,3 +236,21 @@ describe("W37d · el dedupe conserva la edición (max _updatedAt)", () => {
     expect(out.map((t) => t.id)).toEqual(["n1", "edit", "n2"]);
   });
 });
+
+describe("W37e · el dedupe NO come el estado tras el primer duplicado (el colapso)", () => {
+  it("1012 entradas con duplicados intercalados → ninguna se pierde por mal alineación", () => {
+    const copies = [];
+    for (let i = 0; i < 300; i++) {
+      copies.push({ id: `n${i}`, category: "Comida", description: `vecino ${i}`, amount: -i, _updatedAt: 1000 + i });
+      if (i % 3 === 0) {
+        copies.push({ id: `sib${i}`, category: "Intereses", accountId: "w", date: `2026-09-${String((i % 28) + 1).padStart(2, "0")}`, description: `I dup ${i}`, amount: 10 + i, _updatedAt: 0 });
+        copies.push({ id: `dup${i}`, category: "Intereses", accountId: "w", date: `2026-09-${String((i % 28) + 1).padStart(2, "0")}`, description: `I dup ${i}`, amount: 10 + i, _updatedAt: 2000 + i });
+      }
+    }
+    const out = dedupeAutoInterest(copies);
+    const ids = new Set(out.map((t) => t.id));
+    for (let i = 0; i < 300; i++) expect(ids.has(`n${i}`)).toBe(true); // los vecinos: TODOS presentes
+    const interest = out.filter((t) => t.category === "Intereses");
+    expect(interest.length).toBe(100); // cada grupo (importe distinto) → un sobreviviente
+  });
+});
