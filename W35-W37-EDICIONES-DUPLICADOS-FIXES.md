@@ -125,6 +125,7 @@ el contador `o` cuenta TODAS, las llaves saltan los duplicados
 
 | # | Lección |
 |---|---|
+| L0 | **LA CAUSA RAÍZ FINAL**: el fix server-side (W37e) se escribió en disco (mtime 04:31) PERO el proceso del server (STARTED 04:19) **nunca se reinició** → 17h ejecutando el módulo ROTO en memoria (colapso 1302→291 + ediciones droppeadas). **TRAS cada deploy server-side: verificar el STARTED del proceso, no solo `systemctl is-active`** |
 | L1 | **Toda entidad que viaja en el sync y puede editarse DEBE bump-ear `_updatedAt`** al mutarse — sin el bump, `mergeById` conserva la copia vieja (empate 0vs0) |
 | L2 | **Los movers de balance bump-ean TAMBIÉN el account** — el tx y el account son dos entidades con dos stamps |
 | L3 | **El dedupe de la clase interés**: clave `(cuenta, fecha, IMPORTE)` — SIN la descripción (las rutas describen lo mismo) y CON el importe (las variantes de centavos ISR son intereses DISTINTOS) |
