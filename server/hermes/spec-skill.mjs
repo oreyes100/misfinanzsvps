@@ -75,7 +75,7 @@ export async function handleInterviewAnswer(chatId, answer) {
 }
 
 /** Llama al LLM (Hermes orchestrator /api/hermes/ai/text) para generar issues atómicos. */
-export async function generateIssues(idea, answers, wargame) {
+export async function generateIssues(idea, answers, wargame, complexity = "feature") {
   const prompt = `Genera issues atómicos para implementar esta mejora en el proyecto Mis Finanzas
 (React+Vite frontend en src/, servidor Node ESM en server/, tests con vitest (src/**) y node:test (server/**)).
 

@@ -55,7 +55,7 @@ export async function createIssuesFromSpec({ idea, answers, wargame }, p = ISSUE
   const v = validateSpecInput({ idea, answers, wargame });
   if (!v.ok) throw new Error(v.error);
   const complexity = normalizeComplexity(answers[6]);
-  const generated = await generateIssues(idea, answers, wargame);
+  const generated = await generateIssues(idea, answers, wargame, complexity);
   const created = generated.map((iss) => createIssue({ wargame, complexity, ...iss }, p));
   return created;
 }
