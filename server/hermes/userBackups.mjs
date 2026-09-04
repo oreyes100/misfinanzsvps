@@ -433,3 +433,143 @@ export async function restoreUser(syncId, fecha, opts = {}) {
     overwritten,
   };
 }
+
+// ── W33-i6: notificaciones + visibilidad ──────────────────────────────────────
+// Al completar el respaldo diario por usuario se envía UN aviso Telegram
+// (éxito/fallo) por el canal de bindings ya vinculado (notifications.mjs).
+// El mensaje se construye con backupSummaryMessage (función PURA, testeable) y
+// el envío es inyectable (opts.notify) para que los tests NUNCA toquen red ni
+// server/data/**. listUserBackups alimenta el listado de Ajustes (solo
+// metadatos del PROPIO usuario — jamás del árbol de otro).
+
+const fmtBytes = (n) =>
+  !Number.isFinite(n) || n < 0
+    ? "?"
+    : n < 1024
+      ? `${n} B`
+      : n < 1024 * 1024
+        ? `${(n / 1024).toFixed(1)} kB`
+        : `${(n / (1024 * 1024)).toFixed(1)} MB`;
+
+/**
+ * Lista los respaldos del PROPIO usuario: metadatos de cada
+ * <root>/backups/users/<syncId>/<fecha>.json (fecha, bytes, hash, veredicto de
+ * integridad vía verifyBackup, backedUpAt, syncVersion, counts), ascendente.
+ * Aislamiento: solo lee el árbol del syncId (validado, anti path-traversal);
+ * no toca el backup global de W1 Fortress (data/backups/*.db).
+ * Devuelve { syncId, found, backups } — found:false si el usuario aún no tiene
+ * respaldos. Lanza SOLO por syncId inválido.
+ */
+export async function listUserBackups(syncId, opts = {}) {
+  const id = String(syncId ?? "");
+  if (!SYNC_ID_RE.test(id)) {
+    throw new Error(`syncId inválido (se permite [a-zA-Z0-9_-]): ${JSON.stringify(id).slice(0, 80)}`);
+  }
+  const root = opts.root || (await import("../db.mjs")).DATA_DIR;
+  const dir = path.join(usersBackupRoot(root), id);
+  let entries;
+  try {
+    entries = fs.readdirSync(dir);
+  } catch (e) {
+    if (e && e.code === "ENOENT") return { syncId: id, found: false, backups: [] };
+    throw e;
+  }
+  const dates = entries
+    .map((f) => (BACKUP_FILE_RE.exec(f) || [])[1])
+    .filter(Boolean)
+    .sort();
+  const backups = [];
+  for (const date of dates) {
+    const p = path.join(dir, `${date}.json`);
+    const v = await verifyBackup(p);
+    let meta = null;
+    try { meta = JSON.parse(fs.readFileSync(p, "utf8"))?.meta ?? null; } catch { /* verifyBackup ya lo marcó */ }
+    let bytes = null;
+    try { bytes = fs.statSync(p).size; } catch { /* desapareció a mitad de listado */ }
+    backups.push({
+      date,
+      path: p,
+      bytes,
+      hash: v.hash,
+      valid: v.valid,
+      reason: v.reason,
+      backedUpAt: meta?.backedUpAt ?? null,
+      syncVersion: meta?.syncVersion ?? null,
+      counts: meta?.counts ?? null,
+    });
+  }
+  return { syncId: id, found: backups.length > 0, backups };
+}
+
+/**
+ * Mensaje de resumen del respaldo diario (función PURA): una línea por usuario,
+ * ✅ con éxito (cuentas/movs/versión/tamaño) y ❌ con fallo (motivo), encabezado
+ * con la fecha y el conteo global. Truncado a 3500 chars (límite Telegram 4096
+ * con margen). results: salida de backupUser ({ok,...}) o fallos capturados
+ * ({ok:false, syncId, reason}).
+ */
+export function backupSummaryMessage(results, now = new Date()) {
+  const date = (now instanceof Date ? now : new Date(now)).toISOString().slice(0, 10);
+  const ok = results.filter((r) => r && r.ok);
+  const fail = results.filter((r) => r && !r.ok);
+  const lines = [
+    `🗂 Respaldo por usuario — ${date}`,
+    results.length
+      ? `✅ ${ok.length} con éxito · ❌ ${fail.length} con fallo`
+      : "Sin usuarios con sync activo: nada que respaldar",
+  ];
+  for (const r of ok) {
+    lines.push(
+      `✅ ${r.syncId} · ${r.counts?.accounts ?? "?"} cuentas · ${r.counts?.transactions ?? "?"} movs · v${r.syncVersion ?? "?"} · ${fmtBytes(r.bytes)}${r.retentionDeleted ? ` · retención: -${r.retentionDeleted}` : ""}`
+    );
+  }
+  for (const r of fail) lines.push(`❌ ${r.syncId} · ${r.reason || "fallo desconocido"}`);
+  return lines.join("\n").slice(0, 3500);
+}
+
+/**
+ * Envía el resumen por Telegram. opts.notify inyectable (tests); por defecto
+ * usa notify de notifications.mjs (import lazy: los tests con stub no cargan
+ * red). NUNCA lanza: un fallo del canal no rompe el job de respaldo.
+ * Devuelve el texto enviado, o null si el envío falló / no había canal.
+ */
+export async function notifyBackupResults(results, opts = {}) {
+  try {
+    const send =
+      typeof opts.notify === "function"
+        ? opts.notify
+        : (await import("./notifications.mjs")).notify;
+    const text = backupSummaryMessage(results, opts.now);
+    await send(text);
+    return text;
+  } catch (e) {
+    console.error("[user-backups] aviso Telegram falló:", e?.message || e);
+    return null;
+  }
+}
+
+/**
+ * Respaldo diario de TODOS los usuarios con sync activo (W33-i6): para cada
+ * syncId ejecuta backupUser + applyRetention, captura fallos por usuario (un
+ * usuario caído no aborta el lote) y al final envía UN aviso Telegram con el
+ * resumen éxito/fallo (opts.notify === false lo desactiva; fn inyectable en
+ * tests). opts se propaga a backupUser/applyRetention ({root, db, getState,
+ * now,...}) — en tests siempre inyectados, sin tocar server/data/**.
+ * Devuelve { ok, results, notified } — ok:true solo si TODOS los respaldos
+ * succeeded (con lote vacío ok:true); notified: texto enviado o null.
+ */
+export async function runDailyUserBackups(syncIds, opts = {}) {
+  const ids = [...new Set((syncIds || []).map((id) => String(id ?? ""))).values()].filter(Boolean);
+  const results = [];
+  for (const id of ids) {
+    try {
+      const r = await backupUser(id, opts);
+      const ret = await applyRetention(id, opts);
+      results.push({ ...r, retentionDeleted: ret.deleted?.length ?? 0, retentionErrors: ret.errors ?? [] });
+    } catch (e) {
+      results.push({ ok: false, syncId: id, reason: String(e?.message || e).slice(0, 160) });
+    }
+  }
+  const notified = opts.notify === false ? null : await notifyBackupResults(results, opts);
+  return { ok: results.every((r) => r.ok), results, notified };
+}

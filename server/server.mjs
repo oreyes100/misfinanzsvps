@@ -451,6 +451,26 @@ async function handleExportCsv(req, res) {
   }
 }
 
+// W33-i6: GET /api/user-backups?id=<código> — lista los respaldos del PROPIO
+// usuario (solo metadatos: fecha, bytes, hash, verificación de integridad).
+// Patrón handleSnapshot: el código de sync es la credencial y delimita el
+// aislamiento — SOLO se lee <DATA_DIR>/backups/users/<code>/ (árbol del
+// propio usuario); jamás el de otro usuario ni el backup global de W1
+// Fortress (data/backups/misfinanzas-*.db).
+async function handleUserBackups(req, res) {
+  const query = new URLSearchParams(req.url.split("?")[1] || "");
+  const code = String(query.get("id") || "").toLowerCase();
+  if (!ID_RE.test(code)) return sendJson(res, 400, { error: "Código de sincronización inválido." });
+  if (req.method !== "GET") return sendJson(res, 405, { error: "Método no permitido." });
+  try {
+    const { listUserBackups } = await import("./hermes/userBackups.mjs");
+    const out = await listUserBackups(code, { root: DATA_DIR });
+    return sendJson(res, 200, { found: out.found, syncId: out.syncId, backups: out.backups });
+  } catch {
+    return sendJson(res, 500, { error: "Error listando los respaldos." });
+  }
+}
+
 // W23: POST /api/push — consolidación fuerte. El cliente envía su delta crudo
 // (sin merge por entidad en el cliente); el server consolida determinista y
 // avanza _syncVersion (consolidateAndBump). Devuelve el snapshot consolidado.
@@ -655,6 +675,16 @@ const server = http.createServer(async (req, res) => {
     }
     if (urlPath === "/api/sync-version") return await handleSyncVersion(req, res);
     if (urlPath === "/api/export/csv") return await handleExportCsv(req, res);
+    // W33-i6: listado de respaldos por usuario para Ajustes (solo metadatos
+    // del PROPIO usuario — aislamiento estricto por syncId).
+    if (urlPath === "/api/user-backups") {
+      const rl = snapshotLimiter.isAllowed(clientIp(req));
+      if (!rl.allowed) {
+        res.setHeader("Retry-After", String(Math.ceil((rl.resetAt - Date.now())/1000)));
+        return sendJson(res, 429, { error: "Demasiadas peticiones. Intenta de nuevo más tarde." });
+      }
+      return await handleUserBackups(req, res);
+    }
     if (urlPath === "/api/signup") return await handleSignup(req, res, await readBody(req));
     if (urlPath === "/api/google-import") return await routeExtra(handleGoogleImport, req, res, db);
     if (urlPath === "/api/google-auth") return await routeExtra(handleGoogleAuth, req, res, db);
@@ -825,6 +855,25 @@ runBackup();
 runIntegrityCheck();
 setInterval(runBackup, 24 * 60 * 60 * 1000);
 setInterval(runIntegrityCheck, 24 * 60 * 60 * 1000);
+
+// ── W33-i6: respaldo diario POR USUARIO + aviso Telegram (éxito/fallo) ──
+// Job SEPARADO del backup global de W1 Fortress (runBackup NO se modifica):
+// exporta el estado de cada sync doc a data/backups/users/<syncId>/<fecha>.json
+// con retención 7+4 y envía UN resumen Telegram al completar el lote.
+async function runUserBackupsJob() {
+  try {
+    const codes = db.prepare("SELECT sync_code FROM sync_docs").all().map((r) => r.sync_code);
+    if (!codes.length) return;
+    const { runDailyUserBackups } = await import("./hermes/userBackups.mjs");
+    const out = await runDailyUserBackups(codes);
+    const okCount = out.results.filter((r) => r.ok).length;
+    console.log(`[user-backups] ok=${okCount}/${out.results.length} aviso=${out.notified ? "enviado" : "omitido"}`);
+  } catch (e) {
+    console.error("[user-backups] error:", e?.message || e);
+  }
+}
+runUserBackupsJob();
+setInterval(runUserBackupsJob, 24 * 60 * 60 * 1000);
 
 server.listen(PORT, HOST, () => {
   console.log(`[misfinanzas-server] SQLite local escuchando en http://${HOST}:${PORT}`);

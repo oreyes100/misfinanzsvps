@@ -497,3 +497,150 @@ test("restoreUser: putState sin getState (o viceversa) lanza — la verificació
     /putState/
   );
 });
+
+// ── W33-i6: notificaciones + visibilidad ──────────────────────────────────────
+// El aviso Telegram SIEMPRE se inyecta (opts.notify): los tests no tocan red
+// ni server/data/**.
+
+import { listUserBackups, backupSummaryMessage, notifyBackupResults, runDailyUserBackups } from "./userBackups.mjs";
+
+test("listUserBackups: found:false sin respaldos; lista ascendente con metadatos y veredicto", async (t) => {
+  const root = tmpRoot(t);
+
+  const empty = await listUserBackups("sync-a", { root });
+  assert.equal(empty.found, false);
+  assert.deepEqual(empty.backups, []);
+
+  await backupUser("sync-a", { root, getState: () => stateA, now: "2026-09-01T10:00:00Z" });
+  await backupUser("sync-a", { root, getState: () => ({ ...stateA, _syncVersion: 8 }), now: "2026-09-02T10:00:00Z" });
+  // extraño fuera del patrón: jamás aparece en el listado
+  fs.writeFileSync(path.join(usersBackupRoot(root), "sync-a", "notas.txt"), "x");
+
+  const out = await listUserBackups("sync-a", { root });
+  assert.equal(out.found, true);
+  assert.equal(out.syncId, "sync-a");
+  assert.deepEqual(out.backups.map((b) => b.date), ["2026-09-01", "2026-09-02"]);
+  const [b1, b2] = out.backups;
+  assert.equal(b1.valid, true);
+  assert.equal(b1.hash, stateHash(stateA));
+  assert.equal(b1.syncVersion, 7);
+  assert.equal(b1.backedUpAt, "2026-09-01T10:00:00.000Z");
+  assert.deepEqual(b1.counts, { accounts: 1, transactions: 1 });
+  assert.equal(b1.bytes, fs.statSync(b1.path).size);
+  assert.equal(b1.reason, null);
+  assert.equal(b2.syncVersion, 8);
+
+  // tampereado: veredicto corrupto con motivo
+  const tampered = JSON.parse(fs.readFileSync(b1.path, "utf8"));
+  tampered.state.accounts[0].balance = 999999;
+  fs.writeFileSync(b1.path, JSON.stringify(tampered));
+  const after = await listUserBackups("sync-a", { root });
+  assert.equal(after.backups[0].valid, false);
+  assert.match(after.backups[0].reason, /mutado/);
+  assert.equal(after.backups[1].valid, true); // los demás intactos
+});
+
+test("listUserBackups: aislamiento — solo el árbol del syncId pedido; syncId inválido lanza", async (t) => {
+  const root = tmpRoot(t);
+  await backupUser("user-a", { root, getState: () => stateA, now: "2026-09-01T10:00:00Z" });
+  await backupUser("user-b", { root, getState: () => stateB, now: "2026-09-01T10:00:00Z" });
+
+  const a = await listUserBackups("user-a", { root });
+  assert.equal(a.backups.length, 1);
+  assert.equal(a.backups[0].hash, stateHash(stateA));
+  // jamás filtra el contenido/hash del otro usuario
+  assert.ok(!JSON.stringify(a).includes(stateHash(stateB)));
+
+  for (const bad of ["../other", "a/b", "", "usuario con espacios"]) {
+    await assert.rejects(() => listUserBackups(bad, { root }), /syncId inválido/);
+  }
+});
+
+test("backupSummaryMessage: resumen puro con éxito/fallo, lote vacío y truncado", () => {
+  const ok1 = { ok: true, syncId: "user-a", counts: { accounts: 3, transactions: 120 }, syncVersion: 42, bytes: 12615, retentionDeleted: 2 };
+  const ok2 = { ok: true, syncId: "user-b", counts: { accounts: 1, transactions: 0 }, syncVersion: 3, bytes: 900 };
+  const fail = { ok: false, syncId: "user-c", reason: "sync doc user-c no encontrado" };
+
+  const text = backupSummaryMessage([ok1, ok2, fail], new Date("2026-09-04T12:00:00Z"));
+  assert.match(text, /🗂 Respaldo por usuario — 2026-09-04/);
+  assert.match(text, /✅ 2 con éxito · ❌ 1 con fallo/);
+  assert.match(text, /✅ user-a · 3 cuentas · 120 movs · v42 · 12\.3 kB · retención: -2/);
+  assert.match(text, /✅ user-b · 1 cuentas · 0 movs · v3 · 900 B/);
+  assert.match(text, /❌ user-c · sync doc user-c no encontrado/);
+
+  const empty = backupSummaryMessage([], new Date("2026-09-04T12:00:00Z"));
+  assert.match(empty, /Sin usuarios con sync activo/);
+
+  const many = Array.from({ length: 500 }, (_, i) => ({ ok: false, syncId: `user-${i}`, reason: "x".repeat(120) }));
+  assert.ok(backupSummaryMessage(many).length <= 3500);
+});
+
+test("notifyBackupResults: envía el texto exacto con el stub inyectado; fallo del canal → null sin lanzar", async () => {
+  const results = [{ ok: true, syncId: "user-a", counts: { accounts: 1, transactions: 1 }, syncVersion: 7, bytes: 500 }];
+  const sent = [];
+  const text = await notifyBackupResults(results, { notify: async (t) => sent.push(t), now: "2026-09-04T12:00:00Z" });
+  assert.deepEqual(sent, [text]);
+  assert.match(text, /✅ 1 con éxito · ❌ 0 con fallo/);
+
+  const nullOut = await notifyBackupResults(results, {
+    notify: async () => { throw new Error("telegram caído"); },
+    now: "2026-09-04T12:00:00Z",
+  });
+  assert.equal(nullOut, null); // el canal no rompe el job
+});
+
+test("runDailyUserBackups: respalda a todos + retención + UN aviso con éxito/fallo", async (t) => {
+  const root = tmpRoot(t);
+  // 9 respaldos previos de user-b (26-ago..03-sep) → la retención borra 2 (7 diarios)
+  for (let d = 9; d >= 1; d--) {
+    const date = new Date(Date.UTC(2026, 8, 4) - d * 86_400_000).toISOString().slice(0, 10);
+    await backupUser("user-b", { root, getState: () => stateB, now: `${date}T10:00:00Z` });
+  }
+  const states = { "user-a": stateA, "user-b": stateB, "user-c": null };
+  const sent = [];
+  const out = await runDailyUserBackups(["user-a", "user-b", "user-c", "user-a"], {
+    root,
+    getState: (id) => states[id] ?? null,
+    now: "2026-09-04T23:00:00Z",
+    notify: async (t) => sent.push(t),
+  });
+
+  assert.equal(out.ok, false); // user-c falló (sin sync doc)
+  assert.equal(out.results.length, 3); // user-a duplicado se deduplica
+  const byId = Object.fromEntries(out.results.map((r) => [r.syncId, r]));
+  assert.equal(byId["user-a"].ok, true);
+  assert.equal(byId["user-b"].ok, true);
+  assert.equal(byId["user-b"].retentionDeleted, 2); // 9 archivos → 7 diarios
+  assert.equal(byId["user-c"].ok, false);
+  assert.match(byId["user-c"].reason, /no encontrado/);
+
+  assert.equal(sent.length, 1); // UN aviso al completar el lote
+  assert.match(out.notified, /✅ 2 con éxito · ❌ 1 con fallo/);
+  assert.match(out.notified, /❌ user-c · sync doc user-c no encontrado/);
+  assert.equal(out.notified, sent[0]);
+});
+
+test("runDailyUserBackups: notify:false no envía; stub que lanza → notified null y resultados intactos", async (t) => {
+  const root = tmpRoot(t);
+  let calls = 0;
+  const off = await runDailyUserBackups(["user-a"], {
+    root, getState: () => stateA, now: "2026-09-04T23:00:00Z", notify: false,
+  });
+  assert.equal(off.ok, true);
+  assert.equal(off.notified, null);
+  assert.equal(calls, 0);
+
+  const sent = [];
+  const out = await runDailyUserBackups(["user-a"], {
+    root,
+    getState: () => stateA,
+    now: "2026-09-04T23:30:00Z",
+    notify: async () => { calls++; sent.push("x"); throw new Error("canal roto"); },
+  });
+  assert.equal(out.ok, true); // el respaldo OK aunque el aviso falle
+  assert.equal(out.results.length, 1);
+  assert.equal(out.results[0].ok, true);
+  assert.equal(out.notified, null);
+  assert.equal(calls, 1);
+  assert.equal(sent.length, 1);
+});

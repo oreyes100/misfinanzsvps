@@ -10,6 +10,7 @@ import AIConfigPanel from "./AIConfigPanel.jsx";
 import Users from "./Users.jsx";
 import GooglePhotosSettings from "./GooglePhotosSettings.jsx";
 import { getLastResync } from "../syncHealth.js";
+import { fetchUserBackups, backupLabel } from "../userBackups.js";
 
 const SYNC_LABEL = {
   off: ["Desactivada", "text-ink-dim"],
@@ -156,6 +157,57 @@ function CloudSync() {
   );
 }
 
+// W33-i6: listado de respaldos diarios del PROPIO usuario (server guarda una
+// copia por syncId con retención 7+4 y avisa por Telegram al completar).
+function UserBackupsPanel() {
+  const { sync } = useStore();
+  const [backups, setBackups] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState(null);
+
+  const load = async () => {
+    if (!sync.id || loading) return;
+    setLoading(true); setErr(null);
+    try {
+      setBackups(await fetchUserBackups(sync.id));
+    } catch (e) {
+      setErr(e.message || "Error al listar respaldos");
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => { if (sync.id) load(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [sync.id]);
+
+  if (!sync.id) return null;
+  return (
+    <Glass aria-label="Respaldos en la nube">
+      <div className="mb-1 flex items-center justify-between">
+        <h2 className="text-base font-semibold">Respaldos en la nube</h2>
+        <Btn variant="ghost" onClick={load} disabled={loading} className="text-xs">{loading ? "Cargando…" : "↻ Refrescar"}</Btn>
+      </div>
+      <p className="mb-3 text-xs text-ink-dim">
+        Copia diaria automática de tu estado bajo tu código de sync (se conservan 7 diarios + 4 semanales). Al completar cada respaldo llega un aviso a Telegram con el resultado.
+      </p>
+      {err && <p role="status" className="text-sm text-loss">{err}</p>}
+      {backups && backups.length === 0 && (
+        <p className="text-sm text-ink-dim">Aún no hay respaldos: se crean automáticamente cada día.</p>
+      )}
+      {backups && backups.length > 0 && (
+        <ul className="space-y-1.5 text-sm">
+          {backups.map((b) => (
+            <li key={b.date} className="flex items-center justify-between gap-2 rounded-xl bg-white/5 px-3 py-2">
+              <span className="tabular-nums">{backupLabel(b)}</span>
+              <span className={`shrink-0 text-xs ${b.valid ? "text-gain" : "text-loss"}`} role="status">
+                {b.valid ? "✓ íntegro" : "✗ corrupto"}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Glass>
+  );
+}
+
 export default function Settings({ session }) {
   const { state, dispatch } = useStore();
   const fiat = CURRENCIES.filter((c) => !["BTC", "ETH"].includes(c));
@@ -232,6 +284,8 @@ export default function Settings({ session }) {
       <TelegramAgent />
 
       <CloudSync />
+
+      <UserBackupsPanel />
 
       <DataTools />
     </div>
