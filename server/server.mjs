@@ -24,6 +24,7 @@ const categorizeLimiter = makeRateLimiter({ windowMs: 60_000, max: 30 });
 const learnLimiter = makeRateLimiter({ windowMs: 60_000, max: 30 });
 const snapshotLimiter = makeRateLimiter({ windowMs: 60_000, max: 60 });
 const aiTestLimiter = makeRateLimiter({ windowMs: 60_000, max: 20 });
+const wargameSpecLimiter = makeRateLimiter({ windowMs: 60_000, max: 10 });
 const geminiCircuit = makeCircuitBreaker({ threshold: 3, resetMs: 300_000 });
 const telegramStore = makeUpdateIdStore({ persistPath: path.join(DATA_DIR, "blobs", "telegram", "processed_updates.json"), max: 5000 });
 
@@ -706,6 +707,27 @@ const server = http.createServer(async (req, res) => {
       if (!v.ok) return sendJson(res, 400, { error: v.error });
       const { handleLearn } = await import("./learn.mjs");
       return await handleLearn(req, res, learnBody);
+    }
+
+    // W34: /api/wargame/* — única puerta del loop autoconstructivo.
+    // status/issues = públicos (solo lectura). spec/resume = auth W1 (checkLearnAuth).
+    // "Un solo escritor": toda mutación pasa por issues.mjs (máquina de estados).
+    const wargameMatch = urlPath.match(/^\/api\/wargame\/([a-z]+)$/);
+    if (wargameMatch) {
+      const { handleWargameStatus, handleWargameIssues, handleWargameSpec, handleWargameResume } = await import("./hermes/wargameApi.mjs");
+      const verb = wargameMatch[1];
+      if (verb === "status" && req.method === "GET") return await handleWargameStatus(req, res);
+      if (verb === "issues" && req.method === "GET") return await handleWargameIssues(req, res);
+      if (verb === "spec" && req.method === "POST") {
+        const rl = wargameSpecLimiter.isAllowed(clientIp(req));
+        if (!rl.allowed) {
+          res.setHeader("Retry-After", String(Math.ceil((rl.resetAt - Date.now()) / 1000)));
+          return sendJson(res, 429, { ok: false, error: "Demasiadas peticiones. Intenta de nuevo más tarde." });
+        }
+        return await handleWargameSpec(req, res);
+      }
+      if (verb === "resume" && req.method === "POST") return await handleWargameResume(req, res);
+      return sendJson(res, 404, { ok: false, error: `verbo wargame desconocido: ${verb}` });
     }
 
     // W27: Hermes Agent = ÚNICO punto de entrada de IA. Un solo endpoint

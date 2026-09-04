@@ -29,16 +29,15 @@ import { parseOcrText } from "./hermes/local.mjs";
 import { extractPdfText } from "./hermes/receiptExtractor.mjs";
 import { sendMessage, answerCallbackQuery, editMessageReplyMarkup, getFile, downloadFile, inlineKeyboard, registerWebhook, webhookInfo } from "../lib/telegram.js";
 import { startSpec, handleInterviewAnswer, isInterviewActive } from "./hermes/spec-skill.mjs";
-import { getIssue, updateIssue } from "./hermes/issues.mjs";
 import { notify } from "./hermes/notifications.mjs";
+import { resumeIssue } from "./hermes/wargameApi.mjs";
 
-// W30-mejora 3: /resume <issueId> — needs_human → todo (el loop lo retoma).
+// W30-mejora 3 + W34: /resume <issueId> — usa el guard COMPARTIDO de
+// wargameApi (un solo escritor: el bot y la API pasan por la misma función).
 async function handleResume(issueId) {
   if (!/^w\d+-i\d+$/.test(issueId || "")) return "Uso: /resume w31-i1";
-  const issue = getIssue(issueId);
-  if (!issue) return `⚠️ ${issueId} no existe`;
-  if (issue.state !== "needs_human") return `⚠️ ${issueId} no está needs_human (está ${issue.state})`;
-  updateIssue(issueId, { state: "todo", buildAttempts: 0, reviewAttempts: 0, lastError: null });
+  const result = await resumeIssue(issueId);
+  if (!result.ok) return result.error;
   await notify(`🔁 ${issueId} devuelto a la cola por humano — el build loop lo tomará en ≤5 min`);
   return `🔁 ${issueId} devuelto a la cola (buildAttempts reseteados)`;
 }
