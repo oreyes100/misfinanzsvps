@@ -16,19 +16,39 @@ export function mergeById(a, b) {
 // 3 copias sobrevivían al dedupe (103 duplicados +10.42 documentados).
 // W37b-fix: POR CATEGORÍA sin el requisito `auto` — los duplicados legacy vienen
 // SIN el flag auto y el dedupe los saltaba (volvían al consolidar pushes viejos).
+// W37d-fix: conservar la copia con `_updatedAt` MÁS ALTO por grupo — el
+// first-seen conservaba la hermana EPOC/original y DROPPABA la edición del
+// usuario (la revertía como "sibling" del dedupe).
 export function dedupeAutoInterest(txs) {
-  const seen = new Set();
+  const best = new Map(); // key -> { t, order }
+  let order = 0;
+  for (const t of txs) {
+    const isInterestClass = t && (t.category === "Intereses" || t.category === "Impuestos");
+    if (!isInterestClass) { order++; continue; }
+    // W37c-ROLLBACK: el importe VUELVE a la clave — el W37c sin el importe fusionó
+    // variantes semánticamente DIFERENTES (10.42 ganancia vs 10.43 ISR-capped) y
+    // borró las entradas legítimas (daño 884→290 confirmado). Los duplicados
+    // verdaderos son EXACTOS en los centavos.
+    const key = `${t.accountId}|${t.date}|${t.amount}`;
+    const prev = best.get(key);
+    const upd = t._updatedAt || 0;
+    if (!prev) {
+      best.set(key, { t, upd, order: order++ });
+    } else if (upd > prev.upd) {
+      // la más nueva gana el grupo; conserva la posición de la primera aparición
+      best.set(key, { t, upd, order: prev.order });
+    }
+  }
+  const ranked = [...best.values()].sort((a, b) => a.order - b.order);
+  const interestOut = new Map(ranked.map((r) => [r.order, r.t]));
   const out = [];
+  let o = 0;
   for (const t of txs) {
     const isInterestClass = t && (t.category === "Intereses" || t.category === "Impuestos");
     if (!isInterestClass) { out.push(t); continue; }
-    // W37c: la clave SIN el importe — los duplicados vienen con centavos ligeramente
-    // distintos (variantes ISR) y el importe bloqueaba el dedupe. Regla semántica:
-    // UN interés por cuenta por fecha.
-    const key = `${t.accountId}|${t.date}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(t);
+    const keep = interestOut.get(o);
+    if (keep) out.push(keep);
+    o++;
   }
   return out;
 }

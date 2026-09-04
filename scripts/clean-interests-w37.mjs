@@ -16,7 +16,7 @@ const st = await apply.loadState(db, CODE);
 const before = (st.transactions || []).length;
 const AUTO = new Set(["Intereses", "Impuestos"]);
 let stamped = 0;
-const seen = new Set();
+const seen = new Map(); // W37d: key -> la mejor copia (max _updatedAt)
 const kept = [];
 let removed = 0;
 
@@ -27,11 +27,23 @@ for (const t of st.transactions || []) {
     t._updatedAt = Number.isFinite(d) ? d : 0;
     stamped++;
   }
-  // 2. dedupe de intereses/taxes auto por (cuenta, fecha, importe)
-  if (AUTO.has(t.category)) { // W37b: por categoría SIN el requisito auto (los legacy dedupan igual)
-    const key = `${t.accountId || ""}|${t.date}`; // W37c: sin el importe (centavos ISR bloqueaban)
-    if (seen.has(key)) { removed++; continue; }
-    seen.add(key);
+  // 2. dedupe de intereses/taxes por (cuenta, fecha) — W37d: conservar la copia
+  // con _updatedAt MÁS ALTO (la primera vista era la hermana EPOC y droppaba la
+  // edición del usuario).
+  if (AUTO.has(t.category)) {
+    const key = `${t.accountId || ""}|${t.date}`;
+    const upd = t._updatedAt || 0;
+    const prev = seen.get(key);
+    if (prev == null) { seen.set(key, { upd, t }); kept.push(t); continue; }
+    if (upd > prev.upd) {
+      // la más nueva gana: reemplaza en kept (misma posición)
+      const idx = kept.findIndex((k) => k.id === prev.t.id);
+      if (idx >= 0) kept.splice(idx, 1);
+      seen.set(key, { upd, t });
+      kept.push(t);
+    }
+    removed++;
+    continue;
   }
   kept.push(t);
 }

@@ -187,19 +187,19 @@ describe("consolidateAndBump (W23 convergencia fuerte)", () => {
 // ---------- W37: dedupe de intereses SIN la descripción en la clave ----------
 import { dedupeAutoInterest } from "../api/_merge.js";
 describe("W37 · dedupeAutoInterest normalizado", () => {
-  it("las 3 rutas de interés (normal/aplazados/ISR) mismo acc+fecha+importe → 1 sobreviviente", () => {
+  it("3 copias EXACTAS (mismo acc+fecha+importe 10.42) → 1 sobreviviente", () => {
     const copies = [
       { id: "a", category: "Intereses", accountId: "8hyhvr89", date: "2026-07-28", description: "Intereses Kraken · 5.00 % TAE", amount: 10.42 },
-      { id: "b", category: "Intereses", accountId: "8hyhvr89", date: "2026-07-28", description: "Intereses Kraken · 5.00 % TAE (depósito 1/2)", amount: 10.43 },
-      { id: "c", category: "Intereses", accountId: "8hyhvr89", date: "2026-07-28", description: "Intereses Kraken · 5.00 % TAE ISR", amount: 10.44 },
+      { id: "b", category: "Intereses", accountId: "8hyhvr89", date: "2026-07-28", description: "Intereses Kraken · 5.00 % TAE (depósito 1/2)", amount: 10.42 },
+      { id: "c", category: "Intereses", accountId: "8hyhvr89", date: "2026-07-28", description: "Intereses Kraken · 5.00 % TAE ISR", amount: 10.42 },
     ];
     const out = dedupeAutoInterest(copies);
     expect(out.length).toBe(1);
   });
-  it("legacy SIN flag auto dedupan igual (W37b: los duplicados eran legacy)", () => {
+  it("legacy SIN flag auto EXACTAS dedupan igual (W37b)", () => {
     const legacy = [
       { id: "a", category: "Intereses", accountId: "x", date: "2026-07-28", description: "I", amount: 10.42 },
-      { id: "b", category: "Intereses", accountId: "x", date: "2026-07-28", description: "I ISR", amount: 10.43 },
+      { id: "b", category: "Intereses", accountId: "x", date: "2026-07-28", description: "I ISR", amount: 10.42 },
     ];
     expect(dedupeAutoInterest(legacy).length).toBe(1);
   });
@@ -210,5 +210,29 @@ describe("W37 · dedupeAutoInterest normalizado", () => {
       { id: "c", category: "Intereses", accountId: "otra", date: "2026-07-28", description: "I", amount: 10.42 },
     ];
     expect(dedupeAutoInterest(legit).length).toBe(3);
+  });
+});
+
+describe("W37d · el dedupe conserva la edición (max _updatedAt)", () => {
+  it("hermana EPOC (upd 0) + edición del usuario (upd reciente) → la EDICIÓN sobrevive", () => {
+    const now = Date.now();
+    const copies = [
+      { id: "sib", category: "Intereses", accountId: "w", date: "2026-09-01", description: "Intereses Wallet", amount: 10.42, _updatedAt: 0 },
+      { id: "edit", category: "Intereses", accountId: "w", date: "2026-09-01", description: "Intereses › Rendimiento", amount: 10.42, _updatedAt: now },
+    ];
+    const out = dedupeAutoInterest(copies);
+    expect(out.length).toBe(1);
+    expect(out[0].id).toBe("edit");
+  });
+  it("la sobreviviente conserva la posición original (los vecinos intactos)", () => {
+    const now = Date.now();
+    const copies = [
+      { id: "n1", category: "Comida", description: "vecino", amount: -5, _updatedAt: now },
+      { id: "sib", category: "Intereses", accountId: "w", date: "2026-09-01", description: "I", amount: 10.42, _updatedAt: 0 },
+      { id: "edit", category: "Intereses", accountId: "w", date: "2026-09-01", description: "I › R", amount: 10.42, _updatedAt: now },
+      { id: "n2", category: "Hogar", description: "vecino2", amount: -9, _updatedAt: now },
+    ];
+    const out = dedupeAutoInterest(copies);
+    expect(out.map((t) => t.id)).toEqual(["n1", "edit", "n2"]);
   });
 });
