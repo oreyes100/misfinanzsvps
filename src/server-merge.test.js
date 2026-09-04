@@ -189,18 +189,25 @@ import { dedupeAutoInterest } from "../api/_merge.js";
 describe("W37 · dedupeAutoInterest normalizado", () => {
   it("las 3 rutas de interés (normal/aplazados/ISR) mismo acc+fecha+importe → 1 sobreviviente", () => {
     const copies = [
-      { id: "a", auto: true, category: "Intereses", accountId: "8hyhvr89", date: "2026-07-28", description: "Intereses Kraken · 5.00 % TAE", amount: 10.42 },
-      { id: "b", auto: true, category: "Intereses", accountId: "8hyhvr89", date: "2026-07-28", description: "Intereses Kraken · 5.00 % TAE (depósito 1/2)", amount: 10.42 },
-      { id: "c", auto: true, category: "Intereses", accountId: "8hyhvr89", date: "2026-07-28", description: "Intereses Kraken · 5.00 % TAE ISR", amount: 10.42 },
+      { id: "a", category: "Intereses", accountId: "8hyhvr89", date: "2026-07-28", description: "Intereses Kraken · 5.00 % TAE", amount: 10.42 },
+      { id: "b", category: "Intereses", accountId: "8hyhvr89", date: "2026-07-28", description: "Intereses Kraken · 5.00 % TAE (depósito 1/2)", amount: 10.43 },
+      { id: "c", category: "Intereses", accountId: "8hyhvr89", date: "2026-07-28", description: "Intereses Kraken · 5.00 % TAE ISR", amount: 10.44 },
     ];
     const out = dedupeAutoInterest(copies);
     expect(out.length).toBe(1);
   });
+  it("legacy SIN flag auto dedupan igual (W37b: los duplicados eran legacy)", () => {
+    const legacy = [
+      { id: "a", category: "Intereses", accountId: "x", date: "2026-07-28", description: "I", amount: 10.42 },
+      { id: "b", category: "Intereses", accountId: "x", date: "2026-07-28", description: "I ISR", amount: 10.43 },
+    ];
+    expect(dedupeAutoInterest(legacy).length).toBe(1);
+  });
   it("intereses LEGÍTIMOS distinta fecha o cuenta → sobreviven", () => {
     const legit = [
-      { id: "a", auto: true, category: "Intereses", accountId: "8hyhvr89", date: "2026-07-28", description: "I", amount: 10.42 },
-      { id: "b", auto: true, category: "Intereses", accountId: "8hyhvr89", date: "2026-08-28", description: "I", amount: 10.42 },
-      { id: "c", auto: true, category: "Intereses", accountId: "otra", date: "2026-07-28", description: "I", amount: 10.42 },
+      { id: "a", category: "Intereses", accountId: "8hyhvr89", date: "2026-07-28", description: "I", amount: 10.42 },
+      { id: "b", category: "Intereses", accountId: "8hyhvr89", date: "2026-08-28", description: "I", amount: 10.42 },
+      { id: "c", category: "Intereses", accountId: "otra", date: "2026-07-28", description: "I", amount: 10.42 },
     ];
     expect(dedupeAutoInterest(legit).length).toBe(3);
   });

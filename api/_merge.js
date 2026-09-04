@@ -14,13 +14,18 @@ export function mergeById(a, b) {
 // W37-fix: la clave NO incluye la descripción — las 3 rutas de interés (normal/
 // aplazados/ISR) describen el MISMO interés semántico con textos distintos y las
 // 3 copias sobrevivían al dedupe (103 duplicados +10.42 documentados).
+// W37b-fix: POR CATEGORÍA sin el requisito `auto` — los duplicados legacy vienen
+// SIN el flag auto y el dedupe los saltaba (volvían al consolidar pushes viejos).
 export function dedupeAutoInterest(txs) {
   const seen = new Set();
   const out = [];
   for (const t of txs) {
-    const isAutoInterest = t && t.auto && (t.category === "Intereses" || t.category === "Impuestos");
-    if (!isAutoInterest) { out.push(t); continue; }
-    const key = `${t.accountId}|${t.date}|${t.amount}`;
+    const isInterestClass = t && (t.category === "Intereses" || t.category === "Impuestos");
+    if (!isInterestClass) { out.push(t); continue; }
+    // W37c: la clave SIN el importe — los duplicados vienen con centavos ligeramente
+    // distintos (variantes ISR) y el importe bloqueaba el dedupe. Regla semántica:
+    // UN interés por cuenta por fecha.
+    const key = `${t.accountId}|${t.date}`;
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(t);

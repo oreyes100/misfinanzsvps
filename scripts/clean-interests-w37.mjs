@@ -28,8 +28,8 @@ for (const t of st.transactions || []) {
     stamped++;
   }
   // 2. dedupe de intereses/taxes auto por (cuenta, fecha, importe)
-  if (t.auto && AUTO.has(t.category)) {
-    const key = `${t.accountId || ""}|${t.date}|${t.amount}`;
+  if (AUTO.has(t.category)) { // W37b: por categoría SIN el requisito auto (los legacy dedupan igual)
+    const key = `${t.accountId || ""}|${t.date}`; // W37c: sin el importe (centavos ISR bloqueaban)
     if (seen.has(key)) { removed++; continue; }
     seen.add(key);
   }
