@@ -45,8 +45,21 @@ export async function handleMerge(issueId) {
       return `❌ ${issue.id}: tests rojos tras el merge → revertido automáticamente`;
     }
 
-    // push main
-    run("git push -q origin main", { quiet: true, timeout: 120_000 });
+    // W30-fix: push de main con reintentos anti-carrera (si otro escritor —
+    // la Mac del humano — empujó durante el merge, re-integrar y reintentar)
+    let pushed = false;
+    for (let attempt = 1; attempt <= 3 && !pushed; attempt++) {
+      try {
+        run("git push -q origin main", { quiet: true, timeout: 120_000 });
+        pushed = true;
+      } catch (e) {
+        const blob = String(e.stdout || "") + String(e.message || "");
+        if (!/fetch first|rejected|non-fast-forward/i.test(blob)) throw e;
+        log(`push rechazado (intento ${attempt}/3) → re-integrando origin/main`);
+        run("git fetch origin -q && git pull --no-rebase -q origin main", { quiet: true, timeout: 60_000 });
+      }
+    }
+    if (!pushed) throw new Error("push de main rechazado tras 3 intentos");
 
     // build + deploy VPS
     run("npm run build", { quiet: true, timeout: 5 * 60_000 });
