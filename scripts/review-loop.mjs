@@ -37,7 +37,8 @@ const run = (cmd, opts = {}) =>
  *  validando el comando FINAL contra la allowlist (el && crudo queda prohibido). */
 const ALLOWED_PATTERNS = [
   /^curl\s/, /^npx vitest/, /^npm (test|run)/, /^grep /, /^node -e /,
-  /^node --check/, /^ls /, /^git diff/, /^wc /, /^head /, /^tail /,
+  /^node --check/, /^node --test/, /^node scripts\//, /^ls /, /^git diff/,
+  /^wc /, /^head /, /^tail /, /^mkdir -p /, /^echo /, /^cat /,
 ];
 function runCheck(check) {
   let c = String(check || "").trim();
@@ -45,7 +46,9 @@ function runCheck(check) {
   let m;
   // acepta también " && " entre asignaciones (p. ej. EMAIL="a@b" && PASS="x" && curl …)
   while ((m = c.match(/^\w+=(?:"[^"]*"|'[^']*'|\S+)\s*(?:&&\s*)?/))) c = c.slice(m[0].length);
-  if (!ALLOWED_PATTERNS.some((re) => re.test(c))) return { ok: false, out: `comando no permitido: ${c.slice(0, 80)}` };
+  // Extraer el comando principal antes de pipes (|) o redirecciones (>, >>)
+  const mainCmd = c.split(/\s*[|>]/)[0].trim();
+  if (!ALLOWED_PATTERNS.some((re) => re.test(mainCmd))) return { ok: false, out: `comando no permitido: ${mainCmd.slice(0, 80)}` };
   try {
     const out = run(c + " 2>&1", { quiet: true, timeout: 120_000 });
     return { ok: true, out: String(out).slice(0, 300) };
