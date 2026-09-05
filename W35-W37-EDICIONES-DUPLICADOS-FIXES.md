@@ -1,7 +1,7 @@
 # W35–W37f — Corrección de Ediciones Revertidas y Duplicados de Intereses
 > **Proyecto**: [misfinanzsvps](https://github.com/oreyes100/misfinanzsvps) · **Producción**: https://dineroorganizado.duckdns.org
 > **Fecha**: 3–4 de septiembre de 2026
-> **Commits**: `143b3c4` (W35) · `e69c6ff` (W36) · `febb4d1` (W37) · `dbf32d4` (W37b/c) · `935b9d4` (W37d) · `3fcaa37` (W37e) · `a3f1705` (W37e-fix) · `c1bc9bb` (docs L0) · `fccc100` (W37f) · `29fae21` (docs W37f) · `e50024b` (review-loop allowlist)
+> **Commits**: `143b3c4` (W35) · `e69c6ff` (W36) · `febb4d1` (W37) · `dbf32d4` (W37b/c) · `935b9d4` (W37d) · `3fcaa37` (W37e) · `a3f1705` (W37e-fix) · `c1bc9bb` (docs L0) · `fccc100` (W37f) · `29fae21` (docs W37f) · `e50024b` (review-loop) · `089d69b` (W37g — LA RAÍZ REAL)
 > **Tests finales**: 596/596 ✅
 
 ---
@@ -113,6 +113,29 @@ if (res.body?.state) {
 ```
 → la versión local siempre coincide con el server (el heartbeat no ve mismatch → no loop), y el estado consolidado (que YA incluye la edición) se adopta.
 
+### W37g — LA CAUSA RAÍZ DEFINITIVA: dos reducers, el equivocado corregido `089d69b`
+**Reporte**: la edición seguía revertiéndose DESPUÉS de W37f.
+
+**Hallazgo forense definitivo (el que cierra todo)**: existen **DOS reducers**:
+- `src/reducer.ts` — tipado, **solo lo usan los tests** (`reducer.test.js`, `syncHealth.test.js`)
+- `src/store.jsx` — **el que React usa en producción** (`useReducer(reducer, ...)` en `StoreProvider`)
+
+**Todos los fixes W35/W36/W37e se aplicaron a `reducer.ts` (el archivo equivocado).** La suite (596→603 tests) daba falsa confianza porque probaba `reducer.ts`. En `store.jsx`:
+- `update_transaction` línea 196: `{ ...old, ...action.patch }` — **SIN `_updatedAt`** → el `mergeById` del server veía un empate → conservaba la versión pre-edición → **el server descartaba la edición**
+- `add/delete/transfer`: movían saldos **sin stamp del account** → los balances revertían
+- **`_dirty` NUNCA se seteaba** (el wrapper W24 no existía en store.jsx) → el guard del race (W37e) estaba muerto (leía `_dirty` siempre undefined)
+- `mark_clean` se disparaba pero **no existía el case** → no-op
+
+Y mi W37f (hydrate con la respuesta del server) **empeoraba** el síntoma: el cliente hydrate con el estado PRE-edición del server → el revert en <1 segundo (el reporte exacto del usuario).
+
+**Fix (`089d69b`)**: aplicado a `store.jsx` (el archivo de producción):
+- `update_transaction`: `{ ...old, ...patch, _updatedAt: Date.now() }` + stamp de las cuentas movidas
+- `add_transaction`, `delete_transaction`, `transfer`: stamp de las cuentas (+ txs de transfer)
+- Wrapper: `_dirty: true, _lastChangeAt: Date.now()` en toda mutación + `mark_clean` en skipVersion
+- Case `mark_clean` + `hydrate` con `_dirty: false`
+- **Export del reducer de store.jsx + test nuevo `src/storeReducer.test.js`** que cubre el reducer REAL (el gap)
+- Fix colateral: test de reports date-robusto (el detector ignora cadencias >3 ciclos — rompía al avanzar el reloj)
+
 ---
 
 ## 🧠 MECÁNICA EXACTA (los 3 vectores de pérdida)
@@ -183,9 +206,9 @@ el contador `o` cuenta TODAS, las llaves saltan los duplicados
 
 | Métrica | Valor |
 |---|---|
-| Suite | **596/596** ✅ |
+| Suite | **603/603** ✅ (incluye el test del reducer REAL de store.jsx) |
 | Server | v863 (estable con el proceso correcto), 1302 txs, EPOC 0 |
-| Commits | 10 (W35 → W37f + review-loop) |
+| Commits | 11 (W35 → W37g) |
 | Los 5 vectores de pérdida | Cerrados con tests de regresión |
 
 ## 📎 También en esta sesión
