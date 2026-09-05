@@ -1,7 +1,7 @@
 # W35–W37f — Corrección de Ediciones Revertidas y Duplicados de Intereses
 > **Proyecto**: [misfinanzsvps](https://github.com/oreyes100/misfinanzsvps) · **Producción**: https://dineroorganizado.duckdns.org
 > **Fecha**: 3–4 de septiembre de 2026
-> **Commits**: `143b3c4` (W35) · `e69c6ff` (W36) · `febb4d1` (W37) · `dbf32d4` (W37b/c) · `935b9d4` (W37d) · `3fcaa37` (W37e) · `a3f1705` (W37e-fix) · `c1bc9bb` (docs L0) · `fccc100` (W37f)
+> **Commits**: `143b3c4` (W35) · `e69c6ff` (W36) · `febb4d1` (W37) · `dbf32d4` (W37b/c) · `935b9d4` (W37d) · `3fcaa37` (W37e) · `a3f1705` (W37e-fix) · `c1bc9bb` (docs L0) · `fccc100` (W37f) · `29fae21` (docs W37f) · `e50024b` (review-loop allowlist)
 > **Tests finales**: 596/596 ✅
 
 ---
@@ -185,8 +185,11 @@ el contador `o` cuenta TODAS, las llaves saltan los duplicados
 |---|---|
 | Suite | **596/596** ✅ |
 | Server | v863 (estable con el proceso correcto), 1302 txs, EPOC 0 |
-| Commits | 9 (W35 → W37f) |
+| Commits | 10 (W35 → W37f + review-loop) |
 | Los 5 vectores de pérdida | Cerrados con tests de regresión |
+
+## 📎 También en esta sesión
+- **`e50024b` — review-loop allowlist ampliada**: `node --test`, `node scripts/`, `mkdir -p`, `echo`, `cat` + extracción del comando principal antes de pipes/redirecciones (para los AC de los issues del loop).
 
 ## 🔁 SI EL PROBLEMA VUELVE
 
