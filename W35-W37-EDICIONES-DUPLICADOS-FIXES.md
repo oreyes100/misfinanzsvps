@@ -220,3 +220,24 @@ el contador `o` cuenta TODAS, las llaves saltan los duplicados
 2. Si el estado colapsa de nuevo: `node scripts/restore-w37d.mjs` (la unión con el backup)
 3. Si los duplicados vuelven: `node scripts/clean-interests-w37.mjs` + verificar que el server corra con el `_merge.js` nuevo (restart tras deploy)
 4. La cadena de diagnosis: el log `[push]` (los bytes idénticos = el estado no cambia) → el console `[sync]` del navegador (la secuencia push/resync/hydrate) → el forense del localStorage (W29: UTF-16LE + framing LevelDB)
+
+---
+
+## W38 — El saldo corriente (running balance) de las cuentas `181601d`
+
+**Reporte**: el "Saldo:" por transacción en Movimientos está totalmente mal. Ejemplo PlataInv:
+```
+31 ago Transferencia desde OBMOM +25,000 → Saldo MX$31.26 (debería ~25,000)
+1 sept Interés +10.42             → Saldo MX$41.68
+4 sept Interés +10.42             → Saldo MX$52.10
+```
+
+**Cómo funciona el saldo corriente** (`src/components/Transactions.jsx:57`): el running balance se calcula **hacia atrás desde `acc.balance`** (el balance actual de la cuenta). Si `acc.balance` está mal, TODOS los saldos por transacción están mal.
+
+**Causa**: PlataInv tenía `balance = 52.10` pero su historial de transacciones suma **25,020.84** (opening 0, par de transferencia completo con OBMOM). El crédito del +25,000 se perdió en el merge — la misma clase de gap W36/W37g (las cuentas no stampaban `_updatedAt` → el merge conservaba el balance viejo).
+
+**Forensica de datos decisiva**: los **balances son la verdad** (estables entre bak v460 y cur v924 — OBMOM 99162, Wallet 1066, etc.), pero las **transacciones son incompletas** (153 perdidas en el colapso). Solo **PlataInv** es corrupción clara (opening 0, historial completo → balance ≠ Σtx en -24,968). Las demás cuentas tienen "openings" legítimos (su historial es un registro parcial; el running balance anclado a su balance real es correcto).
+
+**Fix**: `scripts/reconcile-balances-w38.mjs` — modo `--list` (auditoría balance vs Σtx por cuenta) + reconciliación por ID con opening 0. Aplicado a PlataInv: **52.10 → 25,020.84** (v927 estable). Los devices convergen por resync (no requiere redeploy del cliente).
+
+**Lección**: el saldo corriente se deriva del balance de la cuenta — corregir el balance corrige todos los saldos por transacción. Un balance que no cuadra con su Σtx puede ser (a) corrupción (opening real 0, historial completo) o (b) historial incompleto (balance real con transacciones perdidas) — la auditoría balance vs Σtx distingue ambas.
