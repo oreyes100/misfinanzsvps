@@ -147,11 +147,19 @@ describe("detectSubscriptions", () => {
     expect(subs).toHaveLength(0);
   });
   it("detecta semanal por intervalos cortos", () => {
+    // fechas relativas a hoy: el detector ignora cadencias con >3 ciclos de
+    // antigüedad (now - last > median*3) — fechas absolutas rompían el test
+    // al avanzar el reloj.
+    const now = new Date();
+    const d = (daysAgo) => {
+      const dt = new Date(now.getFullYear(), now.getMonth(), now.getDate() - daysAgo);
+      return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+    };
     const subs = detectSubscriptions(
       [
-        tx({ id: "a", date: "2026-08-01", description: "Gym", amount: -50 }),
-        tx({ id: "b", date: "2026-08-08", description: "Gym", amount: -50 }),
-        tx({ id: "c", date: "2026-08-15", description: "Gym", amount: -50 }),
+        tx({ id: "a", date: d(21), description: "Gym", amount: -50 }),
+        tx({ id: "b", date: d(14), description: "Gym", amount: -50 }),
+        tx({ id: "c", date: d(7), description: "Gym", amount: -50 }),
       ],
       FX,
       "EUR"

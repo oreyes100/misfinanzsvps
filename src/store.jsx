@@ -98,8 +98,9 @@ const REAL_ACTIONS = new Set([
   "add_depreciating", "update_depreciating", "delete_depreciating", "set_limit", "set_base_currency", "update_settings",
 ]);
 
-function reducer(state, action) {
-  const skipVersion = ["hydrate", "update_fx", "accrue"];
+export function reducer(state, action) {
+  const skipVersion = ["hydrate", "update_fx", "accrue", "mark_clean"];
+  const skipDirty = ["hydrate", "update_fx", "accrue", "mark_clean"];
   const result = innerReducer(state, action);
   let finalResult = result;
   if (result !== state && result._isDemo && REAL_ACTIONS.has(action.type)) {
@@ -107,13 +108,22 @@ function reducer(state, action) {
     finalResult = { ...rest, _isDemo: false, _demoSeededAt: undefined };
   }
   if (finalResult !== state && !skipVersion.includes(action.type)) {
-    return { ...finalResult, _syncVersion: (finalResult._syncVersion || 0) + 1 };
+    const bumped = { ...finalResult, _syncVersion: (finalResult._syncVersion || 0) + 1 };
+    // W24: cualquier mutación real marca dirty (render-confirmado) — lo lee resyncNow.
+    if (!skipDirty.includes(action.type)) {
+      return { ...bumped, _dirty: true, _lastChangeAt: Date.now() };
+    }
+    return bumped;
   }
   return finalResult;
 }
 
-function innerReducer(state, action) {
+export function innerReducer(state, action) {
   switch (action.type) {
+    case "mark_clean": {
+      if (!state._dirty && state._lastChangeAt == null) return state;
+      return { ...state, _dirty: false };
+    }
     case "hydrate": {
       const h = action.state || state;
       const strippedAccounts = h && Array.isArray(h.accounts) ? stripDemoAccounts(h.accounts, h.deletedAccountIds || []) : (h ? h.accounts : []);
@@ -123,6 +133,7 @@ function innerReducer(state, action) {
       if (cleaned && cleaned.deletedTransactions && Array.isArray(cleaned.transactions)) {
         cleaned = { ...cleaned, transactions: cleaned.transactions.filter((t) => !cleaned.deletedTransactions[t.id]) };
       }
+      if (cleaned) cleaned = { ...cleaned, _dirty: false }; // W24: hydrate = reemplazo del server → limpio
       // reviewQueue es un slice nuevo: si el estado remoto aún no lo trae, se rellena.
       if (cleaned && !cleaned.reviewQueue) cleaned = { ...cleaned, reviewQueue: SEED.reviewQueue };
       // pipelineEvents (GHOST PIPELINE): slice volátil de telemetría, siempre se rellena.
@@ -154,7 +165,7 @@ function innerReducer(state, action) {
       const cat = t.category || categorize(t.description, state.categories).category;
       const tx = { id: uid(), date: t.date || todayISO(), _updatedAt: Date.now(), ...t, category: cat };
       const accounts = state.accounts.map((a) =>
-        a.id === tx.accountId ? { ...a, balance: Math.round((a.balance + tx.amount) * 100) / 100 } : a
+        a.id === tx.accountId ? { ...a, balance: Math.round((a.balance + tx.amount) * 100) / 100, _updatedAt: Date.now() } : a
       );
       const unreviewed = buildUnreviewedItems([tx], { accounts });
       const reviewQueue = unreviewed.reduce((q, item) => enqueueItem(q, item), state.reviewQueue || SEED.reviewQueue);
@@ -193,14 +204,17 @@ function innerReducer(state, action) {
         });
         if (res) return { ...state, accounts: res.accounts, transactions: res.transactions };
       }
-      const next = { ...old, ...action.patch };
+      // W37g: la edición DEBE bump-ear _updatedAt (tx y cuentas) — sin el bump,
+      // mergeById del server conserva la copia vieja (empate 0vs0) y la edición
+      // se revierte en el siguiente snapshot/hydrate.
+      const next = { ...old, ...action.patch, _updatedAt: Date.now() };
       // Reajuste de saldos: revertir el importe anterior y aplicar el nuevo
       // (cubre cambios de importe, de signo y de cuenta).
       const accounts = state.accounts.map((a) => {
         let bal = a.balance;
         if (a.id === old.accountId) bal -= old.amount;
         if (a.id === next.accountId) bal += next.amount;
-        return bal === a.balance ? a : { ...a, balance: Math.round(bal * 100) / 100 };
+        return bal === a.balance ? a : { ...a, balance: Math.round(bal * 100) / 100, _updatedAt: Date.now() };
       });
       const transactions = state.transactions
         .map((t) => (t.id === action.id ? next : t))
@@ -305,7 +319,7 @@ function innerReducer(state, action) {
       const old = state.transactions.find((t) => t.id === action.id);
       if (!old) return state;
       const accounts = state.accounts.map((a) =>
-        a.id === old.accountId ? { ...a, balance: Math.round((a.balance - old.amount) * 100) / 100 } : a
+        a.id === old.accountId ? { ...a, balance: Math.round((a.balance - old.amount) * 100) / 100, _updatedAt: Date.now() } : a
       );
       const txs = state.transactions.filter((t) => t.id !== action.id);
       const dels = { ...(state.deletedTransactions || {}), [action.id]: Date.now() };
@@ -324,13 +338,13 @@ function innerReducer(state, action) {
       const date = action.date || todayISO();
       const n = notes ? String(notes).trim() : undefined;
       const accounts = state.accounts.map((a) => {
-        if (a.id === fromId) return { ...a, balance: Math.round((a.balance - amount) * 100) / 100 };
-        if (a.id === toId) return { ...a, balance: Math.round((a.balance + credited) * 100) / 100 };
+        if (a.id === fromId) return { ...a, balance: Math.round((a.balance - amount) * 100) / 100, _updatedAt: Date.now() };
+        if (a.id === toId) return { ...a, balance: Math.round((a.balance + credited) * 100) / 100, _updatedAt: Date.now() };
         return a;
       });
       const txs = [
-        { id: uid(), date, description: `Transferencia a ${to.name}`, amount: -amount, currency: from.currency, category: "Transferencia", accountId: fromId, counterpartId: toId, ...(n ? { notes: n } : {}) },
-        { id: uid(), date, description: `Transferencia desde ${from.name}`, amount: Math.round(credited * 100) / 100, currency: to.currency, category: "Transferencia", accountId: toId, counterpartId: fromId, ...(n ? { notes: n } : {}) },
+        { id: uid(), date, description: `Transferencia a ${to.name}`, amount: -amount, currency: from.currency, category: "Transferencia", accountId: fromId, counterpartId: toId, _updatedAt: Date.now(), ...(n ? { notes: n } : {}) },
+        { id: uid(), date, description: `Transferencia desde ${from.name}`, amount: Math.round(credited * 100) / 100, currency: to.currency, category: "Transferencia", accountId: toId, counterpartId: fromId, _updatedAt: Date.now(), ...(n ? { notes: n } : {}) },
       ];
       return { ...state, accounts, transactions: [...txs, ...state.transactions] };
     }
