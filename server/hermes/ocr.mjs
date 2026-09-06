@@ -14,7 +14,9 @@ export async function ocrImage(
 ) {
   // W26: timeout desde aiConfig (ocr.timeoutMs) — nunca >60s.
   const cfg = loadAIConfig();
-  const effectiveTimeout = Math.min(Number(timeoutMs) || cfg.ocr.timeoutMs, 60_000);
+  // W39: el clamp puede subirlo vía OCR_TIMEOUT_MAX (el pipeline de PDFs de muchas
+  // páginas necesita >60s por página; la regla W26 sigue por defecto).
+  const effectiveTimeout = Math.min(Number(timeoutMs) || cfg.ocr.timeoutMs, Number(process.env.OCR_TIMEOUT_MAX) || 60_000);
   const u = new URL(url);
   const body = JSON.stringify({ image: filePath, mode });
   return new Promise((resolve, reject) => {

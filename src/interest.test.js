@@ -130,6 +130,12 @@ describe("accrueInterest · ISR", () => {
       balance: 50000, rate: 0.13, accrual: "daily",
       lastAccrual: "2026-06-20", isrRate: 0.000524,
     };
+    const realDate = Date;
+    global.Date = class extends realDate {
+      constructor(...args) { if (args.length === 0) super("2026-06-25T12:00:00"); else super(...args); }
+      static now() { return new realDate("2026-06-25T12:00:00").getTime(); }
+    };
+    try {
     const result = accrueInterest(stateWith(acc));
     const intTx = result.transactions.find((t) => t.category === "Intereses");
     const taxTx = result.transactions.find((t) => t.category === "Impuestos");
@@ -140,6 +146,9 @@ describe("accrueInterest · ISR", () => {
     const updated = result.accounts[0];
     expect(updated.balance).toBeLessThan(50000 + intTx.amount);
     expect(updated.balance).toBeGreaterThan(50000);
+    } finally {
+      global.Date = realDate;
+    }
   });
 
   it("no aplica ISR si isrRate = 0", () => {
@@ -174,8 +183,13 @@ describe("accrueInterest · cuenta escalonada (capped)", () => {
       lastAccrual2: "2026-06-20",
       lastAccrual: "2026-06-20",
     };
-    const result = accrueInterest(stateWith(acc));
-    const updated = result.accounts[0];
+    const realDate = Date;
+    global.Date = class extends realDate {
+      constructor(...args) { if (args.length === 0) super("2026-06-25T12:00:00"); else super(...args); }
+      static now() { return new realDate("2026-06-25T12:00:00").getTime(); }
+    };
+    try {
+      const result = accrueInterest(stateWith(acc));    const updated = result.accounts[0];
     // Tramo 1: base 10000, tramo 2: base 5000 → ambos deben generar interés
     const txs1 = result.transactions.filter((t) => t.description.includes("tasa principal"));
     const txs2 = result.transactions.filter((t) => t.description.includes("tasa secundaria"));
@@ -183,6 +197,9 @@ describe("accrueInterest · cuenta escalonada (capped)", () => {
     expect(txs2.length).toBeGreaterThan(0);
     // El interés del tramo 1 debe ser mayor (tasa más alta, base igual o mayor)
     expect(txs1[0].amount).toBeGreaterThan(txs2[0].amount);
+    } finally {
+      global.Date = realDate;
+    }
   });
 
   it("no devenga tramo si gainCap ya alcanzado", () => {
@@ -209,11 +226,20 @@ describe("accrueInterest · cuenta escalonada (capped)", () => {
       lastAccrual2: "2026-06-20",
       lastAccrual: "2026-06-20",
     };
-    const result = accrueInterest(stateWith(acc));
-    const tx = result.transactions.find((t) => t.description.includes("tasa principal"));
-    expect(tx).toBeDefined();
-    // El interés no puede superar el gainCap restante (10)
-    expect(tx.amount).toBeLessThanOrEqual(10);
+    const realDate = Date;
+    global.Date = class extends realDate {
+      constructor(...args) { if (args.length === 0) super("2026-06-25T12:00:00"); else super(...args); }
+      static now() { return new realDate("2026-06-25T12:00:00").getTime(); }
+    };
+    try {
+      const result = accrueInterest(stateWith(acc));
+      const tx = result.transactions.find((t) => t.description.includes("tasa principal"));
+      expect(tx).toBeDefined();
+      // El interés no puede superar el gainCap restante (10)
+      expect(tx.amount).toBeLessThanOrEqual(10);
+    } finally {
+      global.Date = realDate;
+    }
   });
 });
 
@@ -526,8 +552,17 @@ describe("accrueInterest · múltiples cuentas", () => {
       id: "acc-2", name: "Ahorro", type: "savings", currency: "EUR",
       balance: 8000, rate: 0.0365, accrual: "daily", lastAccrual: "2026-06-20",
     });
-    const result = accrueInterest(state);
-    expect(result.accounts.find((a) => a.id === "acc-1").balance).toBe(1000);
-    expect(result.accounts.find((a) => a.id === "acc-2").balance).toBeGreaterThan(8000);
+    const realDate = Date;
+    global.Date = class extends realDate {
+      constructor(...args) { if (args.length === 0) super("2026-06-25T12:00:00"); else super(...args); }
+      static now() { return new realDate("2026-06-25T12:00:00").getTime(); }
+    };
+    try {
+      const result = accrueInterest(state);
+      expect(result.accounts.find((a) => a.id === "acc-1").balance).toBe(1000);
+      expect(result.accounts.find((a) => a.id === "acc-2").balance).toBeGreaterThan(8000);
+    } finally {
+      global.Date = realDate;
+    }
   });
 });
