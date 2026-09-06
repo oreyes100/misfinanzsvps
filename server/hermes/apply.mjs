@@ -75,6 +75,7 @@ export function addTransaction(state, t) {
     id: uid(),
     date: t.date || todayISO(),
     _updatedAt: Date.now(),
+    _createdAt: Date.now(),
     description: String(t.description || "").slice(0, 60),
     amount: t.amount,
     currency: t.currency,
@@ -102,6 +103,7 @@ export function addConflictTransaction(state, t) {
     id: uid(),
     date: t.date || todayISO(),
     _updatedAt: Date.now(),
+    _createdAt: Date.now(),
     description: String(t.description || "").slice(0, 60),
     amount: t.amount,
     currency: t.currency,
@@ -139,12 +141,14 @@ export function addTransfer(state, { fromId, toId, amount, date, notes, fromDesc
     {
       id: uid(), date: d, description: fromDesc || `Transferencia a ${to.name}`, amount: -amount,
       currency: from.currency, category: "Transferencia", accountId: fromId, counterpartId: toId,
-      _updatedAt: Date.now(), ...(n ? { notes: n } : {}),
+      _updatedAt: Date.now(),
+    _createdAt: Date.now(), ...(n ? { notes: n } : {}),
     },
     {
       id: uid(), date: d, description: toDesc || `Transferencia desde ${from.name}`, amount: r2(credited),
       currency: to.currency, category: "Transferencia", accountId: toId, counterpartId: fromId,
-      _updatedAt: Date.now(), ...(n ? { notes: n } : {}),
+      _updatedAt: Date.now(),
+    _createdAt: Date.now(), ...(n ? { notes: n } : {}),
     },
   ];
   return { ...state, accounts, transactions: [...txs, ...(state.transactions || [])] };

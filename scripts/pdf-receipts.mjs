@@ -128,13 +128,18 @@ async function main() {
   let pushRes = null;
   if (txs.length && !DRY) {
     const db = openDb(cfg.dbPath || undefined);
-    const state = await apply.loadState(db, cfg.syncCode);
+    let state = await apply.loadState(db, cfg.syncCode);
     // asignar accountId: --account <id> | binding.defaultAccountId | la primera
     const defaultAcc = ACCOUNT || cfg.defaultAccountId || (state.accounts?.[0]?.id ?? null);
     if (!ACCOUNT) log(`⚠️ sin --account: usando ${defaultAcc} (${(state.accounts?.find(a => a.id === defaultAcc) || {}).name || "?"})`);
+    // Usar apply.addTransaction para generar IDs, _createdAt, _updatedAt, category guard, balance update
+    for (const t of txs) {
+      state = apply.addTransaction(state, { ...t, accountId: defaultAcc });
+    }
     const delta = {
-      accounts: [],
-      transactions: txs.map((t) => ({ ...t, accountId: defaultAcc, _updatedAt: Date.now() })),
+      accounts: state.accounts,
+      transactions: state.transactions,
+      _syncVersion: state._syncVersion,
     };
     try {
       pushRes = await apply.pushDelta(cfg, delta);
