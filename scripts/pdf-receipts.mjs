@@ -84,7 +84,7 @@ async function main() {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "w39-pdf-"));
     const outPrefix = path.join(tmpDir, "page");
     log(`renderizando páginas…`);
-    let pages = renderPages(pdfPath, outPrefix);
+    let pages = renderPages(pdfPath, outPrefix, [1, MAX_PAGES]);
     if (pages.length > MAX_PAGES) {
       log(`recortando a ${MAX_PAGES} de ${pages.length} páginas`);
       pages = pages.slice(0, MAX_PAGES);
